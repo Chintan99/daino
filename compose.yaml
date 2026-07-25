@@ -1,0 +1,28 @@
+services:
+  vasuki:
+    build: .
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    command: ["--help"]
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: vasuki
+      POSTGRES_USER: vasuki
+      POSTGRES_PASSWORD: development-only
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vasuki"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+  mock-llm:
+    image: python:3.12-slim
+    working_dir: /mock
+    volumes:
+      - ./examples/mock_llm_server.py:/mock/server.py:ro
+    command: ["python", "server.py"]
+    ports:
+      - "8001:8001"
