@@ -1,0 +1,10 @@
+name: investigate-api-latency
+version: "1.0"
+purpose: Locate API latency using code paths, telemetry, and bounded observations.
+preconditions: [Affected route or endpoint is known]
+required_inputs: [endpoint, latency symptom]
+allowed_tools: [get_api_routes, get_dependency_path, read_file, run_tests, inspect_process]
+execution_stages: [Map request path, Inspect telemetry, Form hypothesis, Validate]
+approval_points: [Approve production diagnostic commands]
+verification_steps: [Measure before and after, Run regression tests]
+rollback_steps: [Revert instrumentation and code change]

@@ -1,0 +1,10 @@
+name: add-fastapi-endpoint
+version: "1.0"
+purpose: Add a tested FastAPI route while preserving existing API contracts.
+preconditions: [FastAPI application and test runner are indexed]
+required_inputs: [route, method, behavior]
+allowed_tools: [read_file, find_symbol, find_related_tests, apply_unified_diff, run_tests]
+execution_stages: [Inspect router conventions, Define contract, Implement route and service, Add tests]
+approval_points: [Approve breaking API contract changes]
+verification_steps: [Run targeted API tests, Run type checks, Review OpenAPI impact]
+rollback_steps: [Revert mission commit, Restore pre-change checkpoint]

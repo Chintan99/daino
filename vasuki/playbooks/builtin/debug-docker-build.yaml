@@ -1,0 +1,10 @@
+name: debug-docker-build
+version: "1.0"
+purpose: Diagnose a Docker image build failure with minimal, cache-friendly changes.
+preconditions: [Dockerfile exists, Docker runtime is available]
+required_inputs: [build command]
+allowed_tools: [read_file, get_docker_services, run_build, apply_unified_diff]
+execution_stages: [Reproduce build, Locate failed layer, Correct inputs or command]
+approval_points: [Approve network access or dependency installation]
+verification_steps: [Build image from clean context, Inspect image entrypoint]
+rollback_steps: [Revert Dockerfile changes]

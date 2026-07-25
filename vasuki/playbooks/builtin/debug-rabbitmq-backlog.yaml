@@ -1,0 +1,10 @@
+name: debug-rabbitmq-backlog
+version: "1.0"
+purpose: Diagnose queue backlog without deleting messages or exposing credentials.
+preconditions: [Queue and consumer names are known]
+required_inputs: [queue name, environment]
+allowed_tools: [find_references, inspect_service_health, run_remote_command]
+execution_stages: [Inspect publishers, Inspect consumers, Check rates and errors, Identify bottleneck]
+approval_points: [Approve production commands, Approve queue mutation]
+verification_steps: [Confirm consumers are healthy, Observe backlog trend]
+rollback_steps: [Revert consumer change, Restore previous release]

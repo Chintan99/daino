@@ -1,0 +1,10 @@
+name: fix-failing-test
+version: "1.0"
+purpose: Diagnose and correct a reproducible failing test without weakening its assertions.
+preconditions: [Failure is reproducible]
+required_inputs: [test command]
+allowed_tools: [read_file, find_references, run_tests, apply_unified_diff]
+execution_stages: [Reproduce failure, Classify root cause, Apply minimal repair]
+approval_points: []
+verification_steps: [Run failing test, Run related suite]
+rollback_steps: [Revert repair patch]

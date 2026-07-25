@@ -1,0 +1,10 @@
+name: deploy-docker-compose
+version: "1.0"
+purpose: Deploy a versioned Docker Compose release and health-gate promotion.
+preconditions: [Target inspected, Compose file validated, Rollback release exists]
+required_inputs: [deployment target]
+allowed_tools: [inspect_host, upload_release, apply_compose, inspect_service_health, switch_release]
+execution_stages: [Inspect, Plan, Upload, Start, Verify, Promote, Monitor]
+approval_points: [Approve production deployment, Approve database migration]
+verification_steps: [Check containers, Check restart counts, Check health endpoint, Run smoke tests]
+rollback_steps: [Stop failed release, Restore previous symlink, Restart and verify previous release]

@@ -1,0 +1,67 @@
+project:
+  name: example
+  default_mode: specification
+  context_budget_tokens: 24000
+database:
+  url: sqlite:///.vasuki/vasuki.db
+runtime:
+  default: docker
+  network_access: restricted
+  command_timeout_seconds: 600
+  docker_image: python:3.12-slim
+verification:
+  repair_attempts_local: 2
+  total_attempts: 4
+  require_review: true
+git:
+  use_worktrees: true
+  auto_commit_verified_tasks: true
+  auto_push: false
+security:
+  require_approval_for_install: true
+  require_approval_for_network: true
+  require_approval_for_production: true
+providers:
+  openrouter:
+    type: openrouter
+    base_url: https://openrouter.ai/api/v1
+    api_key: env://OPENROUTER_API_KEY
+    model: anthropic/claude-sonnet-4
+  local:
+    type: vllm
+    base_url: http://127.0.0.1:8000/v1
+    api_key: env://VLLM_API_KEY
+    model: local-coder
+models:
+  strong-cloud:
+    provider: openrouter
+    model: anthropic/claude-sonnet-4
+    planning_score: 9
+    coding_score: 9
+  local-coder:
+    provider: local
+    model: local-coder
+    local: true
+    coding_score: 8
+routing:
+  architect: strong-cloud
+  planner: strong-cloud
+  builder: local-coder
+  reviewer: local-coder
+  debugger: strong-cloud
+  tester: local-coder
+  summarizer: local-coder
+  deployer: local-coder
+routing_fallbacks:
+  builder: [strong-cloud]
+deployment:
+  targets:
+    production:
+      type: ssh
+      host: example.com
+      username: deployer
+      auth:
+        key_path: ~/.ssh/id_ed25519
+      deployment_path: /opt/apps/example
+      environment: production
+      health_url: https://example.com/health

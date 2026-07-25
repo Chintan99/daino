@@ -1,0 +1,10 @@
+name: add-react-component
+version: "1.0"
+purpose: Add an accessible React component following project conventions.
+preconditions: [React project and component test framework are indexed]
+required_inputs: [component behavior]
+allowed_tools: [read_file, find_symbol, apply_unified_diff, run_tests, run_build]
+execution_stages: [Inspect design patterns, Define props, Implement component, Add tests]
+approval_points: [Approve new production dependency]
+verification_steps: [Run component tests, Run typecheck, Run production build]
+rollback_steps: [Revert mission commit]

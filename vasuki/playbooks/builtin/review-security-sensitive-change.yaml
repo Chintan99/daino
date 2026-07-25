@@ -1,0 +1,10 @@
+name: review-security-sensitive-change
+version: "1.0"
+purpose: Independently review authentication, authorization, cryptography, or secret handling changes.
+preconditions: [Requirements, diff, and verification evidence are available]
+required_inputs: [mission id]
+allowed_tools: [read_file, find_references, run_security_scan, run_tests, git_diff]
+execution_stages: [Map trust boundaries, Review diff, Challenge failure paths, Verify controls]
+approval_points: [Approve accepted residual risk]
+verification_steps: [Run security scan, Run negative authorization tests, Check secret redaction]
+rollback_steps: [Block merge, Revert mission commits]

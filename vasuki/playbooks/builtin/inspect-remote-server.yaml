@@ -1,0 +1,10 @@
+name: inspect-remote-server
+version: "1.0"
+purpose: Collect deployment-relevant Linux host facts without modification.
+preconditions: [SSH target and verified host key are configured]
+required_inputs: [deployment target]
+allowed_tools: [inspect_host, inspect_containers, inspect_port]
+execution_stages: [Connect, Collect read-only facts, Summarize risks]
+approval_points: []
+verification_steps: [Confirm every command is read-only, Record command results]
+rollback_steps: [No rollback required; no state is modified]

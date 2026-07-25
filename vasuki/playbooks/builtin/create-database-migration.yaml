@@ -1,0 +1,10 @@
+name: create-database-migration
+version: "1.0"
+purpose: Create a reversible schema migration consistent with application models.
+preconditions: [Migration framework is detected, Database model is identified]
+required_inputs: [schema change]
+allowed_tools: [get_database_models, get_migrations, apply_unified_diff, run_database_migration]
+execution_stages: [Inspect migration lineage, Change model, Generate migration, Review SQL]
+approval_points: [Approve destructive schema changes, Approve migration execution]
+verification_steps: [Upgrade clean database, Downgrade database, Run persistence tests]
+rollback_steps: [Run downgrade, Revert migration commit]
