@@ -35,6 +35,10 @@ class PolicyDecision(BaseModel):
     permission: Permission
 
 
+#: Operators that only mean anything to a shell. Commands are executed directly,
+#: never through one, so these would be handed to the program as plain arguments.
+SHELL_OPERATORS = frozenset({"|", "||", "&&", "&", ";", ">", ">>", "<", "<<"})
+
 DANGEROUS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(^|\s)rm\s+(-\S*r\S*f|-\S*f\S*r)\b"), "recursive forced deletion"),
     (re.compile(r"(^|\s)(mkfs|shutdown|reboot)\b"), "host-destructive command"),
@@ -78,6 +82,19 @@ class PolicyEngine:
             return PolicyDecision(
                 allowed=False,
                 reasons=["malformed shell command"],
+                permission=permission,
+            )
+        # Commands run without a shell, so metacharacters are passed through as
+        # literal arguments and misbehave in confusing ways (`a | head` becomes
+        # grep looking for a file called "head"). Say so plainly instead.
+        shell_tokens = sorted({token for token in tokens if token in SHELL_OPERATORS})
+        if shell_tokens:
+            return PolicyDecision(
+                allowed=False,
+                reasons=[
+                    f"shell syntax is not available: {', '.join(shell_tokens)}. "
+                    "Use a single command with arguments, or a script file"
+                ],
                 permission=permission,
             )
         executable = tokens[0].rsplit("/", 1)[-1] if tokens else ""

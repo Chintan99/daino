@@ -15,9 +15,21 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ToolCall(StrictModel):
+    """One native function call requested by a model."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
 class Message(StrictModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
+    #: Native tool calls attached to an assistant message.
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    #: Identifies which tool call a ``tool`` message answers.
+    tool_call_id: str = ""
 
 
 class LLMResponse(StrictModel):
@@ -28,6 +40,7 @@ class LLMResponse(StrictModel):
     output_tokens: int = 0
     latency_ms: float = 0
     finish_reason: str | None = None
+    tool_calls: list[ToolCall] = Field(default_factory=list)
     raw: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -41,6 +54,7 @@ class MissionStatus(StrEnum):
     CREATED = "created"
     PLANNING = "planning"
     AWAITING_APPROVAL = "awaiting_approval"
+    AWAITING_CHANGE_APPROVAL = "awaiting_change_approval"
     RUNNING = "running"
     VERIFYING = "verifying"
     REVIEWING = "reviewing"
@@ -108,9 +122,15 @@ class TaskPlan(StrictModel):
 
 class FileModification(StrictModel):
     path: str
-    action: Literal["create", "patch", "delete"]
+    action: Literal["create", "patch", "replace", "delete"]
     unified_diff: str | None = None
     content: str | None = None
+    #: For ``replace``: the exact text to find. Must occur once unless
+    #: ``replace_all`` is set. Preferred over ``unified_diff`` — an anchor string
+    #: either matches or it does not, with no line numbers or context to drift.
+    old_string: str | None = None
+    new_string: str | None = None
+    replace_all: bool = False
     reason: str
 
 
@@ -118,6 +138,180 @@ class Implementation(StrictModel):
     summary: str
     modifications: list[FileModification]
     verification_commands: list[str] = Field(default_factory=list)
+
+
+class EditSpec(StrictModel):
+    """One exact-span replacement inside a ``multi_edit``."""
+
+    old_string: str
+    new_string: str
+    replace_all: bool = False
+
+
+class TodoItem(StrictModel):
+    """One step of the agent's plan for the current request."""
+
+    content: str
+    status: Literal["pending", "in_progress", "completed"] = "pending"
+
+
+class AgentAction(StrictModel):
+    """One step an implementing agent chooses to take.
+
+    Deliberately flat rather than a discriminated union: a single object with an
+    action enum is the shape that survives every provider's structured-output
+    support, from OpenRouter through local vLLM and Ollama.
+    """
+
+    thought: str
+    action: Literal[
+        "read_file",
+        "search_text",
+        "list_directory",
+        "replace",
+        "write",
+        "delete",
+        "multi_edit",
+        "run_command",
+        "glob",
+        "grep",
+        "todo",
+        "respond",
+        "finish",
+    ]
+    path: str = ""
+    query: str = ""
+    old_string: str = ""
+    new_string: str = ""
+    replace_all: bool = False
+    content: str = ""
+    #: For ``run_command``: the executable and its arguments. Runs without a
+    #: shell, so pipes and redirects are not available.
+    command: str = ""
+    timeout: int = 0
+    #: For ``glob``: a path pattern such as ``src/**/*.py``.
+    pattern: str = ""
+    #: For ``read_file``: read a window of a large file instead of the head.
+    offset: int = 0
+    limit: int = 0
+    #: For ``multi_edit``: several replacements applied to one file in order.
+    edits: list[EditSpec] = Field(default_factory=list)
+    #: For ``todo``: the current plan, replaced in full each time.
+    todos: list[TodoItem] = Field(default_factory=list)
+    summary: str = ""
+    #: For ``respond``: the answer to show the user. Kept separate from
+    #: ``summary``, which means "what you changed" and is empty when the agent
+    #: only answered.
+    message: str = ""
+    verification_commands: list[str] = Field(default_factory=list)
+
+
+class AgentObservation(StrictModel):
+    """The result of an action, fed back to the agent before its next step."""
+
+    action: str
+    success: bool
+    detail: str
+
+
+class DiffLine(StrictModel):
+    """One rendered line of a file diff."""
+
+    #: " " context, "-" removed, "+" added.
+    marker: Literal[" ", "-", "+"]
+    #: Line number in the file after the edit, or before it for removed lines.
+    number: int
+    text: str
+
+
+class FileDiff(StrictModel):
+    """What changed in one file, ready to render without re-reading the disk."""
+
+    path: str
+    #: "created", "modified", or "deleted".
+    change: Literal["created", "modified", "deleted"]
+    added: int = 0
+    removed: int = 0
+    lines: list[DiffLine] = Field(default_factory=list)
+    #: Set when the file has no textual diff to show, such as a binary file.
+    note: str = ""
+
+
+class ChatOutcome(StrictModel):
+    """The result of one chat-agent turn, ready to render in the transcript."""
+
+    mission_id: str = ""
+    #: Set when the agent answered instead of editing.
+    answer: str = ""
+    #: Set when the agent edited; what it says it did.
+    summary: str = ""
+    diffs: list[FileDiff] = Field(default_factory=list)
+    changed: list[str] = Field(default_factory=list)
+    steps: int = 0
+    #: None when no verification ran, otherwise whether every check passed.
+    verified: bool | None = None
+    verification_summary: str = ""
+
+
+#: Roles a team member may take. Deliberately every routed role except
+#: ``deployer``: a sub-agent spawned from a chat instruction must never reach the
+#: deployment path, which has its own approval gates. Kept in sync with
+#: ``ModelRole`` by ``test_team_member_roles_track_model_roles``.
+TeamMemberRole = Literal[
+    "architect",
+    "planner",
+    "builder",
+    "reviewer",
+    "debugger",
+    "tester",
+    "summarizer",
+]
+
+
+class TeamMember(StrictModel):
+    """One sub-agent in a team, with the scope it is allowed to touch."""
+
+    id: str
+    role: TeamMemberRole
+    objective: str
+    #: Repository-relative paths or glob patterns this member may modify. Empty
+    #: is only valid for a read-only member; a writer with no scope could touch
+    #: the whole repository and could not be checked against its peers.
+    scope: list[str] = Field(default_factory=list)
+    #: Read-only members are the explorers. They fan out widest, so they are the
+    #: ones that must be unable to write.
+    read_only: bool = False
+    #: Ids of members that must finish before this one starts.
+    dependencies: list[str] = Field(default_factory=list)
+
+
+class TeamPlan(StrictModel):
+    """The roster a team lead proposes for one instruction."""
+
+    summary: str
+    members: list[TeamMember]
+
+
+class TeamMemberOutcome(StrictModel):
+    """What one member did, reported back to the chat transcript."""
+
+    id: str
+    role: str
+    objective: str
+    summary: str
+    changed: list[str] = Field(default_factory=list)
+    steps: int = 0
+    success: bool = True
+    error: str = ""
+
+
+class TeamOutcome(StrictModel):
+    plan: TeamPlan
+    members: list[TeamMemberOutcome] = Field(default_factory=list)
+    changed: list[str] = Field(default_factory=list)
+    #: The mission the run was recorded under, so a caller can reach its
+    #: workspace, diff, and checkpoints afterwards.
+    mission_id: str = ""
 
 
 class ReviewFinding(StrictModel):
@@ -171,7 +365,9 @@ class VerificationCheck(StrictModel):
     name: str
     command: str
     passed: bool
-    result: CommandResult
+    result: CommandResult | None = None
+    skipped: bool = False
+    skip_reason: str = ""
 
 
 class VerificationReport(StrictModel):

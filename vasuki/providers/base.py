@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from vasuki.schemas import LLMResponse, Message
 
 StructuredT = TypeVar("StructuredT", bound=BaseModel)
+
+#: Output ceiling for one model reply. A coding agent writes files, so the old
+#: 4096 was routinely hit mid-JSON: the reply came back truncated and unparseable
+#: rather than merely short. Large enough for a real file, still bounded.
+DEFAULT_MAX_OUTPUT_TOKENS = 16_384
 
 
 class LLMProvider(ABC):
@@ -26,6 +31,8 @@ class LLMProvider(ABC):
         *,
         temperature: float = 0,
         max_tokens: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
     ) -> LLMResponse: ...
 
     @abstractmethod

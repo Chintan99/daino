@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from importlib import import_module
 from pathlib import Path
 
@@ -45,6 +46,55 @@ def resolve_secret(reference: str) -> str:
             raise ConfigurationError(f"No keyring entry for {service}/{username}")
         return value
     raise ConfigurationError("Only env://, file://, and keyring:// secret references are allowed")
+
+
+def store_global_secret(name: str, value: str) -> str:
+    """Store a secret for every project, returning only its reference.
+
+    A provider configured globally must not point at a key inside one
+    repository: the reference would dangle everywhere else, and the key would
+    sit in a directory that can be deleted with the checkout.
+    """
+    from vasuki.config.globals import global_config_dir
+
+    return store_project_secret(global_config_dir(), name, value, marker="")
+
+
+def store_project_secret(root: Path, name: str, value: str, *, marker: str = ".vasuki") -> str:
+    """Store a validated secret in a private project file and return only its reference."""
+    if not value:
+        raise ConfigurationError("Cannot store an empty secret")
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip(".-")
+    if not safe_name:
+        raise ConfigurationError("Secret name is invalid")
+    state_directory = (root.resolve() / marker).resolve() if marker else root.resolve()
+    candidate = state_directory / "secrets"
+    candidate.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory = candidate.resolve()
+    if not directory.is_relative_to(state_directory):
+        raise ConfigurationError("Secret directory resolves outside its state directory")
+    directory.chmod(0o700)
+    target = directory / f"{safe_name}.key"
+    descriptor, temporary = tempfile.mkstemp(
+        dir=directory,
+        prefix=f".{safe_name}.",
+        text=True,
+    )
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(value)
+            stream.write("\n")
+        os.replace(temporary, target)
+        target.chmod(0o600)
+    except Exception:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        Path(temporary).unlink(missing_ok=True)
+        raise
+    return f"file://{target}"
 
 
 def redact(text: str, additional_values: list[str] | None = None) -> str:

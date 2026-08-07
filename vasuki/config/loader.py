@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from vasuki.config.globals import GLOBAL_SECTIONS, load_global_data, merge_layers
 from vasuki.config.models import Settings
 from vasuki.exceptions import ConfigurationError
 
@@ -39,6 +40,8 @@ def _apply_environment(data: dict[str, Any]) -> dict[str, Any]:
         "VASUKI_RUNTIME": ("runtime", "default"),
         "OPENROUTER_BASE_URL": ("providers", "openrouter", "base_url"),
         "OPENROUTER_MODEL": ("providers", "openrouter", "model"),
+        "OLLAMA_BASE_URL": ("providers", "ollama", "base_url"),
+        "OLLAMA_MODEL": ("providers", "ollama", "model"),
         "VLLM_BASE_URL": ("providers", "vllm", "base_url"),
         "VLLM_MODEL": ("providers", "vllm", "model"),
     }
@@ -54,6 +57,10 @@ def _apply_environment(data: dict[str, Any]) -> dict[str, Any]:
         data.setdefault("providers", {}).setdefault("openrouter", {}).setdefault(
             "api_key", "env://OPENROUTER_API_KEY"
         )
+    if os.getenv("OLLAMA_API_KEY"):
+        data.setdefault("providers", {}).setdefault("ollama", {}).setdefault(
+            "api_key", "env://OLLAMA_API_KEY"
+        )
     if os.getenv("VLLM_API_KEY"):
         data.setdefault("providers", {}).setdefault("vllm", {}).setdefault(
             "api_key", "env://VLLM_API_KEY"
@@ -62,24 +69,50 @@ def _apply_environment(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_settings(root: Path | None = None, *, require: bool = True) -> Settings:
-    """Load and validate project settings."""
+    """Load and validate settings, layering the project over the user's globals.
+
+    Providers, models, and routing come from the global file unless the project
+    overrides them, so a model configured once is available in every checkout
+    without repeating onboarding.
+    """
     path = config_path(root)
+    resolved_root = find_project_root(root)
+    global_data = load_global_data()
     if not path.exists():
-        if require:
+        if require and not global_data:
             raise ConfigurationError(f"No {CONFIG_DIR}/{CONFIG_FILE}; run `vasuki init` first")
-        return default_settings(find_project_root(root))
+        base = default_settings(resolved_root).safe_dump()
+        merged = merge_layers(global_data, {"project": base["project"]})
+        try:
+            return Settings.model_validate(_apply_environment(merged))
+        except ValidationError as exc:
+            raise ConfigurationError(f"Invalid configuration: {exc}") from exc
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        return Settings.model_validate(_apply_environment(raw))
+        merged = merge_layers(global_data, raw if isinstance(raw, dict) else {})
+        return Settings.model_validate(_apply_environment(merged))
     except (OSError, yaml.YAMLError, ValidationError) as exc:
         raise ConfigurationError(f"Invalid configuration: {exc}") from exc
 
 
 def save_settings(settings: Settings, root: Path | None = None) -> Path:
-    """Persist settings without secret material."""
+    """Persist project settings without secret material.
+
+    Values identical to the global layer are left out. Copying them into every
+    project would freeze today's model into each repository, so changing the
+    global choice later would silently fail to reach any existing project.
+    """
     path = config_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    rendered = yaml.safe_dump(settings.safe_dump(), sort_keys=False, allow_unicode=True)
+    data = settings.safe_dump()
+    global_data = load_global_data()
+    for key in GLOBAL_SECTIONS:
+        # Drop a section that matches the global layer, and an empty one that
+        # only exists because the model has a default. Either way the project
+        # should inherit rather than pin, so a later global change reaches it.
+        if key in data and (data[key] == global_data.get(key) or not data[key]):
+            data.pop(key)
+    rendered = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
     path.write_text(rendered, encoding="utf-8")
     return path
 

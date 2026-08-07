@@ -47,3 +47,43 @@ def git_repo(tmp_path: Path) -> Path:
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-m", "initial")
     return tmp_path
+
+
+def painted_text(app: object) -> str:
+    """Return the characters actually composited to the terminal.
+
+    Preferred over ``export_screenshot``: the SVG exporter splits a row into
+    several ``<text>`` runs at unpredictable points, so substring assertions
+    against its markup fail even when the text is plainly on screen.
+    """
+    return "\n".join(
+        "".join(segment.text for segment in strip)
+        for strip in app.screen._compositor.render_strips()  # type: ignore[attr-defined]
+    )
+
+
+def commit_all(root: Path) -> None:
+    """Make a directory a Git repository with everything committed.
+
+    Coding missions require one, so a realistic TUI fixture has one too.
+    """
+    git(root, "init", "-b", "main")
+    git(root, "config", "user.name", "Test User")
+    git(root, "config", "user.email", "test@example.invalid")
+    git(root, "add", "-A")
+    git(root, "commit", "-m", "initial")
+
+
+@pytest.fixture(autouse=True)
+def isolated_global_config(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Point global configuration at a scratch directory for every test.
+
+    Configuration is user-level, so without this a test that connects a provider
+    writes into the developer's real ~/.config/vasuki and every later test —
+    and the developer's own installation — inherits a provider pointing at a
+    dead port. Autouse because the risk applies to any test that touches
+    settings, not only the ones that obviously do.
+    """
+    monkeypatch.setenv("VASUKI_CONFIG_HOME", str(tmp_path_factory.mktemp("vasuki-global")))

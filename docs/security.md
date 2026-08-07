@@ -4,9 +4,11 @@ The main trust boundaries are the repository, model provider, execution runtime,
 workspace, and deployment target.
 
 Configuration stores secret references, never values. `env://NAME`, `keyring://service/account`,
-and `file://path` are resolved immediately before use. Key paths are passed to AsyncSSH; key contents
-are not read into prompts. Likely credentials and private keys are redacted from tool results and
-JSON audit logs.
+and `file://path` are resolved immediately before use. The Providers screen may accept a pasted
+OpenRouter key, but validates it first and then writes it under `.vasuki/secrets` with user-only
+permissions; YAML receives only the resulting `file://` reference. Key paths are passed to
+AsyncSSH; key contents are not read into prompts. Likely credentials and private keys are redacted
+from tool results and JSON audit logs.
 
 `PolicyEngine` classifies repository reads/writes, local/container commands, installations, network
 access, secrets, migrations, deployment, firewall/proxy changes, deletion, and rollback. Forced

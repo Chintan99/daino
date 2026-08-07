@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable
 
 from vasuki.schemas import FailureReport, VerificationReport
 from vasuki.verification.engine import VerificationEngine
 
 RepairCallback = Callable[[FailureReport, int, bool], Awaitable[bool]]
+ReportCallback = Callable[[VerificationReport, int], Awaitable[None] | None]
 
 
 class RepairLoop:
@@ -25,10 +27,17 @@ class RepairLoop:
         self.total_attempts = total_attempts
 
     async def run(
-        self, commands: list[str], repair: RepairCallback
+        self,
+        commands: list[str],
+        repair: RepairCallback,
+        observe: ReportCallback | None = None,
     ) -> tuple[VerificationReport, int]:
         report = await self.engine.run(commands)
         attempt = 0
+        if observe:
+            result = observe(report, attempt)
+            if inspect.isawaitable(result):
+                await result
         while not report.passed and attempt < self.total_attempts:
             attempt += 1
             escalated = attempt > self.local_attempts
@@ -36,4 +45,8 @@ class RepairLoop:
             if not changed:
                 break
             report = await self.engine.run(commands)
+            if observe:
+                result = observe(report, attempt)
+                if inspect.isawaitable(result):
+                    await result
         return report, attempt

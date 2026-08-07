@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from vasuki.config.models import ProviderConfig
 from vasuki.providers.base import LLMProvider
+from vasuki.providers.ollama import OllamaProvider
 from vasuki.providers.openai_compatible import OpenAICompatibleProvider
 from vasuki.providers.openrouter import OpenRouterProvider
 from vasuki.providers.vllm import VLLMProvider
@@ -23,6 +24,16 @@ def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
             features=config.features,
             application_name=config.application_name,
             referring_url=config.referring_url,
+        )
+    if config.type == "ollama":
+        return OllamaProvider(
+            base_url=config.base_url,
+            api_key=api_key,
+            model=config.model,
+            timeout=config.timeout,
+            max_retries=config.max_retries,
+            max_output_tokens=config.max_output_tokens,
+            features=config.features,
         )
     if config.type == "vllm":
         return VLLMProvider(

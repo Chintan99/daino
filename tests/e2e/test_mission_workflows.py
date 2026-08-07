@@ -12,7 +12,7 @@ from vasuki.config.models import ModelProfileConfig, ProviderConfig
 from vasuki.missions import MissionService
 from vasuki.persistence import Database
 from vasuki.schemas import (
-    Implementation,
+    AgentAction,
     ProjectMode,
     RequirementSpec,
     ReviewReport,
@@ -21,11 +21,51 @@ from vasuki.schemas import (
 )
 
 
+def _role_name(role: object) -> str:
+    return str(getattr(role, "value", role))
+
+
 class DeterministicGateway:
     def __init__(self, command: str, *, repair: bool = False) -> None:
         self.command = command
         self.repair = repair
         self.implementation_calls = 0
+        self._actions = self._script()
+
+    def _script(self) -> dict[str, list[dict[str, Any]]]:
+        write_content = (
+            "def answer():\n    return 0\n" if self.repair else "def answer():\n    return 42\n"
+        )
+        builder = [
+            {
+                "action": "write",
+                "path": "feature.py",
+                "content": write_content,
+                "thought": "Create the feature module.",
+            },
+            {
+                "action": "finish",
+                "summary": "Implement answer",
+                "verification_commands": [self.command],
+                "thought": "The file is written.",
+            },
+        ]
+        debugger = [
+            {
+                "action": "replace",
+                "path": "feature.py",
+                "old_string": "    return 0\n",
+                "new_string": "    return 42\n",
+                "thought": "Correct the failing return value.",
+            },
+            {
+                "action": "finish",
+                "summary": "Repair answer",
+                "verification_commands": [self.command],
+                "thought": "The value is corrected.",
+            },
+        ]
+        return {"builder": builder, "debugger": debugger}
 
     async def structured(
         self,
@@ -59,55 +99,14 @@ class DeterministicGateway:
                     )
                 ],
             )
-        if schema is Implementation:
-            self.implementation_calls += 1
-            if self.repair and self.implementation_calls == 1:
-                return Implementation(
-                    summary="Initial implementation",
-                    modifications=[
-                        {
-                            "path": "feature.py",
-                            "action": "create",
-                            "content": "def answer():\n    return 0\n",
-                            "reason": "Add feature",
-                        }
-                    ],
-                    verification_commands=[self.command],
-                )
-            if self.repair:
-                return Implementation(
-                    summary="Repair answer",
-                    modifications=[
-                        {
-                            "path": "feature.py",
-                            "action": "patch",
-                            "unified_diff": (
-                                "--- a/feature.py\n"
-                                "+++ b/feature.py\n"
-                                "@@ -1,2 +1,2 @@\n"
-                                " def answer():\n"
-                                "-    return 0\n"
-                                "+    return 42\n"
-                            ),
-                            "reason": "Correct failing value",
-                        }
-                    ],
-                    verification_commands=[self.command],
-                )
-            return Implementation(
-                summary="Implement answer",
-                modifications=[
-                    {
-                        "path": "feature.py",
-                        "action": "create",
-                        "content": "def answer():\n    return 42\n",
-                        "reason": "Add feature",
-                    }
-                ],
-                verification_commands=[self.command],
-            )
         if schema is ReviewReport:
             return ReviewReport(approved=True, summary="Verified and scoped")
+        if schema is AgentAction:
+            queue = self._actions.get(_role_name(role)) or self._actions["builder"]
+            step = queue.pop(0) if queue else dict(self._actions["builder"][-1])
+            if step["action"] == "finish":
+                self.implementation_calls += 1
+            return AgentAction(**step)
         raise AssertionError(schema)
 
 

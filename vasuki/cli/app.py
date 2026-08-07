@@ -19,14 +19,15 @@ from sqlalchemy import select
 
 from vasuki import __version__
 from vasuki.agents import ReviewerAgent
+from vasuki.application import initialize_project
 from vasuki.config import (
     config_path,
-    default_settings,
     find_project_root,
     load_settings,
     save_settings,
     set_value,
 )
+from vasuki.config.globals import save_global
 from vasuki.config.models import ModelProfileConfig, ProviderConfig
 from vasuki.deployment import DeploymentManager
 from vasuki.git import GitClient
@@ -49,9 +50,10 @@ console = Console()
 app = typer.Typer(
     name="vasuki",
     help="Local-first autonomous software engineering control plane.",
-    no_args_is_help=True,
+    no_args_is_help=False,
     invoke_without_command=True,
 )
+_active_project: Path | None = None
 config_app = typer.Typer(help="Inspect and update project configuration.")
 providers_app = typer.Typer(help="Manage OpenAI-compatible providers.")
 models_app = typer.Typer(help="Inspect, test, and route model profiles.")
@@ -73,7 +75,7 @@ app.add_typer(infra_app, name="infra")
 
 
 def _root() -> Path:
-    return find_project_root()
+    return find_project_root(_active_project)
 
 
 def _context(*, require: bool = True) -> tuple[Path, Any, Database]:
@@ -113,11 +115,37 @@ def _mission_panel(mission: Mission, tasks: list[Task] | None = None) -> Panel:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: Annotated[bool, typer.Option("--version", help="Show the installed version.")] = False,
+    project: Annotated[
+        Path | None,
+        typer.Option("--project", help="Repository to open or operate on."),
+    ] = None,
 ) -> None:
+    """Open the interactive workspace, or run an automation-friendly subcommand."""
+    global _active_project
+    _active_project = project.resolve() if project else None
+    _install_crash_handling(_active_project)
     if version:
         console.print(f"vasuki {__version__}")
         raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        from vasuki.tui import run_tui
+
+        run_tui(_active_project)
+
+
+@app.command("tui")
+def tui_command(
+    project: Annotated[
+        Path | None,
+        typer.Option("--project", help="Repository to open."),
+    ] = None,
+) -> None:
+    """Open the persistent interactive terminal workspace."""
+    from vasuki.tui import run_tui
+
+    run_tui(project or _active_project)
 
 
 @app.command()
@@ -134,27 +162,19 @@ def init(
     if target.exists() and not force:
         console.print(f"[yellow]Already initialized:[/yellow] {target}")
         raise typer.Exit(1)
-    settings = default_settings(root)
-    save_settings(settings, root)
-    ignore_path = root / ".gitignore"
-    existing = ignore_path.read_text(encoding="utf-8") if ignore_path.exists() else ""
-    entries = [".vasuki/", ".env", "*.pem", "*.key"]
-    missing = [entry for entry in entries if entry not in existing.splitlines()]
-    if missing:
-        suffix = "" if not existing or existing.endswith("\n") else "\n"
-        ignore_path.write_text(existing + suffix + "\n".join(missing) + "\n", encoding="utf-8")
-    database = Database(settings, root)
-    database.initialize()
-    index = RepositoryIndexer(root).build()
-    runtimes = WorkspaceManager(root).detect_runtimes()
+    result = initialize_project(root, force=force)
+    languages = result["languages"]
+    frameworks = result["frameworks"]
+    runtimes = result["runtimes"]
     console.print(
         Panel(
             f"Project: [bold]{root.name}[/bold]\n"
             f"Root: {root}\n"
-            f"Indexed files: {len(index.files)}\n"
-            f"Languages: {', '.join(index.languages) or 'none'}\n"
-            f"Frameworks: {', '.join(index.frameworks) or 'none'}\n"
-            f"Runtimes: {', '.join(name for name, present in runtimes.items() if present)}",
+            f"Indexed files: {result['files']}\n"
+            f"Languages: {', '.join(languages) or 'none'}\n"
+            f"Frameworks: {', '.join(frameworks) or 'none'}\n"
+            f"Runtimes: "
+            f"{', '.join(name for name, present in runtimes.items() if present)}",
             title="Vasuki initialized",
             border_style="green",
         )
@@ -162,8 +182,26 @@ def init(
 
 
 @app.command()
-def doctor() -> None:
-    """Check the host, configuration, provider references, and runtime prerequisites."""
+def doctor(
+    fix_terminal: Annotated[
+        bool,
+        typer.Option("--fix-terminal", help="Repair a terminal left broken by a crash."),
+    ] = False,
+) -> None:
+    """Check the host, configuration, provider references, and runtime prerequisites.
+
+    ``--fix-terminal`` undoes what a crashed full-screen session leaves behind. A
+    native crash skips the TUI's cleanup, so the terminal stays in
+    alternate-screen and mouse-reporting mode and every mouse movement arrives at
+    the shell as text like ``35;72;10M``. It cannot be undone from inside the
+    process that died, so it is offered here.
+    """
+    from vasuki.utils import crashlog
+
+    if fix_terminal:
+        crashlog.restore_terminal()
+        console.print("[green]Terminal restored.[/green]")
+        return
     root = _root()
     checks: list[tuple[str, bool, str]] = []
     try:
@@ -242,7 +280,7 @@ def providers_list() -> None:
 def providers_add(
     name: Annotated[str, typer.Argument(help="Stable provider name.")],
     provider_type: Annotated[
-        str, typer.Option("--type", help="openrouter, vllm, or openai-compatible")
+        str, typer.Option("--type", help="openrouter, ollama, vllm, or openai-compatible")
     ],
     base_url: Annotated[str, typer.Option("--base-url")],
     model: Annotated[str, typer.Option("--model")],
@@ -262,13 +300,17 @@ def providers_add(
         base_url=base_url,
         model=model,
         api_key=api_key,
+        timeout=300 if provider_type in {"ollama", "vllm"} else 120,
     )
     settings.providers[name] = provider
     settings.models[name] = ModelProfileConfig(
-        provider=name, model=model, local=local or provider_type == "vllm"
+        provider=name, model=model, local=local or provider_type in {"ollama", "vllm"}
     )
     for role in ModelRole:
         settings.routing.setdefault(role.value, name)
+    # A provider is a user-level fact, so it is written globally as well as to
+    # this project; the next directory then needs no configuration at all.
+    save_global(settings)
     save_settings(settings, root)
     with database.session() as session:
         existing = session.scalar(select(Provider).where(Provider.name == name))
@@ -372,6 +414,13 @@ async def _model_test(profile: str) -> None:
         response = await provider.complete(
             [Message(role="user", content="Reply with exactly: ok")], max_tokens=16
         )
+        if not response.content.strip():
+            console.print(
+                "[red]The provider returned no visible content.[/red] "
+                "Try a larger output limit or another model; some reasoning models "
+                "consume a very small allowance before emitting their answer."
+            )
+            raise typer.Exit(1)
         console.print(
             f"[green]Response[/green] {response.content.strip()} ({response.latency_ms:.0f} ms)"
         )
@@ -410,7 +459,7 @@ def repo_status() -> None:
     root, _, _ = _context()
     indexer = RepositoryIndexer(root)
     index = indexer.load()
-    console.print(indexer.summary())
+    console.print(indexer.summary(include_files=False))
     console.print(f"Last indexed: {index.generated_at.isoformat()}")
 
 
@@ -542,8 +591,13 @@ def build(
 def run(
     request: Annotated[str, typer.Argument()],
     mode: Annotated[str | None, typer.Option("--mode")] = None,
+    non_interactive: Annotated[
+        bool,
+        typer.Option("--non-interactive", help="Never prompt; suitable for automation."),
+    ] = False,
 ) -> None:
     """Run planning, implementation, verification, review, commit, and evidence export."""
+    del non_interactive
     asyncio.run(_run_mission(request, _parse_mode(mode)))
 
 
@@ -562,12 +616,15 @@ async def _run_mission(request: str, mode: ProjectMode | None) -> None:
 @app.command("test")
 def test_command(
     command: Annotated[list[str] | None, typer.Argument()] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit a structured verification report.")
+    ] = False,
 ) -> None:
     """Run project verification through the configured runtime."""
-    asyncio.run(_test(command or []))
+    asyncio.run(_test(command or [], json_output=json_output))
 
 
-async def _test(commands: list[str]) -> None:
+async def _test(commands: list[str], *, json_output: bool = False) -> None:
     root, settings, database = _context()
     runtime = MissionService(root, settings, database)._runtime(root)
     await runtime.prepare()
@@ -575,16 +632,24 @@ async def _test(commands: list[str]) -> None:
         report = await VerificationEngine(root, runtime).run(commands or None)
     finally:
         await runtime.cleanup()
-    table = Table("Command", "Status", "Duration")
-    for check in report.checks:
-        table.add_row(
-            check.command,
-            "[green]pass[/green]" if check.passed else "[red]fail[/red]",
-            f"{check.result.duration_seconds:.2f}s",
-        )
-    console.print(table)
+    if json_output:
+        _json(report.model_dump(mode="json"))
+    else:
+        table = Table("Command", "Status", "Duration")
+        for check in report.checks:
+            table.add_row(
+                check.command,
+                "[yellow]skip[/yellow]"
+                if check.skipped
+                else "[green]pass[/green]"
+                if check.passed
+                else "[red]fail[/red]",
+                f"{check.result.duration_seconds:.2f}s" if check.result else "—",
+            )
+        console.print(table)
     if not report.passed:
-        _json([item.model_dump(mode="json") for item in report.failures])
+        if not json_output:
+            _json([item.model_dump(mode="json") for item in report.failures])
         raise typer.Exit(1)
 
 
@@ -615,10 +680,31 @@ async def _review_current() -> None:
 
 
 @missions_app.command("list")
-def missions_list() -> None:
+def missions_list(
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit structured mission records.")
+    ] = False,
+) -> None:
     _, _, database = _context()
     with database.session() as session:
         missions = session.scalars(select(Mission).order_by(Mission.created_at.desc())).all()
+    if json_output:
+        _json(
+            [
+                {
+                    "id": mission.id,
+                    "status": mission.status,
+                    "mode": mission.mode,
+                    "request": mission.request,
+                    "created_at": mission.created_at,
+                    "updated_at": mission.updated_at,
+                    "branch": mission.branch,
+                    "workspace_path": mission.workspace_path,
+                }
+                for mission in missions
+            ]
+        )
+        return
     table = Table("ID", "Status", "Mode", "Request", "Created")
     for mission in missions:
         table.add_row(
@@ -811,9 +897,18 @@ def _deployment_manager() -> tuple[DeploymentManager, str | None]:
 
 
 @deploy_app.command("inspect")
-def deploy_inspect(target: Annotated[str, typer.Option("--target")]) -> None:
+def deploy_inspect(
+    target: Annotated[str, typer.Option("--target")],
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Emit structured inspection data.")
+    ] = False,
+) -> None:
     manager, _ = _deployment_manager()
-    _json(asyncio.run(manager.inspect(target)))
+    result = asyncio.run(manager.inspect(target))
+    if json_output:
+        _json(result)
+    else:
+        _json(result)
 
 
 @deploy_app.command("plan")
@@ -941,3 +1036,20 @@ def logs(
     events = AuditLog(root).read(mission)
     for event in events[-limit:]:
         console.print(json.dumps(event, ensure_ascii=False))
+
+
+def _install_crash_handling(project: Path | None) -> None:
+    """Record native crashes and leave the terminal usable, for every command.
+
+    Installed in the top-level callback rather than only around the TUI: a crash
+    in any invocation still wrecks the terminal, and a crash log that only some
+    processes write is a log that never explains the interesting failure.
+    """
+    from vasuki.config.loader import find_project_root
+    from vasuki.utils import crashlog
+
+    try:
+        root = find_project_root(project)
+    except Exception:  # noqa: BLE001 - diagnostics must never stop the command
+        root = project or Path.cwd()
+    crashlog.install(root)

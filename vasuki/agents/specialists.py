@@ -3,42 +3,15 @@
 from __future__ import annotations
 
 from vasuki.agents.gateway import ModelGateway
-from vasuki.model_router import ModelRole, RoutingContext
-from vasuki.prompts import BUILDER_SYSTEM, DEBUGGER_SYSTEM, REVIEWER_SYSTEM
+from vasuki.model_router import ModelRole
+from vasuki.prompts import REVIEWER_SYSTEM
 from vasuki.schemas import (
     ContextBundle,
     FailureReport,
-    Implementation,
     Message,
     RequirementSpec,
     ReviewReport,
 )
-
-
-class BuilderAgent:
-    def __init__(self, gateway: ModelGateway) -> None:
-        self.gateway = gateway
-
-    async def implement(
-        self, mission_id: str, context: ContextBundle, *, debugger: bool = False, attempts: int = 0
-    ) -> Implementation:
-        system = DEBUGGER_SYSTEM if debugger else BUILDER_SYSTEM
-        role = ModelRole.DEBUGGER if debugger else ModelRole.BUILDER
-        return await self.gateway.structured(
-            mission_id,
-            role,
-            [
-                Message(role="system", content=system),
-                Message(role="user", content=context.model_dump_json(indent=2)),
-            ],
-            Implementation,
-            routing_context=RoutingContext(
-                failed_attempts=attempts,
-                affected_files=len(context.included_paths),
-                tests_failing=debugger,
-            ),
-            included_files=context.included_paths,
-        )
 
 
 class ReviewerAgent:

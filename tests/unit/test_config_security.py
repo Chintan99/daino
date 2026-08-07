@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from vasuki.config import load_settings, save_settings, set_value
 from vasuki.config.models import ProviderConfig, Settings
-from vasuki.security import PolicyEngine, redact, resolve_secret
+from vasuki.security import PolicyEngine, redact, resolve_secret, store_project_secret
 
 
 def test_config_round_trip_and_dotted_update(tmp_path: Path) -> None:
@@ -36,6 +36,16 @@ def test_secret_resolution_and_redaction(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "abc123" not in output
     assert "qwerty" not in output
     assert "supersecret" not in output
+
+
+def test_project_secret_is_private_and_only_returns_reference(tmp_path: Path) -> None:
+    reference = store_project_secret(tmp_path, "openrouter", "sk-or-valid-test-key")
+    secret_path = Path(reference.removeprefix("file://"))
+
+    assert reference.startswith("file://")
+    assert resolve_secret(reference) == "sk-or-valid-test-key"
+    assert secret_path.stat().st_mode & 0o777 == 0o600
+    assert secret_path.parent.stat().st_mode & 0o777 == 0o700
 
 
 @pytest.mark.parametrize(

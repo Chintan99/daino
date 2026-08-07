@@ -63,6 +63,38 @@ class Mission(Base, TimestampMixin):
     tasks: Mapped[list[Task]] = relationship(back_populates="mission", cascade="all, delete-orphan")
 
 
+class ConversationSession(Base, TimestampMixin):
+    __tablename__ = "conversation_sessions"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    mission_id: Mapped[str | None] = mapped_column(ForeignKey("missions.id"), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    active_model: Mapped[str | None] = mapped_column(String(255))
+    context_files: Mapped[list[str]] = mapped_column(JSON, default=list)
+    display_mode: Mapped[str] = mapped_column(String(32), default="standard")
+    status: Mapped[str] = mapped_column(String(32), default="active")
+
+
+class ConversationMessage(Base, TimestampMixin):
+    __tablename__ = "conversation_messages"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("conversation_sessions.id"), index=True)
+    mission_id: Mapped[str | None] = mapped_column(ForeignKey("missions.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(64))
+    role: Mapped[str] = mapped_column(String(64))
+    content: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+
+
+class MissionEventRecord(Base, TimestampMixin):
+    __tablename__ = "mission_events"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    mission_id: Mapped[str | None] = mapped_column(ForeignKey("missions.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(96), index=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class RequirementVersion(Base, TimestampMixin):
     __tablename__ = "requirement_versions"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

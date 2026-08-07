@@ -4,16 +4,30 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import os
 import re
 from collections import Counter
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from vasuki.repository.languages import IGNORED_DIRS, language_for
 from vasuki.repository.syntax import extract_outline
 from vasuki.schemas.core import RepositoryFile, RepositoryIndex, RepositorySymbol
 
 MAX_INDEX_FILE_BYTES = 1_000_000
+
+#: Bounds on the walk. A repository is not thousands of levels deep; a path that
+#: deep means a link loop or a mistakenly-wide root, and following it is what
+#: overflowed the C stack. The file cap keeps an accidental root — a home
+#: directory, say — from turning startup into a filesystem crawl.
+MAX_INDEX_DEPTH = 40
+MAX_INDEX_FILES = 20_000
+
+
+def _empty_index(root: Path) -> RepositoryIndex:
+    """A valid, empty index for a project that has not been indexed yet."""
+    return RepositoryIndex(root=str(root), generated_at=datetime.now(UTC), files=[], languages={})
 
 
 def _digest(data: bytes) -> str:
@@ -123,17 +137,58 @@ class RepositoryIndexer:
         except (OSError, ValueError):
             return {}
 
+    def _walk(self) -> Iterator[tuple[Path, PurePosixPath]]:
+        """Yield indexable files, pruning as it descends.
+
+        ``rglob("*")`` was wrong in three ways that together crashed the process.
+        It descends into every ignored directory before anything filters them, so
+        a tree containing ``node_modules`` or ``.venv`` costs a full traversal.
+        It follows directory symlinks, so a link pointing at an ancestor — common
+        in a home directory — recurses without end. And the paths it produces
+        then went through ``Path.relative_to``, which recurses per component:
+        once the walk was deep enough that call overflowed the C stack and
+        segfaulted, with no traceback and no way for the user to tell why.
+
+        Walking explicitly fixes all three: ignored directories are pruned before
+        being entered, symlinks are never followed, depth is bounded, and the
+        relative path is accumulated as we go instead of being recomputed.
+        """
+        stack: list[tuple[Path, PurePosixPath, int]] = [(self.root, PurePosixPath(), 0)]
+        seen = 0
+        while stack:
+            directory, relative, depth = stack.pop()
+            if depth > MAX_INDEX_DEPTH:
+                continue
+            try:
+                entries = sorted(os.scandir(directory), key=lambda item: item.name)
+            except OSError:
+                continue
+            for entry in entries:
+                # Never follow a symlink, in either direction: a link to an
+                # ancestor is an infinite tree, and a link to a file outside the
+                # repository is not part of it.
+                if entry.is_symlink() or entry.name in IGNORED_DIRS:
+                    continue
+                child = relative / entry.name
+                try:
+                    if entry.is_dir():
+                        stack.append((Path(entry.path), child, depth + 1))
+                    elif entry.is_file():
+                        seen += 1
+                        if seen > MAX_INDEX_FILES:
+                            return
+                        yield Path(entry.path), child
+                except OSError:
+                    continue
+
     def build(self) -> RepositoryIndex:
         previous = self._load_existing()
         files: list[RepositoryFile] = []
         languages: Counter[str] = Counter()
         frameworks: set[str] = set()
         entrypoints: list[str] = []
-        for path in sorted(self.root.rglob("*")):
-            relative_path = path.relative_to(self.root)
-            if not path.is_file() or any(part in IGNORED_DIRS for part in relative_path.parts):
-                continue
-            if path.is_symlink() or path.stat().st_size > MAX_INDEX_FILE_BYTES:
+        for path, relative_path in self._walk():
+            if path.stat().st_size > MAX_INDEX_FILE_BYTES:
                 continue
             relative = relative_path.as_posix()
             try:
@@ -204,9 +259,21 @@ class RepositoryIndexer:
         return index
 
     def load(self) -> RepositoryIndex:
+        """Return the cached index, or an empty one when nothing is cached.
+
+        Deliberately does not build. Building is a full filesystem walk, and
+        hiding it behind a read meant a view mounting at startup could kick off
+        an index of the entire project — or, when the root resolved somewhere
+        unintended, of a whole home directory. Indexing happens where the user
+        asked for it: ``vasuki init``, ``/index``, and mission execution.
+        """
         if not self.index_path.exists():
-            return self.build()
-        return RepositoryIndex.model_validate_json(self.index_path.read_text(encoding="utf-8"))
+            return _empty_index(self.root)
+        try:
+            return RepositoryIndex.model_validate_json(self.index_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # A truncated or half-written index must not be fatal; it is a cache.
+            return _empty_index(self.root)
 
     def find_symbol(self, name: str) -> list[RepositorySymbol]:
         return [
@@ -303,11 +370,34 @@ class RepositoryIndexer:
                 continue
         return sorted(set(services))
 
-    def summary(self) -> str:
+    def inventory(self, limit: int = 200) -> str:
+        """List the repository's files with their symbols.
+
+        Planning and question answering both depend on this: an agent told only
+        that a repository has "144 indexed files" cannot target any of them, so
+        it invents new filenames instead of editing what is already there.
+        """
+        index = self.load()
+        if not index.files:
+            return "No files indexed. Run /index to build the repository index."
+        ranked = sorted(index.files, key=lambda item: (item.path.count("/"), item.path))
+        lines: list[str] = []
+        for item in ranked[:limit]:
+            names = ", ".join(symbol.name for symbol in item.symbols[:8])
+            detail = f"  [{names}]" if names else ""
+            lines.append(f"{item.path} ({item.language}, {item.size}B){detail}")
+        if len(ranked) > limit:
+            lines.append(f"… and {len(ranked) - limit} more files")
+        return "\n".join(lines)
+
+    def summary(self, *, include_files: bool = True, file_limit: int = 200) -> str:
         index = self.load()
         top = ", ".join(f"{name}: {count}" for name, count in sorted(index.languages.items()))
-        return (
+        overview = (
             f"{len(index.files)} indexed files. Languages: {top or 'none'}. "
             f"Frameworks: {', '.join(index.frameworks) or 'none detected'}. "
             f"Entrypoints: {', '.join(index.entrypoints) or 'none detected'}."
         )
+        if not include_files:
+            return overview
+        return f"{overview}\n\nExisting files:\n{self.inventory(file_limit)}"

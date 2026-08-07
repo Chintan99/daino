@@ -1,0 +1,645 @@
+/* Vasuki TUI.
+ *
+ * A flat terminal surface: no panels, no boxed cards, no heavy borders.
+ * Structure comes from hairline rules and spacing; meaning comes from colour,
+ * with a hue per kind of message rather than a single grey ramp. Tokens mirror
+ * vasuki/tui/palette.py — change both together.
+ */
+
+$background: #0b0c0e;
+$rule: #232734;
+$accent: #3ddc97;
+
+$input: #eceff4;
+$bright: #dbe0ea;
+$text: #b6bcc7;
+$muted: #858d9c;
+$value: #6f7684;
+$hint: #5f6675;
+$dim: #565d6b;
+$faint: #464c58;
+$faintest: #3a3f4a;
+
+$ready: #9ece6a;
+$alert: #f7768e;
+$caution: #e0af68;
+
+Screen {
+    background: $background;
+    color: $text;
+    layers: base overlay;
+}
+
+/* ── header ─────────────────────────────────────────────────────────── */
+
+#top-header {
+    height: 2;
+    padding: 1 2 0 2;
+    background: $background;
+}
+
+#header-identity {
+    width: 1fr;
+    height: 1;
+    color: $text;
+}
+
+#header-vitals {
+    width: auto;
+    height: 1;
+    text-align: right;
+}
+
+/* ── navigation tabs ────────────────────────────────────────────────── */
+
+#nav-tabs {
+    height: 2;
+    padding: 0 2;
+    background: $background;
+    border-bottom: solid $rule;
+}
+
+.nav-tab {
+    width: auto;
+    height: 1;
+    margin-right: 3;
+    color: $muted;
+}
+
+.nav-tab:hover {
+    color: $bright;
+}
+
+.nav-spacer {
+    width: 1fr;
+    height: 1;
+}
+
+.nav-more {
+    width: auto;
+    height: 1;
+}
+
+/* ── main surface ───────────────────────────────────────────────────── */
+
+#main-workspace {
+    width: 100%;
+    height: 1fr;
+    background: $background;
+}
+
+#chat-view {
+    width: 100%;
+    height: 100%;
+    padding: 1 2 0 2;
+    scrollbar-size: 1 1;
+}
+
+/* ── welcome ────────────────────────────────────────────────────────── */
+
+.welcome-card {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+#welcome-banner {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
+#welcome-art {
+    width: auto;
+    height: auto;
+    margin-right: 4;
+}
+
+/* Nudged down so the two-line wordmark sits against the middle of the art. */
+#welcome-title {
+    width: 1fr;
+    height: auto;
+    padding-top: 4;
+}
+
+#welcome-wordmark, #welcome-meta, #welcome-help {
+    height: 1;
+}
+
+.narrow #welcome-art {
+    display: none;
+}
+
+.narrow #welcome-title {
+    padding-top: 0;
+}
+
+/* ── messages ───────────────────────────────────────────────────────── */
+
+.message-card {
+    width: 100%;
+    max-width: 96;
+    height: auto;
+    margin-bottom: 1;
+    padding: 0;
+    background: $background;
+    color: $text;
+}
+
+.message-card:focus {
+    background: #131620;
+}
+
+/* ── context strip ──────────────────────────────────────────────────── */
+
+#context-strip {
+    height: 1;
+    padding: 0 2;
+    background: $background;
+}
+
+.hidden-panel, .hidden {
+    display: none;
+}
+
+/* ── prompt ─────────────────────────────────────────────────────────── */
+
+#prompt-area {
+    height: auto;
+    max-height: 14;
+    padding: 0 2 0 2;
+    background: $background;
+    border-top: solid $rule;
+}
+
+#prompt-row {
+    height: auto;
+    max-height: 10;
+    padding-top: 1;
+}
+
+#prompt-caret {
+    width: 2;
+    height: 1;
+}
+
+#prompt {
+    width: 1fr;
+    height: auto;
+    max-height: 9;
+    padding: 0;
+    border: none;
+    background: $background;
+    color: $input;
+    scrollbar-size: 1 1;
+}
+
+#prompt:focus {
+    border: none;
+    background: $background;
+}
+
+#prompt-suggestions {
+    height: auto;
+    max-height: 10;
+    margin-bottom: 1;
+    background: $background;
+    border: none;
+    scrollbar-size: 1 1;
+}
+
+#prompt-suggestions ListItem {
+    height: 1;
+    padding: 0 1;
+    background: $background;
+    color: $muted;
+}
+
+#prompt-suggestions ListItem.-highlight {
+    background: #131620;
+    color: $bright;
+}
+
+#hint-bar {
+    height: 1;
+    dock: bottom;
+    padding: 0 2;
+    background: $background;
+}
+
+/* ── shared view chrome ─────────────────────────────────────────────── */
+
+#missions-view, #repository-view, #files-view, #changes-view, #tests-view,
+#approvals-view, #checkpoints-view, #playbooks-view, #deployments-view,
+#providers-view, #settings-view, #logs-view, #help-view {
+    width: 100%;
+    height: 100%;
+    padding: 1 2 0 2;
+}
+
+.view-title {
+    height: 2;
+    color: $bright;
+    text-style: bold;
+}
+
+.section-title {
+    height: 2;
+    color: $faint;
+}
+
+.panel-title {
+    height: 1;
+    color: $faint;
+}
+
+.hint {
+    height: 2;
+    color: $faint;
+}
+
+DataTable {
+    height: 1fr;
+    background: $background;
+    color: $text;
+    border: none;
+    scrollbar-size: 1 1;
+}
+
+DataTable > .datatable--header {
+    background: $background;
+    color: $faint;
+    text-style: none;
+}
+
+DataTable > .datatable--cursor {
+    background: #131620;
+    color: $bright;
+}
+
+DataTable:focus > .datatable--cursor {
+    background: #1b1f2c;
+    color: $bright;
+}
+
+DataTable:focus {
+    border: none;
+}
+
+Tree {
+    background: $background;
+    color: $text;
+    padding: 0;
+}
+
+Tree > .tree--guides, Tree > .tree--guides-hover, Tree > .tree--guides-selected {
+    color: $rule;
+}
+
+Tree > .tree--cursor {
+    background: #131620;
+    color: $bright;
+}
+
+RichLog {
+    background: $background;
+    color: $text;
+    scrollbar-size: 1 1;
+}
+
+Input, Select {
+    background: $background;
+    color: $input;
+    border: none;
+    border-bottom: solid $rule;
+    padding: 0 1;
+}
+
+Input:focus, Select:focus {
+    border: none;
+    border-bottom: solid $accent;
+}
+
+Input > .input--placeholder {
+    color: $faintest;
+}
+
+SelectCurrent {
+    border: none;
+}
+
+SelectOverlay {
+    background: #131620;
+    border: none;
+    color: $text;
+}
+
+Button {
+    min-width: 10;
+    height: 1;
+    padding: 0 1;
+    background: $background;
+    color: $muted;
+    border: none;
+    text-style: none;
+}
+
+Button:hover {
+    background: $background;
+    color: $bright;
+}
+
+Button:focus {
+    background: $background;
+    color: $accent;
+    text-style: bold;
+}
+
+Button.-primary, Button.-success, Button.-warning, Button.-error {
+    background: $background;
+    color: $accent;
+}
+
+.toolbar {
+    height: 2;
+    padding: 0;
+    background: $background;
+}
+
+.toolbar Button {
+    margin-right: 3;
+}
+
+.toolbar Select {
+    width: 26;
+}
+
+/* ── providers ──────────────────────────────────────────────────────── */
+
+#provider-form {
+    height: 14;
+    padding: 0;
+    background: $background;
+    border-bottom: solid $rule;
+}
+
+#provider-core-fields, #provider-detail-fields {
+    height: 4;
+    grid-size: 3 1;
+    grid-columns: 1fr 1fr 1.2fr;
+    grid-rows: 4;
+    grid-gutter: 0 3;
+}
+
+/* Sized for the tallest visible combination: label plus the search box and
+ * model picker. The plain model input and that pair are never shown together. */
+#provider-detail-fields {
+    height: 5;
+    grid-size: 2 1;
+    grid-columns: 1.7fr 1fr;
+    grid-rows: 5;
+}
+
+.provider-field {
+    height: 4;
+}
+
+.provider-model-field {
+    height: 5;
+}
+
+.provider-field Label {
+    height: 1;
+    color: $faint;
+}
+
+.provider-field Input, .provider-field Select {
+    height: 2;
+    width: 100%;
+}
+
+#provider-actions {
+    height: 2;
+    align-horizontal: left;
+}
+
+#provider-actions Button {
+    width: auto;
+    margin-right: 4;
+}
+
+#provider-form-status {
+    height: 2;
+    color: $faint;
+}
+
+/* ── detail surfaces ────────────────────────────────────────────────── */
+
+#mission-detail, #playbook-detail, #deployment-detail, #repository-summary {
+    height: auto;
+    max-height: 45%;
+    padding: 1 0 0 0;
+    background: $background;
+    border-top: solid $rule;
+    overflow-y: auto;
+    scrollbar-size: 1 1;
+}
+
+#file-search, #log-filter {
+    height: 2;
+    margin: 0;
+}
+
+#file-browser {
+    height: 1fr;
+}
+
+#file-tree {
+    width: 34%;
+    min-width: 22;
+    height: 100%;
+    padding-right: 2;
+    border-right: solid $rule;
+    background: $background;
+}
+
+#file-preview-panel {
+    width: 1fr;
+    height: 100%;
+    padding-left: 2;
+}
+
+#file-outline {
+    height: auto;
+    max-height: 6;
+    color: $faint;
+    background: $background;
+}
+
+#file-preview-scroll, #diff-scroll {
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
+
+#file-preview, #diff-content {
+    width: auto;
+    height: auto;
+}
+
+#diff-stats {
+    height: 2;
+    color: $faint;
+}
+
+#tests-table {
+    height: 45%;
+}
+
+#test-failures {
+    height: 1fr;
+    padding-top: 1;
+    background: $background;
+    border-top: solid $rule;
+}
+
+#settings-content {
+    height: 1fr;
+}
+
+#log-content {
+    height: 1fr;
+}
+
+.very-narrow #file-tree {
+    width: 24;
+}
+
+/* ── modals ─────────────────────────────────────────────────────────── */
+
+ModalScreen {
+    align: center middle;
+    background: $background 80%;
+}
+
+#approval-dialog, #command-dialog, #model-dialog {
+    width: 72;
+    max-width: 92%;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: #131620;
+    border: solid $rule;
+}
+
+.modal-title {
+    height: 2;
+    text-style: bold;
+    color: $accent;
+}
+
+.modal-actions {
+    height: 3;
+    margin-top: 1;
+    align-horizontal: right;
+}
+
+.modal-actions Button {
+    margin-left: 4;
+}
+
+#command-search {
+    height: 2;
+}
+
+#command-options, #model-options {
+    height: 18;
+    max-height: 60%;
+    background: #131620;
+    border: none;
+}
+
+#command-options ListItem, #model-options ListItem {
+    background: #131620;
+    color: $muted;
+    padding: 0 1;
+}
+
+#command-options ListItem.-highlight, #model-options ListItem.-highlight {
+    background: #1b1f2c;
+    color: $bright;
+}
+
+/* ── onboarding ─────────────────────────────────────────────────────── */
+
+OnboardingScreen {
+    align: center middle;
+}
+
+#onboarding {
+    width: 76;
+    max-width: 92%;
+    height: auto;
+    max-height: 90%;
+    padding: 1 3;
+    background: $background;
+    border: none;
+}
+
+#onboarding-logo {
+    height: 2;
+    text-align: left;
+    text-style: bold;
+    color: $accent;
+}
+
+.subtitle {
+    height: 2;
+    text-align: left;
+    color: $faint;
+}
+
+#onboarding-summary {
+    height: auto;
+    margin-bottom: 1;
+    padding: 0;
+    background: $background;
+    color: $muted;
+}
+
+#onboarding-error {
+    height: auto;
+    color: $alert;
+}
+
+#onboarding-loading {
+    height: 1;
+}
+
+.onboarding-actions {
+    height: 2;
+    align-horizontal: left;
+}
+
+.onboarding-actions Button {
+    margin-right: 4;
+}
+
+/* ── light theme ────────────────────────────────────────────────────── */
+
+.theme-light {
+    background: #f7f6f3;
+    color: #4a4740;
+}
+
+.theme-light Screen,
+.theme-light #main-workspace,
+.theme-light #chat-view,
+.theme-light #top-header,
+.theme-light #nav-tabs,
+.theme-light #context-strip,
+.theme-light #prompt-area,
+.theme-light #hint-bar,
+.theme-light DataTable {
+    background: #f7f6f3;
+    color: #4a4740;
+}

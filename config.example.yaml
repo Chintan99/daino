@@ -27,17 +27,31 @@ providers:
     base_url: https://openrouter.ai/api/v1
     api_key: env://OPENROUTER_API_KEY
     model: anthropic/claude-sonnet-4
+  local-ollama:
+    type: ollama
+    base_url: http://127.0.0.1:11434/v1
+    model: qwen2.5-coder:7b
+    timeout: 300
+    # Ollama defaults to [chat, structured, tools].
   local:
     type: vllm
     base_url: http://127.0.0.1:8000/v1
     api_key: env://VLLM_API_KEY
     model: local-coder
+    # Add tools when vLLM is served with --enable-auto-tool-choice
+    # --tool-call-parser <parser>:
+    # features: [chat, structured, tools]
 models:
   strong-cloud:
     provider: openrouter
     model: anthropic/claude-sonnet-4
     planning_score: 9
     coding_score: 9
+  local-ollama:
+    provider: local-ollama
+    model: qwen2.5-coder:7b
+    local: true
+    coding_score: 8
   local-coder:
     provider: local
     model: local-coder
@@ -46,7 +60,7 @@ models:
 routing:
   architect: strong-cloud
   planner: strong-cloud
-  builder: local-coder
+  builder: local-ollama
   reviewer: local-coder
   debugger: strong-cloud
   tester: local-coder
@@ -54,6 +68,13 @@ routing:
   deployer: local-coder
 routing_fallbacks:
   builder: [strong-cloud]
+tui:
+  theme: dark
+  display_mode: standard
+  submit_shortcut: enter
+  show_hints: true
+  streaming: true
+  keybindings: {}
 deployment:
   targets:
     production:

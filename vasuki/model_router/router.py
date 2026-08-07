@@ -50,9 +50,22 @@ class ModelRouter:
         self.file_escalation_threshold = file_escalation_threshold
 
     def select(
-        self, role: ModelRole | str, context: RoutingContext | None = None
+        self,
+        role: ModelRole | str,
+        context: RoutingContext | None = None,
+        *,
+        profile_override: str | None = None,
     ) -> ModelSelection:
         role_name = ModelRole(role).value
+        if profile_override:
+            profile = self.settings.models.get(profile_override)
+            if profile is None:
+                raise ConfigurationError(f"Unknown model profile {profile_override}")
+            return ModelSelection(
+                profile_name=profile_override,
+                profile=profile,
+                reason=f"Explicitly selected for {role_name} in this session",
+            )
         profile_name = self.settings.routing.get(role_name)
         if not profile_name:
             raise ConfigurationError(f"No model route configured for role {role_name}")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from vasuki.schemas.core import (
     VerificationCheck,
     VerificationReport,
 )
+from vasuki.security.policy import SHELL_OPERATORS
 
 TRACE_LOCATION = re.compile(r'File "([^"]+)", line (\d+)')
 
@@ -20,6 +22,20 @@ class VerificationEngine:
     def __init__(self, root: Path, runtime: Runtime) -> None:
         self.root = root
         self.runtime = runtime
+
+    @staticmethod
+    def runnable(command: str) -> bool:
+        """Report whether a command can execute without a shell.
+
+        Planners keep proposing one-liners like ``grep -c foo page.html | head``.
+        Those cannot run here, and letting one reach the runtime aborts a mission
+        whose code changes were fine.
+        """
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return False
+        return bool(tokens) and not any(token in SHELL_OPERATORS for token in tokens)
 
     def discover_commands(self) -> list[str]:
         commands: list[str] = []
@@ -70,7 +86,24 @@ class VerificationEngine:
         started = datetime.now(UTC)
         checks: list[VerificationCheck] = []
         failures: list[FailureReport] = []
-        for command in commands or self.discover_commands():
+        requested = commands or self.discover_commands()
+        usable = [command for command in requested if self.runnable(command)]
+        skipped = [command for command in requested if not self.runnable(command)]
+        if not usable:
+            # Everything proposed needs a shell; fall back to what the repository
+            # itself supports rather than failing the mission on the checks.
+            usable = [command for command in self.discover_commands() if self.runnable(command)]
+        for command in skipped:
+            checks.append(
+                VerificationCheck(
+                    name="skipped",
+                    command=command,
+                    passed=True,
+                    skipped=True,
+                    skip_reason="needs a shell; verification commands run directly",
+                )
+            )
+        for command in usable:
             result = await self.runtime.execute(command)
             check = VerificationCheck(
                 name=command.split()[0],

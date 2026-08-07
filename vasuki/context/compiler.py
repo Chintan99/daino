@@ -28,38 +28,56 @@ class ContextCompiler:
         failure_summary: str | None = None,
     ) -> ContextBundle:
         index = self.indexer.load()
-        candidates: list[str] = []
-        candidates.extend(task.expected_files)
-        candidates.extend(task.allowed_files)
+        # Files the task is scoped to must be present: editing one the agent
+        # cannot see means guessing at its contents and rewriting it blind.
+        required = list(dict.fromkeys([*task.expected_files, *task.allowed_files]))
+        discovered: list[str] = []
         lower_terms = {
             word.lower() for word in f"{task.title} {task.objective}".split() if len(word) > 3
         }
         for item in index.files:
             haystack = f"{item.path} {item.summary}".lower()
             if any(term in haystack for term in lower_terms):
-                candidates.append(item.path)
+                discovered.append(item.path)
         for test in self.indexer.tests():
             stem = Path(test).stem.removeprefix("test_")
-            if any(stem in path for path in candidates):
-                candidates.append(test)
+            if any(stem in path for path in [*required, *discovered]):
+                discovered.append(test)
 
         files: dict[str, str] = {}
         tests: dict[str, str] = {}
         used = self._estimate_tokens(task.model_dump_json())
-        for relative in dict.fromkeys(candidates):
+
+        def include(relative: str, *, mandatory: bool) -> None:
+            nonlocal used
             path = (self.root / relative).resolve()
             if not path.is_relative_to(self.root) or not path.is_file():
-                continue
+                return
+            if relative in files or relative in tests:
+                return
             try:
                 content = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
-                continue
+                return
             cost = self._estimate_tokens(content)
             if used + cost > self.token_budget:
-                continue
+                if not mandatory:
+                    return
+                # Truncate rather than omit, and say so, so the agent knows it is
+                # looking at part of the file instead of assuming it has all of it.
+                remaining = max(0, self.token_budget - used) * 4
+                if remaining < 400:
+                    return
+                content = content[:remaining] + "\n… file truncated to fit the context budget\n"
+                cost = self._estimate_tokens(content)
             target = tests if "test" in path.name.lower() or "tests" in path.parts else files
             target[relative] = content
             used += cost
+
+        for relative in required:
+            include(relative, mandatory=True)
+        for relative in dict.fromkeys(discovered):
+            include(relative, mandatory=False)
         return ContextBundle(
             task=task.objective,
             acceptance_criteria=task.acceptance_criteria,

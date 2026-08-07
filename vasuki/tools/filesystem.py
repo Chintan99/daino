@@ -2,10 +2,30 @@
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
 from vasuki.schemas import ToolResult
+
+#: Directories never worth searching: version control internals, Vasuki's own
+#: state, and the usual dependency and build caches.
+_IGNORED_DIRS = frozenset(
+    {
+        ".git",
+        ".vasuki",
+        ".venv",
+        "venv",
+        "node_modules",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+        ".tox",
+    }
+)
 
 
 class FileTools:
@@ -118,3 +138,73 @@ class FileTools:
             except (OSError, UnicodeError):
                 continue
         return ToolResult(tool="search_text", success=True, data={"matches": matches})
+
+    def glob_files(self, pattern: str, *, limit: int = 300) -> ToolResult:
+        """List repository files matching a path pattern such as ``src/**/*.py``."""
+        if not pattern.strip():
+            return ToolResult(tool="glob", success=False, error="No pattern given.")
+        matches: list[str] = []
+        for path in sorted(self.root.glob(pattern.strip().lstrip("/"))):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(self.root)
+            if any(part in _IGNORED_DIRS for part in relative.parts):
+                continue
+            matches.append(relative.as_posix())
+        truncated = len(matches) > limit
+        return ToolResult(
+            tool="glob",
+            success=True,
+            data={
+                "pattern": pattern,
+                "matches": matches[:limit],
+                "count": len(matches),
+                "truncated": truncated,
+            },
+        )
+
+    def grep(self, expression: str, *, path_glob: str = "", limit: int = 200) -> ToolResult:
+        """Search file contents by regular expression.
+
+        ``search_text`` matches a literal substring, which cannot express "the
+        definition of this function" or "any import of this module". This can.
+        """
+        try:
+            regex = re.compile(expression)
+        except re.error as exc:
+            return ToolResult(
+                tool="grep", success=False, error=f"Invalid regular expression: {exc}"
+            )
+        candidates = (
+            self.root.glob(path_glob.strip().lstrip("/"))
+            if path_glob.strip()
+            else self.root.rglob("*")
+        )
+        matches: list[dict[str, str | int]] = []
+        for path in sorted(candidates):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(self.root)
+            if any(part in _IGNORED_DIRS for part in relative.parts):
+                continue
+            try:
+                for line_number, line in enumerate(
+                    path.read_text(encoding="utf-8").splitlines(), 1
+                ):
+                    if regex.search(line):
+                        matches.append(
+                            {
+                                "path": relative.as_posix(),
+                                "line": line_number,
+                                "text": line.strip()[:300],
+                            }
+                        )
+                        if len(matches) >= limit:
+                            return ToolResult(
+                                tool="grep",
+                                success=True,
+                                data={"matches": matches, "truncated": True},
+                            )
+            except (OSError, UnicodeError):
+                continue
+        return ToolResult(tool="grep", success=True, data={"matches": matches, "truncated": False})
