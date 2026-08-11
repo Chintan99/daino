@@ -63,6 +63,11 @@ def runner(
         # Reading git is routine; publishing or discarding work is not.
         ("git push origin main", Verdict.ASK),
         ("git reset --hard", Verdict.ASK),
+        ("docker compose config", Verdict.ALLOW),
+        ("docker info", Verdict.ALLOW),
+        ("docker compose build", Verdict.ASK),
+        ("docker compose up -d", Verdict.ASK),
+        ("docker system prune", Verdict.DENY),
         ("pip install httpx", Verdict.ASK),
         ("npm install", Verdict.ASK),
         ("curl https://example.invalid", Verdict.ASK),
@@ -215,6 +220,36 @@ async def test_a_failing_command_is_an_observation_not_an_exception() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_missing_tool_in_docker_names_the_sandbox_and_compose_alternative() -> None:
+    class Missing(FakeRuntime):
+        async def execute(
+            self, command: str, *, timeout: int | None = None, approved: bool = False
+        ) -> CommandResult:
+            return CommandResult(
+                command=command,
+                exit_code=127,
+                stdout="",
+                stderr="sh: 1: npm: not found",
+                duration_seconds=0.01,
+            )
+
+    async def approve(command: str, reason: str) -> tuple[bool, bool]:
+        return True, False
+
+    result = await CommandRunner(
+        Missing(),  # type: ignore[arg-type]
+        CommandGate(),
+        runtime_name="docker",
+        approve=approve,
+    ).run("npm --version")
+
+    assert not result.success
+    assert "configured Docker sandbox image" in (result.error or "")
+    assert "docker compose" in (result.error or "")
+    assert result.data["runtime"] == "docker"
+
+
+@pytest.mark.asyncio
 async def test_long_output_keeps_the_head_and_the_tail() -> None:
     """A failure is usually at one end; the middle of a build log rarely matters."""
     runtime = FakeRuntime(stdout="A" * 5_000 + "MIDDLE" + "Z" * 5_000)
@@ -276,7 +311,14 @@ async def test_without_a_runner_the_agent_is_told_plainly(tmp_path: Path) -> Non
 
 def test_run_command_is_in_the_chat_action_space() -> None:
     names = {spec["function"]["name"] for spec in CHAT_TOOL_SPECS}
-    assert {"run_command", "glob", "grep", "multi_edit", "todo"} <= names
+    assert {
+        "run_command",
+        "resolve_command_failure",
+        "glob",
+        "grep",
+        "multi_edit",
+        "todo",
+    } <= names
 
 
 # --------------------------------------------------------------------------
@@ -312,11 +354,12 @@ async def test_multi_edit_applies_every_span_to_one_file(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_multi_edit_reports_which_span_failed(tmp_path: Path) -> None:
-    (tmp_path / "a.txt").write_text("keep\n", encoding="utf-8")
+async def test_multi_edit_failure_is_atomic(tmp_path: Path) -> None:
+    target = tmp_path / "a.txt"
+    target.write_text("keep\n", encoding="utf-8")
     executor = ActionExecutor(EditTools(tmp_path))
 
-    result, _ = await executor.execute(
+    result, paths = await executor.execute(
         AgentAction(
             thought="t",
             action="multi_edit",
@@ -330,7 +373,9 @@ async def test_multi_edit_reports_which_span_failed(tmp_path: Path) -> None:
 
     assert not result.success
     assert "Edit 2 of 2 failed" in (result.error or "")
-    assert "1 earlier edit(s) were applied" in (result.error or "")
+    assert "No edits were applied" in (result.error or "")
+    assert paths == []
+    assert target.read_text(encoding="utf-8") == "keep\n"
 
 
 @pytest.mark.asyncio
@@ -346,6 +391,88 @@ async def test_read_file_can_page_through_a_large_file(tmp_path: Path) -> None:
 
     assert result.success
     assert result.data["content"].splitlines() == ["line50", "line51", "line52"]
+
+
+@pytest.mark.asyncio
+async def test_a_range_covering_the_whole_file_satisfies_read_before_write(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "small.py"
+    target.write_text("value = 1\n", encoding="utf-8")
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=True))
+
+    await executor.execute(
+        AgentAction(thought="read", action="read_file", path="small.py", offset=1, limit=200)
+    )
+    result, _ = await executor.execute(
+        AgentAction(
+            thought="edit",
+            action="replace",
+            path="small.py",
+            old_string="value = 1",
+            new_string="value = 2",
+        )
+    )
+
+    assert result.success
+    assert target.read_text(encoding="utf-8") == "value = 2\n"
+
+
+@pytest.mark.asyncio
+async def test_paging_through_a_file_satisfies_read_before_write(tmp_path: Path) -> None:
+    target = tmp_path / "paged.txt"
+    target.write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=True))
+
+    await executor.execute(
+        AgentAction(thought="read", action="read_file", path="paged.txt", offset=1, limit=2)
+    )
+    blocked, _ = await executor.execute(
+        AgentAction(
+            thought="edit",
+            action="replace",
+            path="paged.txt",
+            old_string="four",
+            new_string="FOUR",
+        )
+    )
+    await executor.execute(
+        AgentAction(thought="read", action="read_file", path="paged.txt", offset=3, limit=2)
+    )
+    applied, _ = await executor.execute(
+        AgentAction(
+            thought="edit",
+            action="replace",
+            path="paged.txt",
+            old_string="four",
+            new_string="FOUR",
+        )
+    )
+
+    assert not blocked.success
+    assert applied.success
+    assert target.read_text(encoding="utf-8").endswith("FOUR\n")
+
+
+@pytest.mark.asyncio
+async def test_agent_can_refine_a_file_it_just_created_without_rereading(tmp_path: Path) -> None:
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=True))
+
+    created, _ = await executor.execute(
+        AgentAction(thought="create", action="write", path="new.py", content="value = 1\n")
+    )
+    refined, _ = await executor.execute(
+        AgentAction(
+            thought="refine",
+            action="replace",
+            path="new.py",
+            old_string="value = 1",
+            new_string="value = 2",
+        )
+    )
+
+    assert created.success and refined.success
+    assert (tmp_path / "new.py").read_text(encoding="utf-8") == "value = 2\n"
 
 
 @pytest.mark.asyncio
@@ -398,7 +525,7 @@ def test_a_new_project_gets_a_runtime_the_machine_can_use(tmp_path: Path) -> Non
     from vasuki.runtimes.detect import preferred_runtime
 
     assert RuntimeConfig().default == "local"
-    assert preferred_runtime() in {"local", "docker"}
+    assert preferred_runtime() == "local"
 
 
 def test_docker_permission_trouble_names_the_remedy(monkeypatch: pytest.MonkeyPatch) -> None:

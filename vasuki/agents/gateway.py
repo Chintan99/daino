@@ -2,22 +2,29 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from vasuki.config.models import ProviderConfig, Settings
+from vasuki.context.profiles import ModelExecutionProfile
 from vasuki.events import AgentRoleChanged, EventBus, ModelSelected
+from vasuki.exceptions import ProviderError
 from vasuki.model_router import ModelRole, ModelRouter, RoutingContext
 from vasuki.model_router.router import ModelSelection
 from vasuki.persistence import Database
 from vasuki.persistence.models import ModelCall
 from vasuki.providers import create_provider
+from vasuki.providers.base import ProviderUsage
 from vasuki.schemas import LLMResponse, Message
 from vasuki.utils.ids import new_id
 
 StructuredT = TypeVar("StructuredT", bound=BaseModel)
+
+_CONTEXT_SAFETY_TOKENS = 512
+_MIN_INPUT_TOKENS = 512
 
 
 class ModelGateway:
@@ -72,6 +79,45 @@ class ModelGateway:
             )
         )
 
+    def context_budget(
+        self,
+        role: ModelRole,
+        routing_context: RoutingContext | None = None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        profile_override: str | None = None,
+    ) -> int:
+        """Return a safe input budget for the selected model and action schema."""
+        selection = self.router.select(
+            role,
+            routing_context,
+            profile_override=profile_override or self.profile_override,
+        )
+        return _input_budget(selection, tools)
+
+    def execution_profile(
+        self,
+        role: ModelRole,
+        routing_context: RoutingContext | None = None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        profile_override: str | None = None,
+    ) -> ModelExecutionProfile:
+        """Resolve concrete context and loop limits for the selected model."""
+        selection = self.router.select(
+            role,
+            routing_context,
+            profile_override=profile_override or self.profile_override,
+        )
+        return ModelExecutionProfile.resolve(
+            selection.profile_name,
+            selection.profile,
+            input_budget_tokens=_input_budget(selection, tools),
+            project_budget_tokens=self.settings.project.context_budget_tokens,
+            memory_items=self.settings.memory.max_retrieved_items,
+            memory_tokens=self.settings.memory.max_context_tokens,
+        )
+
     async def structured(
         self,
         mission_id: str,
@@ -83,44 +129,58 @@ class ModelGateway:
         included_files: list[str] | None = None,
         profile_override: str | None = None,
     ) -> StructuredT:
-        selection = self.router.select(
+        selections = self.router.failover_selections(
             role,
             routing_context,
             profile_override=profile_override or self.profile_override,
         )
-        self._emit_selection(
-            mission_id,
-            role,
-            selection.profile_name,
-            selection.profile.provider,
-            selection.profile.model,
-        )
-        provider_config = self.settings.providers.get(selection.profile.provider)
-        if provider_config is None:
-            raise RuntimeError(
-                f"Model {selection.profile_name} references missing provider "
-                f"{selection.profile.provider}"
+        last_failure: ProviderError | None = None
+        for selection in selections:
+            self._emit_selection(
+                mission_id,
+                role,
+                selection.profile_name,
+                selection.profile.provider,
+                selection.profile.model,
             )
-        config = _resolved_config(provider_config, selection)
-        provider = create_provider(selection.profile.provider, config)
-        record = ModelCall(
-            id=new_id("model-call"),
-            mission_id=mission_id,
-            role=role.value,
-            provider=selection.profile.provider,
-            model=selection.profile.model,
-            selection_reason=selection.reason,
-            included_files=included_files or [],
-            success=False,
-        )
-        try:
-            result = await provider.structured_complete(messages, schema)
-            record.success = True
-            return result
-        finally:
-            await provider.close()
-            with self.database.session() as session:
-                session.add(record)
+            provider_config = self.settings.providers.get(selection.profile.provider)
+            if provider_config is None:
+                raise RuntimeError(
+                    f"Model {selection.profile_name} references missing provider "
+                    f"{selection.profile.provider}"
+                )
+            provider = create_provider(
+                selection.profile.provider, _resolved_config(provider_config, selection)
+            )
+            record = ModelCall(
+                id=new_id("model-call"),
+                mission_id=mission_id,
+                role=role.value,
+                provider=selection.profile.provider,
+                model=selection.profile.model,
+                selection_reason=selection.reason,
+                included_files=included_files or [],
+                success=False,
+            )
+            try:
+                fitted = _fit_messages(messages, _input_budget(selection))
+                result = await provider.structured_complete(fitted, schema)
+                record.success = True
+            except ProviderError as exc:
+                last_failure = exc
+            finally:
+                usage = _provider_usage(provider)
+                record.input_tokens = usage.input_tokens
+                record.output_tokens = usage.output_tokens
+                record.estimated_cost = usage.cost
+                await provider.close()
+                with self.database.session() as session:
+                    session.add(record)
+            if record.success:
+                return result
+        if last_failure is not None:
+            raise last_failure
+        raise ProviderError(f"No usable model provider is configured for {role.value}")
 
     def route_supports_tools(
         self,
@@ -150,48 +210,68 @@ class ModelGateway:
         included_files: list[str] | None = None,
         profile_override: str | None = None,
     ) -> LLMResponse:
-        selection = self.router.select(
+        selections = self.router.failover_selections(
             role,
             routing_context,
             profile_override=profile_override or self.profile_override,
         )
-        self._emit_selection(
-            mission_id,
-            role,
-            selection.profile_name,
-            selection.profile.provider,
-            selection.profile.model,
-        )
-        provider_config = self.settings.providers.get(selection.profile.provider)
-        if provider_config is None:
-            raise RuntimeError(f"Missing provider {selection.profile.provider}")
-        config = _resolved_config(provider_config, selection)
-        provider = create_provider(selection.profile.provider, config)
-        effective_tools = tools if provider.supports_tools() else None
-        response: LLMResponse | None = None
-        try:
-            response = await provider.complete(
-                messages, tools=effective_tools, tool_choice=tool_choice
+        last_failure: ProviderError | None = None
+        for selection in selections:
+            self._emit_selection(
+                mission_id,
+                role,
+                selection.profile_name,
+                selection.profile.provider,
+                selection.profile.model,
             )
-            return response
-        finally:
-            await provider.close()
-            with self.database.session() as session:
-                session.add(
-                    ModelCall(
-                        id=new_id("model-call"),
-                        mission_id=mission_id,
-                        role=role.value,
-                        provider=selection.profile.provider,
-                        model=selection.profile.model,
-                        selection_reason=selection.reason,
-                        included_files=included_files or [],
-                        input_tokens=response.input_tokens if response else 0,
-                        output_tokens=response.output_tokens if response else 0,
-                        latency_ms=response.latency_ms if response else 0,
-                        success=response is not None,
-                    )
+            provider_config = self.settings.providers.get(selection.profile.provider)
+            if provider_config is None:
+                raise RuntimeError(f"Missing provider {selection.profile.provider}")
+            provider = create_provider(
+                selection.profile.provider, _resolved_config(provider_config, selection)
+            )
+            effective_tools = tools if provider.supports_tools() else None
+            response: LLMResponse | None = None
+            try:
+                fitted = _fit_messages(messages, _input_budget(selection, effective_tools))
+                response = await provider.complete(
+                    fitted, tools=effective_tools, tool_choice=tool_choice
                 )
+            except ProviderError as exc:
+                last_failure = exc
+            finally:
+                usage = _provider_usage(provider)
+                await provider.close()
+                with self.database.session() as session:
+                    session.add(
+                        ModelCall(
+                            id=new_id("model-call"),
+                            mission_id=mission_id,
+                            role=role.value,
+                            provider=selection.profile.provider,
+                            model=selection.profile.model,
+                            selection_reason=selection.reason,
+                            included_files=included_files or [],
+                            input_tokens=(
+                                usage.input_tokens
+                                or (response.input_tokens if response else 0)
+                            ),
+                            output_tokens=(
+                                usage.output_tokens
+                                or (response.output_tokens if response else 0)
+                            ),
+                            latency_ms=response.latency_ms if response else 0,
+                            # This column predates provider-side accounting. When
+                            # available it now stores the actual charged amount.
+                            estimated_cost=usage.cost,
+                            success=response is not None,
+                        )
+                    )
+            if response is not None:
+                return response
+        if last_failure is not None:
+            raise last_failure
+        raise ProviderError(f"No usable model provider is configured for {role.value}")
 
     async def stream(
         self,
@@ -203,42 +283,63 @@ class ModelGateway:
         profile_override: str | None = None,
     ) -> AsyncIterator[str]:
         """Stream from the selected provider and persist the audited model call."""
-        selection = self.router.select(
+        selections = self.router.failover_selections(
             role,
             profile_override=profile_override or self.profile_override,
         )
-        self._emit_selection(
-            mission_id,
-            role,
-            selection.profile_name,
-            selection.profile.provider,
-            selection.profile.model,
-        )
-        provider_config = self.settings.providers.get(selection.profile.provider)
-        if provider_config is None:
-            raise RuntimeError(f"Missing provider {selection.profile.provider}")
-        config = _resolved_config(provider_config, selection)
-        provider = create_provider(selection.profile.provider, config)
-        success = False
-        try:
-            async for chunk in provider.stream(messages):
-                yield chunk
-            success = True
-        finally:
-            await provider.close()
-            with self.database.session() as session:
-                session.add(
-                    ModelCall(
-                        id=new_id("model-call"),
-                        mission_id=mission_id,
-                        role=role.value,
-                        provider=selection.profile.provider,
-                        model=selection.profile.model,
-                        selection_reason=selection.reason,
-                        included_files=included_files or [],
-                        success=success,
+        last_failure: ProviderError | None = None
+        for selection in selections:
+            self._emit_selection(
+                mission_id,
+                role,
+                selection.profile_name,
+                selection.profile.provider,
+                selection.profile.model,
+            )
+            provider_config = self.settings.providers.get(selection.profile.provider)
+            if provider_config is None:
+                raise RuntimeError(f"Missing provider {selection.profile.provider}")
+            provider = create_provider(
+                selection.profile.provider, _resolved_config(provider_config, selection)
+            )
+            success = False
+            emitted = False
+            try:
+                fitted = _fit_messages(messages, _input_budget(selection))
+                async for chunk in provider.stream(fitted):
+                    emitted = True
+                    yield chunk
+                success = True
+            except ProviderError as exc:
+                last_failure = exc
+            finally:
+                usage = _provider_usage(provider)
+                await provider.close()
+                with self.database.session() as session:
+                    session.add(
+                        ModelCall(
+                            id=new_id("model-call"),
+                            mission_id=mission_id,
+                            role=role.value,
+                            provider=selection.profile.provider,
+                            model=selection.profile.model,
+                            selection_reason=selection.reason,
+                            included_files=included_files or [],
+                            input_tokens=usage.input_tokens,
+                            output_tokens=usage.output_tokens,
+                            estimated_cost=usage.cost,
+                            success=success,
+                        )
                     )
-                )
+            if success:
+                return
+            # Once text reached the user, retrying from another model would
+            # append a second beginning to the same answer.
+            if emitted and last_failure is not None:
+                raise last_failure
+        if last_failure is not None:
+            raise last_failure
+        raise ProviderError(f"No usable model provider is configured for {role.value}")
 
 
 def _resolved_config(provider_config: ProviderConfig, selection: ModelSelection) -> ProviderConfig:
@@ -252,6 +353,130 @@ def _resolved_config(provider_config: ProviderConfig, selection: ModelSelection)
     return provider_config.model_copy(
         update={
             "model": selection.profile.model,
-            "max_output_tokens": selection.profile.max_output_tokens,
+            "max_output_tokens": _output_limit(selection),
+            "context_limit": selection.profile.context_window,
         }
     )
+
+
+def _provider_usage(provider: object) -> ProviderUsage:
+    """Read optional accounting without breaking custom provider adapters."""
+    usage = getattr(provider, "last_usage", None)
+    return usage if isinstance(usage, ProviderUsage) else ProviderUsage()
+
+
+def _output_limit(selection: ModelSelection) -> int:
+    """Leave at least half the model window available for instructions and observations."""
+    return min(
+        selection.profile.max_output_tokens,
+        max(_MIN_INPUT_TOKENS, selection.profile.context_window // 2),
+    )
+
+
+def _input_budget(selection: ModelSelection, tools: list[dict[str, Any]] | None = None) -> int:
+    tool_tokens = max(0, len(json.dumps(tools or [], separators=(",", ":"))) // 4)
+    return max(
+        _MIN_INPUT_TOKENS,
+        selection.profile.context_window
+        - _output_limit(selection)
+        - tool_tokens
+        - _CONTEXT_SAFETY_TOKENS,
+    )
+
+
+def _message_tokens(message: Message) -> int:
+    tool_json = (
+        json.dumps([item.model_dump(mode="json") for item in message.tool_calls])
+        if message.tool_calls
+        else ""
+    )
+    return max(1, (len(message.content) + len(tool_json)) // 4) + 8
+
+
+def _clip_text(text: str, chars: int) -> str:
+    if len(text) <= chars:
+        return text
+    if chars <= 160:
+        return text[:chars]
+    notice = "\n… older/oversized context omitted …\n"
+    remaining = chars - len(notice)
+    head = remaining * 2 // 3
+    return text[:head] + notice + text[-(remaining - head) :]
+
+
+def _fit_messages(messages: list[Message], budget_tokens: int) -> list[Message]:
+    """Keep the task and newest complete tool exchanges within a model window."""
+    if sum(_message_tokens(message) for message in messages) <= budget_tokens:
+        return list(messages)
+    if not messages:
+        return []
+
+    system_index = next((i for i, item in enumerate(messages) if item.role == "system"), None)
+    first_tool = next((i for i, item in enumerate(messages) if item.role == "tool"), len(messages))
+    task_index = next(
+        (i for i in range(first_tool - 1, -1, -1) if messages[i].role == "user"),
+        next((i for i in range(len(messages) - 1, -1, -1) if messages[i].role == "user"), 0),
+    )
+    pinned = {task_index}
+    if system_index is not None:
+        pinned.add(system_index)
+
+    replacements: dict[int, Message] = {}
+    remaining_chars = budget_tokens * 4
+    for index in sorted(pinned):
+        message = messages[index]
+        # Split the hard budget across pinned messages first. The task receives
+        # what remains after the system prompt, and head+tail clipping keeps its
+        # objective as well as end-of-bundle metadata visible.
+        other_cost = sum(len(replacements[item].content) for item in replacements)
+        allowance = max(160, remaining_chars - other_cost)
+        replacements[index] = message.model_copy(
+            update={"content": _clip_text(message.content, allowance)}
+        )
+
+    used = sum(_message_tokens(replacements.get(i, messages[i])) for i in pinned)
+    selected = set(pinned)
+    groups: list[list[int]] = []
+    index = 0
+    while index < len(messages):
+        if index in pinned:
+            index += 1
+            continue
+        group = [index]
+        if messages[index].role == "assistant":
+            cursor = index + 1
+            while cursor < len(messages) and messages[cursor].role == "tool":
+                group.append(cursor)
+                cursor += 1
+            index = cursor
+        else:
+            index += 1
+        groups.append(group)
+
+    for group in reversed(groups):
+        cost = sum(_message_tokens(messages[item]) for item in group)
+        if used + cost <= budget_tokens:
+            selected.update(group)
+            used += cost
+        elif selected == pinned:
+            # The newest observation is what lets the loop correct its last
+            # action. Keep the complete protocol group and clip its prose rather
+            # than dropping the observation and inviting the same mistake again.
+            available = budget_tokens - used
+            empty_cost = sum(
+                _message_tokens(messages[item].model_copy(update={"content": ""})) for item in group
+            )
+            content_items = [item for item in group if messages[item].content]
+            if content_items and available > empty_cost + 16:
+                chars_each = max(64, (available - empty_cost) * 4 // len(content_items))
+                for item in content_items:
+                    replacements[item] = messages[item].model_copy(
+                        update={"content": _clip_text(messages[item].content, chars_each)}
+                    )
+                clipped_cost = sum(
+                    _message_tokens(replacements.get(item, messages[item])) for item in group
+                )
+                if used + clipped_cost <= budget_tokens:
+                    selected.update(group)
+                    used += clipped_cost
+    return [replacements.get(i, message) for i, message in enumerate(messages) if i in selected]

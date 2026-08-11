@@ -43,6 +43,10 @@ Vasuki keeps project state in that project's `.vasuki` directory. Provider crede
 environment variables; saved configuration contains only secret references such as
 `env://OPENROUTER_API_KEY`.
 
+Running `vasuki init` in a greenfield directory also initializes Git and creates the first baseline
+commit. Existing repositories and their history are left intact. This gives direct edits an
+immediate pre-change checkpoint and gives worktree missions a valid starting revision.
+
 ## Upgrade
 
 Pull or download the newer Vasuki source and run the installer again:

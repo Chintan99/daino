@@ -1,16 +1,13 @@
-"""Workspace chrome: header row, navigation tabs, context strip, hint bar.
-
-The design is a flat terminal surface, so none of these are panels. Each is a
-single row of space-separated tokens whose colour carries the hierarchy.
-"""
+"""Minimal workspace chrome: header, tabs, context, and key hints."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from textual import events
 from textual.app import ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.message import Message
 from textual.widgets import Static
@@ -20,10 +17,11 @@ from vasuki.tui import palette
 from vasuki.tui.render import join
 
 #: Views promoted to the tab bar. Everything else stays reachable through the
-#: command palette and slash commands, which is what "ctrl+p more" advertises.
+#: command palette and slash commands, which is what "ctrl+p commands" advertises.
 PRIMARY_TABS: tuple[tuple[str, str], ...] = (
     ("chat", "chat-view"),
     ("missions", "missions-view"),
+    ("qa", "qa-view"),
     ("files", "files-view"),
     ("changes", "changes-view"),
     ("tests", "tests-view"),
@@ -32,15 +30,38 @@ PRIMARY_TABS: tuple[tuple[str, str], ...] = (
 
 
 def _shorten_path(path: str, home: str) -> str:
-    return f"~{path[len(home) :]}" if home and path.startswith(home) else path
+    if not home:
+        return path
+    normalized = home.rstrip("/")
+    if path == normalized:
+        return "~"
+    prefix = f"{normalized}/"
+    shortened = f"~/{path[len(prefix) :]}" if path.startswith(prefix) else path
+    return f"…/{Path(path).name}" if len(shortened) > 34 else shortened
 
 
-class VasukiHeader(Horizontal):
-    """Top row: identity on the left, live session vitals pushed to the right."""
+def _format_cost(cost: float) -> str:
+    """Keep very small, real charges visible instead of rounding them to zero."""
+    value = max(0.0, cost)
+    if value == 0:
+        return "$0.0000"
+    if value < 0.0001:
+        if value < 0.0000000001:
+            return f"${value:.2e}"
+        return f"${value:.10f}".rstrip("0")
+    return f"${value:.4f}"
+
+
+class VasukiHeader(Vertical):
+    """Two compact rows: workspace identity, then model and usage."""
 
     def compose(self) -> ComposeResult:
-        yield Static("", id="header-identity")
-        yield Static("", id="header-vitals")
+        with Horizontal(classes="header-row"):
+            yield Static("", id="header-identity", classes="header-left")
+            yield Static("", id="header-state", classes="header-right")
+        with Horizontal(classes="header-row header-detail-row"):
+            yield Static("", id="header-environment", classes="header-left")
+            yield Static("", id="header-usage", classes="header-right")
 
     def set_state(
         self,
@@ -50,6 +71,7 @@ class VasukiHeader(Horizontal):
         model: str = "not configured",
         provider: str = "offline",
         runtime: str = "local",
+        interaction_mode: str = "ask",
         status: str = "ready",
         connected: bool | None = None,
         tokens: int = 0,
@@ -65,34 +87,69 @@ class VasukiHeader(Horizontal):
         )
         identity = join(
             "  ",
-            ("vasuki", f"bold {palette.ACCENT}"),
+            ("VASUKI", f"bold {palette.ACCENT}"),
             (__version__, palette.DIM),
-            (_shorten_path(project, home), palette.DIM),
-            *(((branch, palette.DIM),) if branch else ()),
-            (provider, palette.MUTED),
-            (model, palette.MUTED),
+            (_shorten_path(project, home), palette.BRIGHT),
+            *((branch, palette.MUTED),) if branch else (),
+        )
+        mode_colour = {
+            "plan": palette.PLAN,
+            "ask": palette.CAUTION,
+            "session": palette.TOOL,
+            "full": palette.ALERT,
+        }.get(interaction_mode.casefold(), palette.MUTED)
+        lowered_status = status.casefold()
+        status_colour = (
+            palette.ALERT
+            if lowered_status in {"blocked", "cancelled", "failed"}
+            else palette.CAUTION
+            if lowered_status in {"awaiting approval", "planning", "thinking", "working"}
+            else palette.READY
+            if lowered_status in {"approved", "completed", "ready"}
+            else palette.MUTED
+        )
+        state = join(
+            "  ",
+            (interaction_mode.upper(), mode_colour),
+            Content.assemble(
+                ("●", dot),
+                (f" {lowered_status}", status_colour),
+            ),
+        )
+        environment = join(
+            "  ·  ",
+            (model or "not configured", palette.TEXT),
+            (provider or "offline", palette.MUTED),
             (runtime, palette.MUTED),
         )
-        vitals = join(
-            "  ",
-            Content.assemble(("●", dot), (f" {status.casefold()}", palette.MUTED)),
+        usage = join(
+            "  ·  ",
             (f"{tokens:,} tok", palette.DIM),
-            (f"${cost:.4f}", palette.DIM),
+            (_format_cost(cost), palette.DIM),
         )
         self.query_one("#header-identity", Static).update(identity)
-        self.query_one("#header-vitals", Static).update(vitals)
+        self.query_one("#header-state", Static).update(state)
+        self.query_one("#header-environment", Static).update(environment)
+        self.query_one("#header-usage", Static).update(usage)
 
 
 class NavigationTab(Static):
-    """One tab. Clicking it opens the matching view."""
+    """A focusable tab that opens its view with click, Enter, or Space."""
+
+    can_focus = True
+    BINDINGS = [
+        ("enter", "select", "Open"),
+        ("space", "select", "Open"),
+    ]
 
     class Selected(Message):
         def __init__(self, view_id: str) -> None:
             super().__init__()
             self.view_id = view_id
 
-    def __init__(self, label: str, view_id: str) -> None:
+    def __init__(self, label: str, view_id: str, number: int = 0) -> None:
         super().__init__(label, id=f"tab-{view_id}", classes="nav-tab")
+        self.number = number
         self.label = label
         self.view_id = view_id
         self.badge = ""
@@ -103,29 +160,42 @@ class NavigationTab(Static):
             self.active = active
         if badge is not None:
             self.badge = badge
-        colour = palette.ACCENT if self.active else palette.MUTED
-        style = f"bold {colour}" if self.active else colour
+        style = f"bold {palette.ACCENT}" if self.active else palette.MUTED
+        badge_colour = (
+            palette.ALERT
+            if "fail" in self.badge.casefold()
+            else palette.CAUTION
+            if self.badge and self.badge != "done"
+            else palette.READY
+        )
         self.set_class(self.active, "active")
+        tab_label = f" {self.label} "
         self.update(
             Content.assemble(
-                (self.label, style),
-                *(((f" {self.badge}", palette.DIM),) if self.badge else ()),
+                (tab_label, style),
+                *(((f" {self.badge}", badge_colour),) if self.badge and self.badge != "0" else ()),
             )
         )
 
     def on_click(self, event: events.Click) -> None:
         event.stop()
+        self.action_select()
+
+    def action_select(self) -> None:
         self.post_message(self.Selected(self.view_id))
 
 
 class NavigationTabs(Horizontal):
-    """Horizontal tab strip replacing the old vertical sidebar."""
+    """One restrained row of primary workspace views."""
 
     def compose(self) -> ComposeResult:
-        for label, view_id in PRIMARY_TABS:
-            yield NavigationTab(label, view_id)
+        for number, (label, view_id) in enumerate(PRIMARY_TABS, 1):
+            yield NavigationTab(label, view_id, number)
         yield Static("", classes="nav-spacer")
-        yield Static(f"[{palette.FAINT}]ctrl+p  more[/]", classes="nav-more")
+        yield Static(
+            Content.assemble(("ctrl+p", palette.DIM), (" commands", palette.FAINT)),
+            classes="nav-more",
+        )
 
     def on_mount(self) -> None:
         self.set_active("chat-view")
@@ -152,16 +222,41 @@ class ContextStrip(Static):
         self.activity = ""
 
     def _paint(self) -> None:
-        def item(label: str, value: str) -> Content:
-            return Content.assemble((label, palette.FAINT), (f" {value}", palette.VALUE))
+        verification_colour = (
+            palette.READY
+            if any(word in self.verification for word in ("passed", "verified"))
+            else palette.ALERT
+            if "failed" in self.verification
+            else palette.CAUTION
+        )
+        mission = (
+            Content.styled("no mission", palette.FAINT)
+            if self.mission == "none"
+            else Content.styled(self.mission, palette.VALUE)
+        )
+        files = Content.assemble(
+            (str(self.attached), palette.VALUE),
+            (" files", palette.FAINT),
+        )
+        verification = Content.assemble(
+            ("tests ", palette.FAINT),
+            (self.verification, verification_colour),
+        )
+        approvals = Content.assemble(
+            (
+                str(self.approvals),
+                palette.ALERT if self.approvals else palette.VALUE,
+            ),
+            (" approvals", palette.FAINT),
+        )
 
         self.update(
             join(
-                "   ",
-                item("mission", self.mission),
-                item("attached", str(self.attached)),
-                item("verify", self.verification),
-                item("approvals", str(self.approvals)),
+                "  ·  ",
+                mission,
+                files,
+                verification,
+                approvals,
                 (self.activity, palette.FAINT),
             )
         )
@@ -188,21 +283,68 @@ class ContextStrip(Static):
 
 
 class VasukiHintBar(Static):
-    """Static key reference along the bottom edge."""
+    """Key reference and an always-visible, colour-coded autonomy mode."""
 
-    def set_state(self, *, submit: str = "enter", extra: str = "") -> None:
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__("", **kwargs)
+        self.submit = "enter"
+        self.extra = ""
+        self.mode = "ask"
+
+    def set_state(
+        self,
+        *,
+        submit: str = "enter",
+        extra: str = "",
+        mode: str = "ask",
+    ) -> None:
+        self.submit = submit
+        self.extra = extra
+        self.mode = mode
+        self._paint()
+
+    def set_mode(self, mode: str) -> None:
+        self.mode = mode
+        self._paint()
+
+    def on_resize(self, _: events.Resize) -> None:
+        self._paint()
+
+    def _paint(self) -> None:
         def hint(key: str, action: str) -> Content:
             return Content.assemble((key, palette.FAINTEST), (f" {action}", palette.HINT))
 
+        mode_colour = {
+            "plan": palette.PLAN,
+            "ask": palette.CAUTION,
+            "session": palette.TOOL,
+            "full": palette.ALERT,
+        }.get(self.mode.casefold(), palette.MUTED)
+        hints = (
+            (
+                hint(self.submit, "send"),
+                hint("shift+tab", "mode"),
+                hint("ctrl+p", "palette"),
+            )
+            if 0 < self.size.width < 80
+            else (
+                hint(self.submit, "send"),
+                hint("shift+enter", "newline"),
+                hint("shift+tab", "mode"),
+                hint("ctrl+p", "palette"),
+                hint("/", "commands"),
+                hint("?", "help"),
+                hint("esc", "cancel"),
+            )
+        )
         self.update(
             join(
                 "   ",
-                hint(submit, "send"),
-                hint("shift+enter", "newline"),
-                hint("/", "commands"),
-                hint("@", "files"),
-                hint("!", "shell"),
-                hint("esc", "cancel"),
-                (extra, palette.FAINTEST),
+                (
+                    self.mode.upper(),
+                    f"bold {mode_colour}",
+                ),
+                *hints,
+                (self.extra, palette.FAINTEST),
             )
         )

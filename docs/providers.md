@@ -5,6 +5,10 @@ health checking, and cleanup. `OpenAICompatibleProvider` supplies the common imp
 OpenRouter only adds `X-Title` and `HTTP-Referer` when configured. Ollama and vLLM run fully
 offline and permit an empty API key.
 
+For OpenRouter, token counts and the charged `usage.cost` returned by the API are persisted for
+complete, structured, and streaming calls. The TUI header sums those durable usage records rather
+than estimating spend from a static price table.
+
 ```bash
 vasuki providers add private \
   --type openai-compatible \
@@ -51,6 +55,11 @@ If a server rejects the constraint parameter, the request is retried once withou
 newer and older server versions keep working. The deterministic test server under `tests/` uses
 the same protocol and requires no paid credentials.
 
+Only an HTTP request-shape rejection (for example 400 or 422) disables a schema constraint or
+native tools. Authentication, quota, transport, and server failures remain provider failures and
+move to a configured model fallback instead of repeating the same doomed request in a weaker
+format.
+
 ## Native tool calling
 
 Providers advertise capabilities through `features` in the provider configuration:
@@ -75,3 +84,8 @@ providers:
     model: Qwen/Qwen2.5-Coder-7B-Instruct
     features: [chat, structured, tools]
 ```
+
+Mission builders receive the same policy-gated command runner as the interactive coding agent.
+Tests, linters, builds, and read-only inspection can therefore run inside the implementation loop;
+installs and network commands remain unavailable in a headless mission unless an approval-capable
+interface is attached, and destructive commands remain refused.

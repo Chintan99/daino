@@ -52,3 +52,13 @@ def test_cli_init_config_and_repository_commands(
     help_result = runner.invoke(app, ["--help"])
     assert help_result.exit_code == 0
     assert "deploy" in help_result.output
+
+
+def test_cli_init_bootstraps_a_greenfield_git_baseline(tmp_path: Path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(app, ["init", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / ".git").is_dir()
+    assert git(tmp_path, "rev-parse", "--verify", "HEAD")
+    assert git(tmp_path, "log", "-1", "--format=%s") == "Initialize project"

@@ -21,6 +21,22 @@ security:
   require_approval_for_install: true
   require_approval_for_network: true
   require_approval_for_production: true
+memory:
+  enabled: true
+  auto_save: true
+  auto_extract: true
+  auto_resume: false
+  max_retrieved_items: 8
+  max_context_tokens: 2000
+  compaction_threshold: 0.8
+  embedding_provider: disabled
+  embedding_model: ""
+  embedding_base_url: ""
+  embedding_api_key: "" # secret reference only, e.g. env://EMBEDDING_API_KEY
+  decay_enabled: true
+  decay_half_life_days: 180
+  user_memory_enabled: true
+  failure_memory_enabled: true
 providers:
   openrouter:
     type: openrouter
@@ -52,11 +68,19 @@ models:
     model: qwen2.5-coder:7b
     local: true
     coding_score: 8
+    # Auto also selects compact mode for constrained/local profiles. Set this
+    # explicitly when you want reproducible small-model behavior.
+    execution_mode: compact
+    initial_context_tokens: 8192
+    max_agent_steps: 32
+    no_progress_limit: 3
+    staged_retrieval: true
   local-coder:
     provider: local
     model: local-coder
     local: true
     coding_score: 8
+    execution_mode: compact
 routing:
   architect: strong-cloud
   planner: strong-cloud

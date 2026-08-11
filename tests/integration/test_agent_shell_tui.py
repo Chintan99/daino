@@ -16,11 +16,13 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import commit_all
+from tests.conftest import commit_all, painted_text
 from vasuki.application import ProviderApplicationService, initialize_project, open_project
+from vasuki.schemas import InteractionMode
+from vasuki.tools.web import WebResearchTool
 from vasuki.tui.app import VasukiApp
 from vasuki.tui.screens.workspace import WorkspaceScreen
-from vasuki.tui.widgets import ApprovalModal
+from vasuki.tui.widgets import ApprovalModal, ContextStrip, TaskChecklist
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -154,6 +156,32 @@ async def test_a_failed_command_is_shown_as_an_error_and_the_run_continues(
 
 
 @pytest.mark.asyncio
+async def test_a_crashed_chat_turn_cannot_return_the_status_to_ready(
+    agent_server: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_instance = connected_app(tmp_path, agent_server)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+
+        async def crash(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("agent loop crashed")
+
+        monkeypatch.setattr(workspace.missions, "chat", crash)
+        await workspace.execute_command("change the application")
+        await settle(pilot, workspace)
+
+        assert workspace.active_status == "Failed"
+        assert any(
+            "agent loop crashed" in item.content
+            for item in workspace.missions.messages(workspace.session_id)
+        ) or "agent loop crashed" in painted_text(app_instance)
+
+
+@pytest.mark.asyncio
 async def test_a_gated_command_actually_reaches_the_screen(
     agent_server: str, tmp_path: Path
 ) -> None:
@@ -240,6 +268,137 @@ async def test_the_plan_is_shown_when_the_agent_makes_one(
         )
         assert "[x] read the file" in contents
         assert "[>] change it" in contents
+        checklist = workspace.query_one("#task-checklist", TaskChecklist)
+        assert checklist.display
+        assert [item.status for item in checklist.todos] == ["completed", "in_progress"]
+
+
+@pytest.mark.asyncio
+async def test_session_mode_runs_gated_commands_without_an_approval_modal(
+    agent_server: str, tmp_path: Path
+) -> None:
+    _Handler.script = [
+        {"thought": "t", "action": "run_command", "command": "pip --version"},
+        FINISH,
+    ]
+    app_instance = connected_app(tmp_path, agent_server)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        workspace._set_interaction_mode(InteractionMode.SESSION)
+
+        await workspace.execute_command("check pip")
+        seen_modal = False
+        for _ in range(300):
+            await pilot.pause(0.05)
+            seen_modal |= any(
+                isinstance(screen, ApprovalModal) for screen in app_instance.screen_stack
+            )
+            if workspace.active_status in {"Ready", "Failed"}:
+                break
+
+        assert not seen_modal
+        assert workspace.active_status == "Ready"
+
+
+@pytest.mark.asyncio
+async def test_session_mode_researches_the_web_and_shows_sources(
+    agent_server: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _Handler.script = [
+        {
+            "thought": "find current documentation",
+            "action": "web_search",
+            "query": "Python current documentation",
+            "max_results": 3,
+        },
+        {
+            "thought": "answer from the source",
+            "action": "respond",
+            "message": "The current documentation is available from the official Python site: "
+            "https://docs.python.org/3/",
+        },
+    ]
+
+    async def fake_get(
+        self: WebResearchTool,
+        url: str,
+        *,
+        params: dict[str, str] | None = None,
+    ) -> tuple[str, str, str]:
+        return (
+            url,
+            '<a class="result__a" href="https://docs.python.org/3/">Python docs</a>',
+            "text/html",
+        )
+
+    monkeypatch.setattr(WebResearchTool, "_get", fake_get)
+    app_instance = connected_app(tmp_path, agent_server)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        workspace._set_interaction_mode(InteractionMode.SESSION)
+
+        await workspace.execute_command("research current Python documentation")
+        await settle(pilot, workspace)
+
+        items = workspace.missions.messages(workspace.session_id)
+        tool_messages = [item.content for item in items if item.kind == "tool"]
+        assert any("web search Python current documentation" in item for item in tool_messages)
+        assert any("https://docs.python.org/3/" in item for item in tool_messages)
+        assert any(
+            item.kind == "agent" and "https://docs.python.org/3/" in item.content for item in items
+        )
+
+
+@pytest.mark.asyncio
+async def test_session_approval_is_reused_by_post_edit_verification(
+    agent_server: str, tmp_path: Path
+) -> None:
+    _Handler.script = [
+        {
+            "thought": "plan",
+            "action": "todo",
+            "todos": [{"content": "Run verification", "status": "pending"}],
+        },
+        {"thought": "read", "action": "read_file", "path": "a.py"},
+        {
+            "thought": "edit",
+            "action": "replace",
+            "path": "a.py",
+            "old_string": "x = 1",
+            "new_string": "x = 2",
+        },
+        {"thought": "verify", "action": "run_command", "command": "/usr/bin/true"},
+        {
+            "thought": "done",
+            "action": "finish",
+            "summary": "updated x",
+            "verification_commands": ["/usr/bin/true"],
+        },
+    ]
+    app_instance = connected_app(tmp_path, agent_server)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        workspace._set_interaction_mode(InteractionMode.SESSION)
+
+        await workspace.execute_command("change x")
+        await settle(pilot, workspace)
+
+        assert workspace.active_status == "Ready"
+        assert workspace.active_mission_id
+        details = workspace.missions.mission_details(workspace.active_mission_id)
+        assert details["mission"]["status"] == "completed"
+        assert details["tests"] and details["tests"][-1]["passed"]
+        assert workspace.query_one("#context-strip", ContextStrip).verification != "running…"
+        checklist = workspace.query_one("#task-checklist", TaskChecklist)
+        assert [item.status for item in checklist.todos] == ["completed"]
 
 
 @pytest.mark.asyncio

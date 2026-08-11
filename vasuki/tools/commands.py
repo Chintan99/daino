@@ -103,6 +103,14 @@ class CommandRunner:
 
         stdout = _clip(result.stdout)
         stderr = _clip(result.stderr)
+        error = stderr or stdout
+        if not result.succeeded and self.runtime_name == "docker" and _looks_missing(error):
+            error = (
+                f"{error}\nThis command ran inside the configured Docker sandbox image. "
+                "That image may not contain this executable. For a Compose project, run a "
+                "docker compose command so Vasuki can use the host Docker daemon, or switch "
+                "to /runtime local."
+            )
         return ToolResult(
             tool="run_command",
             success=result.succeeded,
@@ -111,13 +119,13 @@ class CommandRunner:
                 "exit_code": result.exit_code,
                 "stdout": stdout,
                 "stderr": stderr,
+                "runtime": self.runtime_name,
             },
             error=(
                 None
                 if result.succeeded
                 else (
-                    stderr
-                    or stdout
+                    error
                     # No output at all: say what actually happened rather than
                     # "command failed", which names neither cause nor remedy.
                     or (
@@ -139,3 +147,9 @@ def _clip(text: str) -> str:
     half = MAX_OUTPUT_CHARS // 2
     dropped = len(text) - MAX_OUTPUT_CHARS
     return f"{text[:half]}\n… {dropped} characters trimmed …\n{text[-half:]}"
+
+
+def _looks_missing(output: str) -> bool:
+    lowered = output.lower()
+    markers = ("not found", "no such file", "executable not found")
+    return any(marker in lowered for marker in markers)

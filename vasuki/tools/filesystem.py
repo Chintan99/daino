@@ -64,11 +64,21 @@ class FileTools:
         try:
             path = self._path(relative, must_exist=True)
             lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-            selected = lines[(start - 1 if start else 0) : end]
+            first = start or 1
+            last = min(end or len(lines), len(lines))
+            selected = lines[first - 1 : last]
             return ToolResult(
                 tool="read_file_range" if start or end else "read_file",
                 success=True,
-                data={"path": relative, "content": "".join(selected), "lines": len(selected)},
+                data={
+                    "path": relative,
+                    "content": "".join(selected),
+                    "lines": len(selected),
+                    "total_lines": len(lines),
+                    "start_line": first,
+                    "end_line": last,
+                    "complete": first <= 1 and last >= len(lines),
+                },
                 duration_seconds=time.monotonic() - started,
             )
         except (OSError, UnicodeError, ValueError) as exc:

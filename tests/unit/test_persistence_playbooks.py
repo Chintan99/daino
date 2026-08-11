@@ -26,6 +26,9 @@ def test_database_initializes_complete_schema(tmp_path: Path) -> None:
         "verification_runs",
         "deployment_runs",
         "memory_records",
+        "memory_embeddings",
+        "memory_episodes",
+        "persistent_task_states",
     } <= tables
 
 

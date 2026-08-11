@@ -15,6 +15,7 @@ from vasuki.schemas import (
     AgentAction,
     ProjectMode,
     RequirementSpec,
+    ReviewFinding,
     ReviewReport,
     TaskPlan,
     TaskSpec,
@@ -36,7 +37,7 @@ class DeterministicGateway:
         write_content = (
             "def answer():\n    return 0\n" if self.repair else "def answer():\n    return 42\n"
         )
-        builder = [
+        builder: list[dict[str, Any]] = [
             {
                 "action": "write",
                 "path": "feature.py",
@@ -44,13 +45,18 @@ class DeterministicGateway:
                 "thought": "Create the feature module.",
             },
             {
+                "action": "run_command",
+                "command": self.command,
+                "thought": "Run the task's executable check before finishing.",
+            },
+            {
                 "action": "finish",
                 "summary": "Implement answer",
-                "verification_commands": [self.command],
+                "verification_commands": ["vasuki-builder-check-does-not-exist"],
                 "thought": "The file is written.",
             },
         ]
-        debugger = [
+        debugger: list[dict[str, Any]] = [
             {
                 "action": "replace",
                 "path": "feature.py",
@@ -59,9 +65,14 @@ class DeterministicGateway:
                 "thought": "Correct the failing return value.",
             },
             {
+                "action": "run_command",
+                "command": self.command,
+                "thought": "Confirm the repair before finishing.",
+            },
+            {
                 "action": "finish",
                 "summary": "Repair answer",
-                "verification_commands": [self.command],
+                "verification_commands": ["vasuki-builder-check-does-not-exist"],
                 "thought": "The value is corrected.",
             },
         ]
@@ -110,6 +121,84 @@ class DeterministicGateway:
         raise AssertionError(schema)
 
 
+class ReviewRepairGateway:
+    """Reject the first review and verify that its finding is repaired and re-reviewed."""
+
+    def __init__(self, command: str) -> None:
+        self.command = command
+        self.review_calls = 0
+        self.actions = [
+            AgentAction(
+                thought="create",
+                action="write",
+                path="feature.py",
+                content="def answer():\n    return 41\n",
+            ),
+            AgentAction(thought="done", action="finish", summary="Initial implementation"),
+            AgentAction(
+                thought="repair",
+                action="replace",
+                path="feature.py",
+                old_string="    return 41\n",
+                new_string="    return 42\n",
+            ),
+            AgentAction(thought="done", action="finish", summary="Review finding repaired"),
+        ]
+
+    async def structured(
+        self,
+        mission_id: str,
+        role: object,
+        messages: object,
+        schema: type[Any],
+        **kwargs: object,
+    ) -> Any:
+        if schema is RequirementSpec:
+            return RequirementSpec(
+                problem_statement="Implement answer",
+                goals=["Return the correct answer"],
+                functional_requirements=["answer returns 42"],
+                acceptance_criteria=["answer returns 42"],
+                test_strategy=[self.command],
+            )
+        if schema is TaskPlan:
+            return TaskPlan(
+                summary="Implement answer",
+                mode=ProjectMode.DIRECT,
+                tasks=[
+                    TaskSpec(
+                        id="feature",
+                        title="Implement answer",
+                        objective="Create feature.answer",
+                        expected_files=["feature.py"],
+                        allowed_files=["feature.py"],
+                        acceptance_criteria=["answer returns 42"],
+                        verification_commands=[self.command],
+                    )
+                ],
+            )
+        if schema is AgentAction:
+            return self.actions.pop(0)
+        if schema is ReviewReport:
+            self.review_calls += 1
+            if self.review_calls == 1:
+                return ReviewReport(
+                    approved=False,
+                    summary="answer is off by one",
+                    findings=[
+                        ReviewFinding(
+                            severity="medium",
+                            category="correctness",
+                            message="answer must return 42",
+                            file="feature.py",
+                            line=2,
+                        )
+                    ],
+                )
+            return ReviewReport(approved=True, summary="finding corrected")
+        raise AssertionError(schema)
+
+
 def make_service(root: Path, *, repair: bool, review: bool) -> MissionService:
     settings = default_settings(root)
     settings.runtime.default = "local"
@@ -149,6 +238,7 @@ async def test_local_model_coding_mission_exports_evidence(git_repo: Path) -> No
     workspace = Path(mission.workspace_path or "")
     assert (workspace / "feature.py").exists()
     assert git(workspace, "log", "-1", "--pretty=%B").startswith("Add answer feature")
+    assert not any(path.endswith(".pyc") for path in git(workspace, "ls-files").splitlines())
 
 
 @pytest.mark.asyncio
@@ -159,3 +249,18 @@ async def test_failure_is_repaired_within_limit(git_repo: Path) -> None:
     assert mission.status == "completed"
     assert "return 42" in (workspace / "feature.py").read_text(encoding="utf-8")
     assert service.gateway.implementation_calls == 2  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_rejected_review_is_repaired_and_reviewed_again(git_repo: Path) -> None:
+    service = make_service(git_repo, repair=False, review=True)
+    command = f"{sys.executable} -m py_compile feature.py"
+    gateway = ReviewRepairGateway(command)
+    service.gateway = gateway  # type: ignore[assignment]
+
+    mission, _ = await service.run("Implement answer", ProjectMode.DIRECT)
+
+    workspace = Path(mission.workspace_path or "")
+    assert mission.status == "completed"
+    assert "return 42" in (workspace / "feature.py").read_text(encoding="utf-8")
+    assert gateway.review_calls == 2

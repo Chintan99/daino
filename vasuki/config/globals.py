@@ -25,7 +25,15 @@ from vasuki.config.models import Settings
 #: Sections that follow the user between projects. Everything not listed here is
 #: project-local and is never written to the global file: a repository's name,
 #: database, or verification commands mean nothing in another checkout.
-GLOBAL_SECTIONS = ("providers", "models", "routing", "routing_fallbacks", "tui", "observability")
+GLOBAL_SECTIONS = (
+    "providers",
+    "models",
+    "routing",
+    "routing_fallbacks",
+    "tui",
+    "observability",
+    "memory",
+)
 
 #: Where a project may still sensibly differ, and so may override the global
 #: value: pinning one repository to a stronger model, or to a different runtime.

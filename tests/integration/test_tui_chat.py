@@ -22,7 +22,7 @@ from vasuki.application import (
 from vasuki.events import ModelStreamChunk
 from vasuki.git import GitClient
 from vasuki.model_router import ModelRole
-from vasuki.persistence.models import MissionEventRecord
+from vasuki.persistence.models import MissionEventRecord, ModelCall
 from vasuki.tui.app import VasukiApp
 from vasuki.tui.screens.workspace import WorkspaceScreen
 from vasuki.tui.widgets import (
@@ -95,7 +95,11 @@ class _Handler(BaseHTTPRequestHandler):
                             "finish_reason": "stop",
                         }
                     ],
-                    "usage": {"prompt_tokens": 12, "completion_tokens": 8},
+                    "usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 8,
+                        "cost": 0.00000123,
+                    },
                 }
             )
             return
@@ -106,6 +110,11 @@ class _Handler(BaseHTTPRequestHandler):
             chunk = {"choices": [{"delta": {"content": word}}]}
             self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
             self.wfile.flush()
+        usage = {
+            "choices": [],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 8, "cost": 0.00000123},
+        }
+        self.wfile.write(f"data: {json.dumps(usage)}\n\n".encode())
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
 
@@ -168,7 +177,7 @@ def connected_app(root: Path, base_url: str = "", **add: str) -> VasukiApp:
     if base_url:
         ProviderApplicationService(context).add(
             name=add.get("name", "vendor"),
-            provider_type="openai-compatible",
+            provider_type=add.get("provider_type", "openai-compatible"),
             base_url=base_url,
             model=add.get("model", "vendor/small"),
         )
@@ -223,6 +232,35 @@ async def test_chat_answers_once_a_provider_is_connected(
 
 
 @pytest.mark.asyncio
+async def test_openrouter_charge_reaches_the_header(model_server: str, tmp_path: Path) -> None:
+    app_instance = connected_app(
+        tmp_path,
+        model_server,
+        name="openrouter",
+        provider_type="openrouter",
+    )
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await ask(pilot, "show the charged usage")
+        await wait_for_answer(pilot)
+
+        workspace = app_instance.screen
+        for _ in range(40):
+            await pilot.pause(0.1)
+            usage_text = workspace.query_one("#header-usage").render().plain
+            if "$0.00000246" in usage_text:
+                break
+
+        with workspace.context.database.session() as session:
+            calls = list(session.scalars(select(ModelCall).order_by(ModelCall.created_at.desc())))
+            call = calls[0] if calls else None
+            assert call is not None
+            assert call.estimated_cost == pytest.approx(0.00000123)
+        assert "40 tok" in usage_text
+        assert "$0.00000246" in usage_text
+
+
+@pytest.mark.asyncio
 async def test_conversation_is_actually_painted_in_the_chat_area(
     model_server: str,
     tmp_path: Path,
@@ -236,16 +274,14 @@ async def test_conversation_is_actually_painted_in_the_chat_area(
     app_instance = connected_app(tmp_path, model_server)
     async with app_instance.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        assert "V A S U K I" in painted_text(app_instance)
+        assert "VASUKI" in painted_text(app_instance)
 
         await ask(pilot, "render this please")
         await wait_for_answer(pilot)
         await pilot.pause(0.2)
 
         screen = painted_text(app_instance)
-        assert "you" in screen
-        assert "render this please" in screen
-        assert "vasuki" in screen
+        assert "› render this please" in screen
         assert "".join(ANSWER_WORDS) in screen
 
 

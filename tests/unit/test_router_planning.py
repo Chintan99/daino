@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from vasuki.config.models import ModelProfileConfig, ProviderConfig, Settings
+from vasuki.context import ExecutionMode, ModelExecutionProfile
+from vasuki.exceptions import ConfigurationError
 from vasuki.model_router import ModelRole, ModelRouter, RoutingContext
 from vasuki.planning import validate_task_graph, validate_transition
 from vasuki.schemas import ProjectMode, TaskPlan, TaskSpec, TaskStatus
@@ -33,6 +35,50 @@ def test_router_primary_and_escalation_reason() -> None:
     assert escalated.profile_name == "strong"
     assert escalated.escalated
     assert "failed twice" in escalated.reason
+
+
+def test_execution_profile_auto_detects_small_local_model() -> None:
+    compact = ModelExecutionProfile.resolve(
+        "small",
+        ModelProfileConfig(provider="local", model="7b", local=True),
+        input_budget_tokens=20_000,
+        project_budget_tokens=24_000,
+        memory_items=8,
+        memory_tokens=2_000,
+    )
+    standard = ModelExecutionProfile.resolve(
+        "strong",
+        ModelProfileConfig(
+            provider="cloud",
+            model="strong",
+        ),
+        input_budget_tokens=40_000,
+        project_budget_tokens=24_000,
+        memory_items=8,
+        memory_tokens=2_000,
+    )
+
+    assert compact.mode == ExecutionMode.COMPACT
+    assert compact.initial_context_tokens == 8_192
+    assert compact.max_steps == 32
+    assert standard.mode == ExecutionMode.STANDARD
+    assert standard.initial_context_tokens == 24_000
+
+
+def test_router_exposes_operational_fallback_after_primary() -> None:
+    selections = ModelRouter(configured_settings()).failover_selections(ModelRole.BUILDER)
+    assert [item.profile_name for item in selections] == ["small", "strong"]
+
+
+def test_local_model_must_still_allow_requested_sensitivity() -> None:
+    settings = configured_settings()
+    settings.models["small"].data_sensitivity = "internal"
+    settings.models["strong"].data_sensitivity = "internal"
+    with pytest.raises(ConfigurationError, match="No model is allowed"):
+        ModelRouter(settings).select(
+            ModelRole.BUILDER,
+            RoutingContext(data_sensitivity="restricted"),
+        )
 
 
 def test_task_graph_topological_order_and_cycle() -> None:
@@ -69,3 +115,17 @@ def test_task_state_machine_rejects_skip() -> None:
     validate_transition(TaskStatus.PENDING, TaskStatus.READY)
     with pytest.raises(ValueError):
         validate_transition(TaskStatus.PENDING, TaskStatus.COMPLETED)
+
+
+def test_task_repairs_argv_shaped_verification_commands() -> None:
+    task = TaskSpec(
+        id="a",
+        title="A",
+        objective="A",
+        acceptance_criteria=["done"],
+        verification_commands=["python", "-m", "pytest", "-q"],
+    )
+    separate = task.model_copy(update={"verification_commands": ["pytest", "ruff"]})
+
+    assert task.verification_commands == ["python -m pytest -q"]
+    assert separate.verification_commands == ["pytest", "ruff"]

@@ -67,6 +67,20 @@ class TaskCompleted(MissionEvent):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class TodoUpdated(MissionEvent):
+    """The current user-visible checklist for one conversation session."""
+
+    session_id: str
+    todos: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ContextCompacted(MissionEvent):
+    before_tokens: int
+    after_tokens: int
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class AgentRoleChanged(MissionEvent):
     role: str
 
@@ -77,6 +91,14 @@ class ModelSelected(MissionEvent):
     provider: str
     model: str
     role: str = ""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ModelEscalationRequested(MissionEvent):
+    role: str
+    reason: str
+    profile: str = ""
+    pinned: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

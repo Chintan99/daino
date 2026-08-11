@@ -6,23 +6,25 @@
  * vasuki/tui/palette.py — change both together.
  */
 
-$background: #0b0c0e;
-$rule: #232734;
-$accent: #3ddc97;
+$background: #0a0d0b;
+$rule: #252d27;
+$accent: #72d895;
+$prompt-accent: #86e7a6;
+$prompt-rule: #33463a;
 
-$input: #eceff4;
-$bright: #dbe0ea;
-$text: #b6bcc7;
-$muted: #858d9c;
-$value: #6f7684;
-$hint: #5f6675;
-$dim: #565d6b;
-$faint: #464c58;
-$faintest: #3a3f4a;
+$input: #e2e8e1;
+$bright: #ced5cd;
+$text: #b7c0b7;
+$muted: #7c877e;
+$value: #909b92;
+$hint: #626c64;
+$dim: #59625b;
+$faint: #49514b;
+$faintest: #3a413c;
 
-$ready: #9ece6a;
-$alert: #f7768e;
-$caution: #e0af68;
+$ready: #64d98b;
+$alert: #e2767f;
+$caution: #e2b86b;
 
 Screen {
     background: $background;
@@ -33,19 +35,25 @@ Screen {
 /* ── header ─────────────────────────────────────────────────────────── */
 
 #top-header {
-    height: 2;
+    height: 4;
     padding: 1 2 0 2;
     background: $background;
+    border-bottom: solid $rule;
 }
 
-#header-identity {
+.header-row {
+    width: 100%;
+    height: 1;
+}
+
+.header-left {
     width: 1fr;
     height: 1;
     color: $text;
 }
 
-#header-vitals {
-    width: auto;
+.header-right {
+    width: 1fr;
     height: 1;
     text-align: right;
 }
@@ -62,12 +70,21 @@ Screen {
 .nav-tab {
     width: auto;
     height: 1;
-    margin-right: 3;
+    margin-right: 1;
     color: $muted;
 }
 
+.nav-tab.active {
+    background: #171d18;
+    color: $accent;
+}
+
 .nav-tab:hover {
-    color: $bright;
+    background: #101511;
+}
+
+.nav-tab:focus {
+    background: #171d18;
 }
 
 .nav-spacer {
@@ -82,10 +99,58 @@ Screen {
 
 /* ── main surface ───────────────────────────────────────────────────── */
 
-#main-workspace {
+#workspace-body {
     width: 100%;
     height: 1fr;
     background: $background;
+}
+
+#main-workspace {
+    width: 1fr;
+    height: 100%;
+    background: $background;
+}
+
+#task-checklist {
+    width: 30;
+    min-width: 24;
+    height: 100%;
+    padding: 1 2;
+    border-left: solid $rule;
+    background: $background;
+    scrollbar-size: 1 1;
+}
+
+#runner-stage {
+    width: 100%;
+    height: 5;
+    margin-bottom: 1;
+}
+
+#activity-label {
+    width: 100%;
+    height: 2;
+    text-align: left;
+    margin-bottom: 1;
+}
+
+#checklist-title {
+    height: 2;
+}
+
+#checklist-items {
+    width: 100%;
+    height: auto;
+}
+
+.narrow #task-checklist {
+    width: 28;
+    min-width: 24;
+    padding: 1;
+}
+
+.very-narrow #task-checklist {
+    display: none;
 }
 
 #chat-view {
@@ -100,38 +165,23 @@ Screen {
 .welcome-card {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    padding-top: 1;
 }
 
-#welcome-banner {
-    width: 100%;
+#welcome-help {
     height: auto;
-    margin-bottom: 1;
 }
 
-#welcome-art {
-    width: auto;
-    height: auto;
-    margin-right: 4;
-}
-
-/* Nudged down so the two-line wordmark sits against the middle of the art. */
-#welcome-title {
-    width: 1fr;
-    height: auto;
-    padding-top: 4;
-}
-
-#welcome-wordmark, #welcome-meta, #welcome-help {
-    height: 1;
-}
-
-.narrow #welcome-art {
+.narrow #header-environment, .narrow #header-usage {
     display: none;
 }
 
-.narrow #welcome-title {
-    padding-top: 0;
+.narrow #top-header {
+    height: 3;
+}
+
+.very-narrow #tab-qa-view, .very-narrow #tab-logs-view {
+    display: none;
 }
 
 /* ── messages ───────────────────────────────────────────────────────── */
@@ -147,15 +197,16 @@ Screen {
 }
 
 .message-card:focus {
-    background: #131620;
+    background: #101511;
 }
 
 /* ── context strip ──────────────────────────────────────────────────── */
 
 #context-strip {
-    height: 1;
+    height: 2;
     padding: 0 2;
     background: $background;
+    border-top: solid $rule;
 }
 
 .hidden-panel, .hidden {
@@ -166,27 +217,53 @@ Screen {
 
 #prompt-area {
     height: auto;
-    max-height: 14;
-    padding: 0 2 0 2;
+    min-height: 4;
+    max-height: 12;
+    margin: 0;
+    padding: 0 2;
     background: $background;
     border-top: solid $rule;
 }
 
+#prompt-area:focus-within {
+    border-top: solid $prompt-rule;
+}
+
+#prompt-header {
+    width: 100%;
+    height: 1;
+}
+
+#prompt-title {
+    width: auto;
+    height: 1;
+    color: $faint;
+}
+
+#prompt-meta {
+    width: 1fr;
+    height: 1;
+    color: $faint;
+    text-align: right;
+}
+
 #prompt-row {
-    height: auto;
-    max-height: 10;
-    padding-top: 1;
+    width: 100%;
+    height: 2;
+    min-height: 2;
 }
 
 #prompt-caret {
     width: 2;
-    height: 1;
+    height: 100%;
+    padding: 0;
+    color: $prompt-accent;
 }
 
 #prompt {
     width: 1fr;
-    height: auto;
-    max-height: 9;
+    height: 2;
+    min-height: 2;
     padding: 0;
     border: none;
     background: $background;
@@ -201,8 +278,7 @@ Screen {
 
 #prompt-suggestions {
     height: auto;
-    max-height: 10;
-    margin-bottom: 1;
+    max-height: 6;
     background: $background;
     border: none;
     scrollbar-size: 1 1;
@@ -216,20 +292,20 @@ Screen {
 }
 
 #prompt-suggestions ListItem.-highlight {
-    background: #131620;
+    background: #101511;
     color: $bright;
 }
 
 #hint-bar {
-    height: 1;
+    height: 2;
     dock: bottom;
-    padding: 0 2;
+    padding: 0 2 1 2;
     background: $background;
 }
 
 /* ── shared view chrome ─────────────────────────────────────────────── */
 
-#missions-view, #repository-view, #files-view, #changes-view, #tests-view,
+#missions-view, #qa-view, #repository-view, #files-view, #changes-view, #tests-view,
 #approvals-view, #checkpoints-view, #playbooks-view, #deployments-view,
 #providers-view, #settings-view, #logs-view, #help-view {
     width: 100%;
@@ -273,12 +349,12 @@ DataTable > .datatable--header {
 }
 
 DataTable > .datatable--cursor {
-    background: #131620;
+    background: #101511;
     color: $bright;
 }
 
 DataTable:focus > .datatable--cursor {
-    background: #1b1f2c;
+    background: #171d18;
     color: $bright;
 }
 
@@ -297,7 +373,7 @@ Tree > .tree--guides, Tree > .tree--guides-hover, Tree > .tree--guides-selected 
 }
 
 Tree > .tree--cursor {
-    background: #131620;
+    background: #101511;
     color: $bright;
 }
 
@@ -329,7 +405,7 @@ SelectCurrent {
 }
 
 SelectOverlay {
-    background: #131620;
+    background: #101511;
     border: none;
     color: $text;
 }
@@ -502,6 +578,40 @@ Button.-primary, Button.-success, Button.-warning, Button.-error {
     border-top: solid $rule;
 }
 
+#qa-state {
+    height: 2;
+    color: $faint;
+}
+
+#qa-scroll {
+    width: 100%;
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
+
+#qa-history-state {
+    height: 1;
+    color: $faint;
+}
+
+#qa-history {
+    height: 8;
+    min-height: 6;
+}
+
+#qa-specialists, #qa-checks {
+    height: 11;
+    min-height: 8;
+}
+
+#qa-report {
+    height: auto;
+    min-height: 12;
+    padding: 0 1;
+    background: $background;
+    scrollbar-size: 1 1;
+}
+
 #settings-content {
     height: 1fr;
 }
@@ -527,7 +637,7 @@ ModalScreen {
     height: auto;
     max-height: 80%;
     padding: 1 2;
-    background: #131620;
+    background: #101511;
     border: solid $rule;
 }
 
@@ -554,18 +664,18 @@ ModalScreen {
 #command-options, #model-options {
     height: 18;
     max-height: 60%;
-    background: #131620;
+    background: #101511;
     border: none;
 }
 
 #command-options ListItem, #model-options ListItem {
-    background: #131620;
+    background: #101511;
     color: $muted;
     padding: 0 1;
 }
 
 #command-options ListItem.-highlight, #model-options ListItem.-highlight {
-    background: #1b1f2c;
+    background: #171d18;
     color: $bright;
 }
 
@@ -632,6 +742,7 @@ OnboardingScreen {
 }
 
 .theme-light Screen,
+.theme-light #workspace-body,
 .theme-light #main-workspace,
 .theme-light #chat-view,
 .theme-light #top-header,
@@ -639,6 +750,7 @@ OnboardingScreen {
 .theme-light #context-strip,
 .theme-light #prompt-area,
 .theme-light #hint-bar,
+.theme-light #task-checklist,
 .theme-light DataTable {
     background: #f7f6f3;
     color: #4a4740;

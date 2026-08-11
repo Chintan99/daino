@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import AsyncIterator
 from typing import Any, TypeVar, cast
@@ -10,8 +11,12 @@ from typing import Any, TypeVar, cast
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from vasuki.exceptions import ProviderError
-from vasuki.providers.base import DEFAULT_MAX_OUTPUT_TOKENS, LLMProvider
+from vasuki.exceptions import (
+    ProviderError,
+    StructuredConstraintUnsupported,
+    ToolCallingUnsupported,
+)
+from vasuki.providers.base import DEFAULT_MAX_OUTPUT_TOKENS, LLMProvider, ProviderUsage
 from vasuki.schemas import LLMResponse, Message, ToolCall
 
 StructuredT = TypeVar("StructuredT", bound=BaseModel)
@@ -136,6 +141,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self.max_retries = max_retries
         self.max_output_tokens = max_output_tokens
         self.features = set(features or ["chat", "structured"])
+        self._last_usage = ProviderUsage()
         headers = {"Content-Type": "application/json", **(extra_headers or {})}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -159,7 +165,19 @@ class OpenAICompatibleProvider(LLMProvider):
                 # A 4xx (other than rate limiting) is a rejection of the request
                 # itself; retrying an identical payload cannot succeed.
                 if status != 429 and status < 500:
-                    raise ProviderError(
+                    error_type: type[ProviderError] = ProviderError
+                    # Only request-shape status codes mean a feature is
+                    # unsupported. Authentication and quota failures must not
+                    # be retried without tools/schema, which only duplicates a
+                    # doomed (and potentially billable) request.
+                    if status in {400, 404, 405, 415, 422}:
+                        if payload.get("tools"):
+                            error_type = ToolCallingUnsupported
+                        elif any(
+                            name in payload for name in ("response_format", "format", "guided_json")
+                        ):
+                            error_type = StructuredConstraintUnsupported
+                    raise error_type(
                         f"{self.name} rejected the request (HTTP {status}): "
                         f"{exc.response.text[:300]}"
                     ) from exc
@@ -191,16 +209,16 @@ class OpenAICompatibleProvider(LLMProvider):
             payload["tool_choice"] = tool_choice or "auto"
         started = time.monotonic()
         data = await self._post(payload)
+        usage = self._capture_usage(data)
         try:
             choice = data["choices"][0]
             message = choice["message"]
-            usage = data.get("usage", {})
             return LLMResponse(
                 content=message.get("content") or "",
                 model=data.get("model", self.model),
                 provider=self.name,
-                input_tokens=usage.get("prompt_tokens", 0),
-                output_tokens=usage.get("completion_tokens", 0),
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
                 latency_ms=(time.monotonic() - started) * 1000,
                 finish_reason=choice.get("finish_reason"),
                 tool_calls=_parse_tool_calls(message.get("tool_calls")),
@@ -222,7 +240,11 @@ class OpenAICompatibleProvider(LLMProvider):
                     if not line.startswith("data: ") or line == "data: [DONE]":
                         continue
                     chunk = json.loads(line.removeprefix("data: "))
-                    content = chunk["choices"][0].get("delta", {}).get("content")
+                    self._capture_usage(chunk)
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    content = choices[0].get("delta", {}).get("content")
                     if content:
                         yield content
         except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
@@ -278,7 +300,8 @@ class OpenAICompatibleProvider(LLMProvider):
                 self._constrain_payload(payload, schema_json, schema.__name__)
             try:
                 data = await self._post(payload)
-            except ProviderError:
+                self._capture_usage(data)
+            except StructuredConstraintUnsupported:
                 if constrained:
                     # The server does not accept this backend's constraint
                     # parameter; fall back to prompt-only JSON once.
@@ -330,3 +353,48 @@ class OpenAICompatibleProvider(LLMProvider):
 
     async def close(self) -> None:
         await self.client.aclose()
+
+    @property
+    def last_usage(self) -> ProviderUsage:
+        """Return token counts and provider-reported cost for this call."""
+        return self._last_usage
+
+    def _capture_usage(self, data: dict[str, Any]) -> ProviderUsage:
+        """Accumulate usage from a response or final streaming chunk."""
+        raw_usage = data.get("usage")
+        if not isinstance(raw_usage, dict):
+            return ProviderUsage()
+
+        usage = ProviderUsage(
+            input_tokens=self._safe_nonnegative_int(raw_usage.get("prompt_tokens")),
+            output_tokens=self._safe_nonnegative_int(raw_usage.get("completion_tokens")),
+            cost=self._safe_nonnegative_float(raw_usage.get("cost")),
+        )
+        previous = self._last_usage
+        self._last_usage = ProviderUsage(
+            input_tokens=previous.input_tokens + usage.input_tokens,
+            output_tokens=previous.output_tokens + usage.output_tokens,
+            cost=previous.cost + usage.cost,
+        )
+        return usage
+
+    @staticmethod
+    def _safe_nonnegative_int(value: object) -> int:
+        if not isinstance(value, (str, int, float)):
+            return 0
+        try:
+            return max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _safe_nonnegative_float(value: object) -> float:
+        if not isinstance(value, (str, int, float)):
+            return 0.0
+        try:
+            parsed = float(value or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(parsed):
+            return 0.0
+        return max(0.0, parsed)

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from vasuki.config.models import SecurityConfig
-from vasuki.security.policy import PolicyDecision, PolicyEngine
+from vasuki.security.policy import PolicyDecision, PolicyEngine, docker_command_is_read_only
 
 #: Executables routine enough to run unattended. They read, compile, test, or
 #: report; none of them install packages, reach the network, or mutate anything
@@ -85,6 +85,7 @@ DEFAULT_SAFE_COMMANDS = frozenset(
         "whoami",
         # Package managers in their read-only modes are handled below by verb.
         "git",
+        "docker",
     }
 )
 
@@ -171,6 +172,8 @@ class CommandGate:
         if executable == "git":
             verb = next((token for token in tokens[1:] if not token.startswith("-")), "")
             return verb in SAFE_GIT_VERBS
+        if executable == "docker":
+            return docker_command_is_read_only(tokens)
         return True
 
     def decide(self, command: str, *, runtime: str = "local") -> CommandDecision:

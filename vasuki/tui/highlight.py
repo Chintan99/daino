@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
+from pygments.lexers import get_lexer_for_filename  # type: ignore[import-untyped]
 from pygments.token import (  # type: ignore[import-untyped]
     Comment,
     Error,
@@ -28,6 +29,7 @@ from pygments.token import (  # type: ignore[import-untyped]
     String,
     Token,
 )
+from pygments.util import ClassNotFound  # type: ignore[import-untyped]
 from rich.style import Style
 from rich.syntax import ANSISyntaxTheme, Syntax
 from textual.content import Content
@@ -69,21 +71,39 @@ _SYNTAX_THEME = ANSISyntaxTheme(
 #: repaints its card on every chunk, so the same block is highlighted many times.
 _CACHE_SIZE = 256
 
+#: Keep short changed lines as visible rectangular fills without allowing one
+#: generated/minified line to make every other line hundreds of cells wide.
+UNIFIED_DIFF_MAX_WIDTH = 160
+
 
 @lru_cache(maxsize=_CACHE_SIZE)
-def _highlight(code: str, language: str) -> Content:
-    syntax = Syntax(
-        code,
-        language or "text",
-        theme=_SYNTAX_THEME,
-        background_color="default",
-        word_wrap=True,
-    )
+def highlight_code(code: str, language: str, background: str = "") -> Content:
+    """Highlight source while optionally filling its complete background.
+
+    The background is applied as a colour-only overlay, so token foregrounds
+    remain syntax colours. This is what lets a diff communicate addition or
+    removal with its fill without turning every character green or red.
+    """
     try:
-        return Content.from_rich_text(syntax.highlight(code))
+        syntax = Syntax(
+            code,
+            language or "text",
+            theme=_SYNTAX_THEME,
+            background_color=None,
+            word_wrap=True,
+        )
+        highlighted = syntax.highlight(code)
+        # ``Syntax.highlight`` appends a newline even for one source line. Diff
+        # renderers own their separators, so retaining it would double-space
+        # every line and break the continuous red/green blocks.
+        highlighted.remove_suffix("\n")
+        if background:
+            highlighted.stylize(Style(bgcolor=background))
+        return Content.from_rich_text(highlighted)
     except Exception:
         # An unknown lexer or malformed source must never cost us the message.
-        return Content.styled(code, palette.TEXT)
+        style = palette.TEXT + (f" on {background}" if background else "")
+        return Content.styled(code, style)
 
 
 def highlight_body(text: str, prose_style: str) -> list[Content]:
@@ -100,7 +120,7 @@ def highlight_body(text: str, prose_style: str) -> list[Content]:
         language = (match.group(1) or "").strip().casefold()
         code = match.group(2)
         if code:
-            pieces.append(_highlight(code.rstrip("\n"), language))
+            pieces.append(highlight_code(code.rstrip("\n"), language))
         cursor = match.end()
     remainder = text[cursor:]
     if remainder or not pieces:
@@ -108,10 +128,78 @@ def highlight_body(text: str, prose_style: str) -> list[Content]:
     return pieces
 
 
+def highlight_unified_diff(diff: str) -> Content:
+    """Render a Git diff with file-language syntax and change backgrounds."""
+    if not diff:
+        return Content.styled("No changes", palette.MUTED)
+
+    lines = diff.splitlines()
+    fill_width = min(max((len(line) for line in lines), default=0), UNIFIED_DIFF_MAX_WIDTH)
+    language = ""
+    parts: list[str | Content | tuple[str, str]] = []
+    for index, line in enumerate(lines):
+        if index:
+            parts.append("\n")
+
+        if line.startswith(("+++ ", "--- ")):
+            path = line[4:].split("\t", 1)[0]
+            if path != "/dev/null":
+                language = guess_language(path.removeprefix("a/").removeprefix("b/"))
+            parts.append((line, palette.MUTED))
+            continue
+        if line.startswith("diff --git "):
+            parts.append((line, f"bold {palette.ACCENT}"))
+            continue
+        if line.startswith("@@"):
+            parts.append((line, f"bold {palette.PLAN}"))
+            continue
+        if line.startswith(("index ", "new file ", "deleted file ")):
+            parts.append((line, palette.MUTED))
+            continue
+
+        marker = line[:1]
+        if marker in {"+", "-", " "}:
+            background = (
+                palette.DIFF_ADDED_BG
+                if marker == "+"
+                else palette.DIFF_REMOVED_BG
+                if marker == "-"
+                else ""
+            )
+            marker_style = palette.DIFF_GUTTER + (f" on {background}" if background else "")
+            code = line[1:]
+            if background:
+                code = code.ljust(max(fill_width - 1, 0))
+            parts.append((marker, marker_style))
+            parts.append(highlight_code(code, language, background=background))
+            continue
+
+        parts.append((line, palette.MUTED))
+    return Content.assemble(*parts)
+
+
+@lru_cache(maxsize=256)
 def guess_language(path: str) -> str:
     """Map a file extension to a lexer name for diff and preview highlighting."""
+    name = path.rsplit("/", 1)[-1].casefold()
+    special = {
+        "dockerfile": "docker",
+        "makefile": "make",
+        "justfile": "make",
+    }
+    if name in special:
+        return special[name]
+    if name.startswith("dockerfile."):
+        return "docker"
     suffix = path.rsplit(".", 1)[-1].casefold() if "." in path else ""
-    return _EXTENSIONS.get(suffix, "")
+    configured = _EXTENSIONS.get(suffix)
+    if configured:
+        return configured
+    try:
+        lexer = get_lexer_for_filename(name)
+    except ClassNotFound:
+        return ""
+    return lexer.aliases[0] if lexer.aliases else ""
 
 
 _EXTENSIONS = {

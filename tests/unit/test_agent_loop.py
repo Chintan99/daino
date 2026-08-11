@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from vasuki.agents.gateway import ModelGateway, _resolved_config
+from vasuki.agents.gateway import ModelGateway, _fit_messages, _message_tokens, _resolved_config
 from vasuki.agents.loop import ToolLoop
 from vasuki.config.models import ModelProfileConfig, ProviderConfig, Settings
-from vasuki.exceptions import ProviderError
+from vasuki.context import ModelExecutionProfile
+from vasuki.exceptions import ProviderError, ToolCallingUnsupported
 from vasuki.model_router import ModelRole
 from vasuki.persistence import Database
-from vasuki.schemas import AgentAction, ContextBundle, LLMResponse, ToolCall
+from vasuki.schemas import AgentAction, ContextBundle, LLMResponse, Message, ToolCall, ToolResult
 from vasuki.tools import ActionExecutor, EditTools
 
 
@@ -29,6 +31,22 @@ def context() -> ContextBundle:
 
 def tool_response(*calls: ToolCall) -> LLMResponse:
     return LLMResponse(content="", model="mock", provider="mock", tool_calls=list(calls))
+
+
+def compact_execution_profile() -> ModelExecutionProfile:
+    return ModelExecutionProfile.resolve(
+        "tiny",
+        ModelProfileConfig(
+            provider="local",
+            model="tiny",
+            local=True,
+            execution_mode="compact",
+        ),
+        input_budget_tokens=8_000,
+        project_budget_tokens=24_000,
+        memory_items=8,
+        memory_tokens=2_000,
+    )
 
 
 class NativeGateway:
@@ -117,6 +135,92 @@ async def test_multiple_tool_calls_in_one_turn_execute_in_order(
     assert outcome.steps == 2
 
 
+@pytest.mark.asyncio
+async def test_compact_profile_executes_one_bounded_tool_call_per_turn(
+    executor: ActionExecutor, tmp_path: Path
+) -> None:
+    gateway = NativeGateway(
+        [
+            [
+                ToolCall(
+                    id="call_1",
+                    name="write",
+                    arguments={"thought": "first", "path": "one.py", "content": "x = 1\n"},
+                ),
+                ToolCall(
+                    id="call_2",
+                    name="write",
+                    arguments={"thought": "second", "path": "two.py", "content": "y = 2\n"},
+                ),
+            ],
+            [
+                ToolCall(
+                    id="call_3",
+                    name="write",
+                    arguments={"thought": "retry", "path": "two.py", "content": "y = 2\n"},
+                )
+            ],
+            [ToolCall(id="call_4", name="finish", arguments={"thought": "done", "summary": "ok"})],
+        ]
+    )
+    outcome = await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        execution_profile=compact_execution_profile(),
+    ).run("mission-compact", context())
+
+    assert outcome.steps == 3
+    assert outcome.changed == ["one.py", "two.py"]
+    assert (tmp_path / "one.py").exists()
+    assert (tmp_path / "two.py").exists()
+
+
+@pytest.mark.asyncio
+async def test_repeated_non_progress_signals_model_escalation(executor: ActionExecutor) -> None:
+    class EscalationGateway(NativeGateway):
+        def __init__(self) -> None:
+            super().__init__(
+                [
+                    [
+                        ToolCall(
+                            id=f"missing_{number}",
+                            name="read_file",
+                            arguments={"thought": "inspect", "path": "missing.py"},
+                        )
+                    ]
+                    for number in range(3)
+                ]
+                + [
+                    [
+                        ToolCall(
+                            id="finish",
+                            name="finish",
+                            arguments={"thought": "blocked", "summary": "Could not inspect"},
+                        )
+                    ]
+                ]
+            )
+            self.routing_attempts: list[int] = []
+
+        async def complete(self, *args: object, **kwargs: object) -> LLMResponse:
+            routing = kwargs.get("routing_context")
+            self.routing_attempts.append(getattr(routing, "failed_attempts", 0))
+            return await super().complete(*args, **kwargs)
+
+    gateway = EscalationGateway()
+    outcome = await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        execution_profile=compact_execution_profile(),
+    ).run("mission-escalate", context())
+
+    assert outcome.escalated is True
+    assert "consecutive" in outcome.escalation_reason
+    assert gateway.routing_attempts == [0, 0, 0, 2]
+
+
 class RejectingToolsGateway:
     """Advertises tool support but the server rejects the tools parameter."""
 
@@ -129,7 +233,7 @@ class RejectingToolsGateway:
 
     async def complete(self, *args: object, **kwargs: object) -> LLMResponse:
         self.complete_calls += 1
-        raise ProviderError("mock rejected the request (HTTP 400): tools not supported")
+        raise ToolCallingUnsupported("mock rejected the request (HTTP 400): tools not supported")
 
     async def structured(
         self,
@@ -224,6 +328,54 @@ async def test_invalid_tool_arguments_are_reported_and_retried(
     assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "ok"
 
 
+@pytest.mark.asyncio
+async def test_finish_is_rejected_after_a_failed_call_in_the_same_turn(
+    executor: ActionExecutor, tmp_path: Path
+) -> None:
+    gateway = NativeGateway(
+        [
+            [
+                ToolCall(
+                    id="call_1",
+                    name="replace",
+                    arguments={
+                        "thought": "Guess an edit.",
+                        "path": "missing.py",
+                        "old_string": "x",
+                        "new_string": "y",
+                    },
+                ),
+                ToolCall(
+                    id="call_2",
+                    name="finish",
+                    arguments={"thought": "Done.", "summary": "Changed it"},
+                ),
+            ],
+            [
+                ToolCall(
+                    id="call_3",
+                    name="write",
+                    arguments={"thought": "Create it.", "path": "fixed.py", "content": "x = 1\n"},
+                )
+            ],
+            [
+                ToolCall(
+                    id="call_4",
+                    name="finish",
+                    arguments={"thought": "Done.", "summary": "Fixed"},
+                )
+            ],
+        ]
+    )
+
+    outcome = await ToolLoop(gateway, ModelRole.BUILDER, executor).run("mission-1", context())  # type: ignore[arg-type]
+
+    assert outcome.steps == 3
+    assert outcome.implementation.summary == "Fixed"
+    assert outcome.changed == ["fixed.py"]
+    assert not (tmp_path / "missing.py").exists()
+
+
 class ScriptedGateway:
     """Replays actions and records the observation fed back before each one."""
 
@@ -290,6 +442,181 @@ async def test_a_failed_edit_is_reported_back_so_the_agent_can_correct_it(
 
 
 @pytest.mark.asyncio
+async def test_chat_finish_requires_its_failed_check_to_pass_after_correction(
+    tmp_path: Path,
+) -> None:
+    class FlakyRunner:
+        calls = 0
+
+        async def run(self, command: str, *, timeout: int | None = None) -> ToolResult:
+            self.calls += 1
+            return ToolResult(
+                tool="run_command",
+                success=self.calls > 1,
+                data={"command": command, "exit_code": 0 if self.calls > 1 else 1},
+                error=None if self.calls > 1 else "check failed",
+            )
+
+    gateway = ScriptedGateway(
+        [
+            AgentAction(thought="write", action="write", path="app.py", content="VALUE = 1\n"),
+            AgentAction(thought="check", action="run_command", command="python -m compileall -q ."),
+            AgentAction(
+                thought="done",
+                action="finish",
+                summary="complete",
+                verification_commands=["python -m compileall -q ."],
+            ),
+            AgentAction(thought="retry", action="run_command", command="python -m compileall -q ."),
+            AgentAction(
+                thought="done",
+                action="finish",
+                summary="verified",
+                verification_commands=["python -m compileall -q ."],
+            ),
+        ]
+    )
+    executor = ActionExecutor(
+        EditTools(tmp_path, require_read_before_write=False),
+        FlakyRunner(),  # type: ignore[arg-type]
+    )
+
+    outcome = await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        require_verified_finish=True,
+    ).run("mission-1", context())
+
+    assert outcome.steps == 5
+    assert outcome.implementation.summary == "verified"
+    assert any("proposed verification commands failed" in item for item in gateway.observations)
+
+
+@pytest.mark.asyncio
+async def test_finish_waits_for_every_part_of_a_rejected_shell_chain(
+    tmp_path: Path,
+) -> None:
+    class Runner:
+        async def run(self, command: str, *, timeout: int | None = None) -> ToolResult:
+            if "&&" in command:
+                return ToolResult(
+                    tool="run_command",
+                    success=False,
+                    error="Refused: shell syntax is not available: &&",
+                )
+            return ToolResult(tool="run_command", success=True, data={"command": command})
+
+    gateway = ScriptedGateway(
+        [
+            AgentAction(thought="write", action="write", path="app.py", content="VALUE = 1\n"),
+            AgentAction(
+                thought="inspect",
+                action="run_command",
+                command="git diff --stat && git diff -- app.py",
+            ),
+            AgentAction(
+                thought="verify",
+                action="run_command",
+                command="python -m py_compile app.py",
+            ),
+            AgentAction(
+                thought="done",
+                action="finish",
+                summary="fixed",
+                verification_commands=["python -m py_compile app.py"],
+            ),
+            AgentAction(thought="retry first", action="run_command", command="git diff --stat"),
+            AgentAction(
+                thought="retry second",
+                action="run_command",
+                command="git diff -- app.py",
+            ),
+            AgentAction(
+                thought="done",
+                action="finish",
+                summary="fixed and fully checked",
+                verification_commands=["python -m py_compile app.py"],
+            ),
+        ]
+    )
+    executor = ActionExecutor(
+        EditTools(tmp_path, require_read_before_write=False),
+        Runner(),  # type: ignore[arg-type]
+    )
+
+    outcome = await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        require_verified_finish=True,
+    ).run("mission-1", context())
+
+    assert outcome.steps == 7
+    assert outcome.implementation.summary == "fixed and fully checked"
+    assert any("command errors remain unresolved" in item for item in gateway.observations)
+
+
+@pytest.mark.asyncio
+async def test_a_successful_equivalent_command_can_resolve_an_environment_failure(
+    tmp_path: Path,
+) -> None:
+    class Runner:
+        async def run(self, command: str, *, timeout: int | None = None) -> ToolResult:
+            return ToolResult(
+                tool="run_command",
+                success=command != "npm run build",
+                data={"command": command},
+                error="Executable not found: npm" if command == "npm run build" else None,
+            )
+
+    gateway = ScriptedGateway(
+        [
+            AgentAction(thought="write", action="write", path="app.py", content="VALUE = 1\n"),
+            AgentAction(thought="host build", action="run_command", command="npm run build"),
+            AgentAction(
+                thought="container build",
+                action="run_command",
+                command="docker compose build web",
+            ),
+            AgentAction(
+                thought="done",
+                action="finish",
+                summary="fixed",
+                verification_commands=["docker compose build web"],
+            ),
+            AgentAction(
+                thought="same build through the project environment",
+                action="resolve_command_failure",
+                command="npm run build",
+                evidence_command="docker compose build web",
+            ),
+            AgentAction(
+                thought="done",
+                action="finish",
+                summary="fixed and checked in Docker",
+                verification_commands=["docker compose build web"],
+            ),
+        ]
+    )
+    executor = ActionExecutor(
+        EditTools(tmp_path, require_read_before_write=False),
+        Runner(),  # type: ignore[arg-type]
+    )
+
+    outcome = await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        require_verified_finish=True,
+    ).run("mission-1", context())
+
+    assert outcome.steps == 6
+    assert outcome.implementation.summary == "fixed and checked in Docker"
+    assert any("command errors remain unresolved" in item for item in gateway.observations)
+
+
+@pytest.mark.asyncio
 async def test_the_step_budget_ends_a_looping_agent(tmp_path: Path) -> None:
     executor = ActionExecutor(EditTools(tmp_path))
     never_finishes = [
@@ -305,6 +632,7 @@ async def test_the_step_budget_ends_a_looping_agent(tmp_path: Path) -> None:
     ).run("mission-1", context())
 
     assert outcome.steps == 3
+    assert not outcome.completed
     assert "Step budget exhausted" in outcome.implementation.summary
     assert len(never_finishes) == 7
 
@@ -355,7 +683,12 @@ def test_profile_output_ceiling_reaches_the_provider(tmp_path: Path) -> None:
         )
     }
     settings.models = {
-        "big": ModelProfileConfig(provider="cloud", model="big-model", max_output_tokens=32_768)
+        "big": ModelProfileConfig(
+            provider="cloud",
+            model="big-model",
+            context_window=65_536,
+            max_output_tokens=32_768,
+        )
     }
     settings.routing = {"builder": "big"}
     gateway = ModelGateway(settings, Database(settings, tmp_path))
@@ -365,3 +698,93 @@ def test_profile_output_ceiling_reaches_the_provider(tmp_path: Path) -> None:
 
     assert resolved.model == "big-model"
     assert resolved.max_output_tokens == 32_768
+
+
+def test_context_compaction_keeps_task_and_complete_recent_tool_exchange() -> None:
+    messages = [
+        Message(role="system", content="system"),
+        Message(role="user", content="old question " * 200),
+        Message(role="assistant", content="old answer " * 200),
+        Message(role="user", content="current task " * 40),
+        Message(
+            role="assistant",
+            content="",
+            tool_calls=[ToolCall(id="recent", name="read_file", arguments={"path": "a.py"})],
+        ),
+        Message(role="tool", content="recent observation " * 300, tool_call_id="recent"),
+    ]
+
+    fitted = _fit_messages(messages, 350)
+
+    assert fitted[0].role == "system"
+    assert any("current task" in item.content for item in fitted)
+    assert not any("old question" in item.content for item in fitted)
+    recent = [item for item in fitted if item.tool_call_id == "recent"]
+    assert recent and any(call.id == "recent" for item in fitted for call in item.tool_calls)
+    assert "oversized context omitted" in recent[0].content
+    assert sum(_message_tokens(item) for item in fitted) <= 350
+
+
+@pytest.mark.asyncio
+async def test_gateway_uses_configured_fallback_after_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = configured_gateway_settings()
+    database = RecordingDatabase()
+    attempts: list[str] = []
+
+    class Provider:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def supports_tools(self) -> bool:
+            return False
+
+        async def complete(self, *args: object, **kwargs: object) -> LLMResponse:
+            attempts.append(self.name)
+            if self.name == "local":
+                raise ProviderError("local server is unavailable")
+            return LLMResponse(content="ok", model="strong", provider=self.name)
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "vasuki.agents.gateway.create_provider", lambda name, config: Provider(name)
+    )
+    response = await ModelGateway(settings, database).complete(  # type: ignore[arg-type]
+        "mission-1", ModelRole.BUILDER, [Message(role="user", content="work")]
+    )
+
+    assert response.content == "ok"
+    assert attempts == ["local", "cloud"]
+    assert [record.success for record in database.records] == [False, True]
+
+
+def configured_gateway_settings() -> Settings:
+    settings = Settings()
+    settings.providers = {
+        "local": ProviderConfig(type="ollama", base_url="http://local/v1", model="small"),
+        "cloud": ProviderConfig(
+            type="openrouter", base_url="https://cloud.invalid/v1", model="strong"
+        ),
+    }
+    settings.models = {
+        "small": ModelProfileConfig(provider="local", model="small", local=True),
+        "strong": ModelProfileConfig(provider="cloud", model="strong"),
+    }
+    settings.routing = {"builder": "small"}
+    settings.routing_fallbacks = {"builder": ["strong"]}
+    return settings
+
+
+class RecordingDatabase:
+    def __init__(self) -> None:
+        self.records: list[Any] = []
+
+    @contextmanager
+    def session(self) -> Iterator[RecordingDatabase]:
+        yield self
+
+    def add(self, record: Any) -> None:
+        self.records.append(record)

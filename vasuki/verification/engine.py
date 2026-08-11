@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 from vasuki.runtimes.base import Runtime
 from vasuki.schemas.core import (
+    CommandResult,
     FailureReport,
     VerificationCheck,
     VerificationReport,
@@ -19,9 +21,16 @@ TRACE_LOCATION = re.compile(r'File "([^"]+)", line (\d+)')
 
 
 class VerificationEngine:
-    def __init__(self, root: Path, runtime: Runtime) -> None:
+    def __init__(
+        self,
+        root: Path,
+        runtime: Runtime,
+        *,
+        execute: Callable[[str], Awaitable[CommandResult]] | None = None,
+    ) -> None:
         self.root = root
         self.runtime = runtime
+        self.execute = execute or runtime.execute
 
     @staticmethod
     def runnable(command: str) -> bool:
@@ -104,7 +113,7 @@ class VerificationEngine:
                 )
             )
         for command in usable:
-            result = await self.runtime.execute(command)
+            result = await self.execute(command)
             check = VerificationCheck(
                 name=command.split()[0],
                 command=command,

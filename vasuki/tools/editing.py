@@ -5,13 +5,16 @@ from __future__ import annotations
 import ast
 import fnmatch
 import os
+import re
 import subprocess  # nosec B404
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from vasuki.schemas import AgentAction, FileModification, TodoItem, ToolResult
+from vasuki.memory import InstructionResolver, MemoryManager, MemoryScope, MemoryType
+from vasuki.schemas import AgentAction, EditSpec, FileModification, TodoItem, ToolResult
 from vasuki.tools.commands import CommandRunner
 from vasuki.tools.filesystem import FileTools
+from vasuki.tools.web import WebResearchTool
 
 #: Ordered ``git apply`` strategies. Models routinely emit diffs with miscounted
 #: hunk headers or drifted whitespace; each fallback repairs one of those without
@@ -25,6 +28,7 @@ _APPLY_STRATEGIES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 _CONFLICT_MARKERS = ("<<<<<<< ", ">>>>>>> ")
+_TOOL_INSTRUCTION_CHARS = 12_000
 
 #: Characters that make a scope entry a pattern rather than a literal path.
 _GLOB_MAGIC = ("*", "?", "[")
@@ -414,6 +418,87 @@ class EditTools:
             data={"path": relative, "replacements": occurrences if replace_all else 1},
         )
 
+    def multi_replace(self, relative: str, edits: list[EditSpec]) -> ToolResult:
+        """Apply exact replacements to one in-memory snapshot, then write once.
+
+        Validating every anchor before the write makes ``multi_edit`` genuinely
+        atomic.  It also validates Python only after all coordinated edits have
+        been applied, so an intentionally incomplete intermediate state cannot
+        reject an otherwise valid batch.
+        """
+        rejection = self._readonly_rejection("multi_edit")
+        if rejection is not None:
+            return rejection
+        relative = self.normalize(relative)
+        if not self._allowed(relative):
+            allowed = ", ".join(sorted(self.allowed_files)) or "none"
+            return ToolResult(
+                tool="multi_edit",
+                success=False,
+                error=f"Path outside allowed task scope: {relative}. This task may edit: {allowed}",
+            )
+        blind = self._unseen(relative)
+        if blind:
+            return ToolResult(tool="multi_edit", success=False, error=blind)
+        path = (self.root / relative).resolve()
+        if not path.is_file():
+            return ToolResult(
+                tool="multi_edit",
+                success=False,
+                error=f"{relative} does not exist; use the write action to create it",
+            )
+        try:
+            original = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return ToolResult(tool="multi_edit", success=False, error=str(exc))
+
+        updated = original
+        for index, edit in enumerate(edits, 1):
+            if not edit.old_string:
+                return ToolResult(
+                    tool="multi_edit",
+                    success=False,
+                    error=f"Edit {index} of {len(edits)} failed: old_string is empty.",
+                )
+            if edit.old_string == edit.new_string:
+                return ToolResult(
+                    tool="multi_edit",
+                    success=False,
+                    error=(
+                        f"Edit {index} of {len(edits)} failed: old_string and new_string "
+                        "are identical."
+                    ),
+                )
+            occurrences = updated.count(edit.old_string)
+            expected = "at least one" if edit.replace_all else "exactly one"
+            if occurrences == 0 or (occurrences > 1 and not edit.replace_all):
+                return ToolResult(
+                    tool="multi_edit",
+                    success=False,
+                    error=(
+                        f"Edit {index} of {len(edits)} failed: old_string matches "
+                        f"{occurrences} places in {relative}; expected {expected}. "
+                        "Read the file again and use a unique exact anchor. No edits were applied."
+                    ),
+                )
+            updated = (
+                updated.replace(edit.old_string, edit.new_string)
+                if edit.replace_all
+                else updated.replace(edit.old_string, edit.new_string, 1)
+            )
+
+        try:
+            path.write_text(updated, encoding="utf-8")
+        except OSError as exc:
+            return ToolResult(tool="multi_edit", success=False, error=str(exc))
+        syntax_error = self._validate_python([relative])
+        if syntax_error:
+            path.write_text(original, encoding="utf-8")
+            return ToolResult(tool="multi_edit", success=False, error=syntax_error)
+        return ToolResult(
+            tool="multi_edit", success=True, data={"path": relative, "edits": len(edits)}
+        )
+
     def apply_modification(self, modification: FileModification) -> ToolResult:
         rejection = self._readonly_rejection("apply_modification")
         if rejection is not None:
@@ -541,13 +626,33 @@ class ActionExecutor:
     a file marks it seen so the read-before-edit gate lets the next edit land.
     """
 
-    def __init__(self, editor: EditTools, commands: CommandRunner | None = None) -> None:
+    def __init__(
+        self,
+        editor: EditTools,
+        commands: CommandRunner | None = None,
+        *,
+        web: WebResearchTool | None = None,
+        memory: MemoryManager | None = None,
+        memory_task_id: str | None = None,
+        memory_session_id: str | None = None,
+    ) -> None:
         self.editor = editor
         #: Attached when the agent is allowed to run commands. Absent for paths
         #: that must stay side-effect free, where ``run_command`` is refused.
         self.commands = commands
+        #: Deliberately separate from command execution: fetching public text
+        #: should not require curl in the project runtime or inherit its network.
+        self.web = web
+        self.memory = memory
+        self.memory_task_id = memory_task_id
+        self.memory_session_id = memory_session_id
+        self.instructions = InstructionResolver(self.editor.root)
         #: The agent's current plan, replaced whenever it emits ``todo``.
         self.todos: list[TodoItem] = []
+        #: Read windows accumulated per file. A model may page through a large
+        #: file before editing it; once the windows cover the whole file, the
+        #: read-before-write gate can safely treat it as seen.
+        self.read_ranges: dict[str, list[tuple[int, int]]] = {}
 
     async def execute(self, action: AgentAction) -> tuple[ToolResult, list[str]]:
         name = action.action
@@ -573,6 +678,24 @@ class ActionExecutor:
                 )
             timeout = action.timeout or None
             return await self.commands.run(action.command, timeout=timeout), []
+        if name in {"web_search", "fetch_url"}:
+            if self.web is None:
+                return (
+                    ToolResult(
+                        tool=name,
+                        success=False,
+                        error="Internet research is not available in this context.",
+                    ),
+                    [],
+                )
+            if name == "web_search":
+                return (
+                    await self.web.search(action.query, max_results=action.max_results),
+                    [],
+                )
+            return await self.web.fetch(action.url, max_chars=action.max_chars), []
+        if name.startswith("memory_"):
+            return self._memory_action(action), []
         if name == "glob":
             return self.editor.files.glob_files(action.pattern or action.query), []
         if name == "grep":
@@ -597,8 +720,14 @@ class ActionExecutor:
                 else (action.limit or None)
             )
             result = self.editor.files.read_file(action.path, start, end)
-            if result.success and not (start or end):
-                self.editor.mark_seen(action.path)
+            if result.success:
+                self._record_read(action.path, result)
+                resolved = self.instructions.resolve([action.path])
+                if resolved.text:
+                    text = resolved.text
+                    if len(text) > _TOOL_INSTRUCTION_CHARS:
+                        text = text[:3_000] + "\n… broader instructions omitted …\n" + text[-8_900:]
+                    result.data["effective_instructions"] = text
             return result, []
         if name == "list_directory":
             return self.editor.files.list_directory(action.path or "."), []
@@ -628,11 +757,129 @@ class ActionExecutor:
                     reason=action.summary or "write",
                 )
             )
-            return result, [self.editor.normalize(action.path)] if result.success else []
+            relative = self.editor.normalize(action.path)
+            if result.success:
+                # The model supplied the complete contents, so it knows the
+                # current state of a file it just created and may refine it on
+                # the next turn without a redundant read.
+                self.editor.mark_seen(relative)
+            return result, [relative] if result.success else []
         return (
             ToolResult(tool=name, success=False, error=f"Unknown action {name}"),
             [],
         )
+
+    def _memory_action(self, action: AgentAction) -> ToolResult:
+        if self.memory is None:
+            return ToolResult(
+                tool=action.action,
+                success=False,
+                error="Durable memory is not available in this context.",
+            )
+        try:
+            if action.action == "memory_search":
+                types = None if action.memory_type == "semantic" else [action.memory_type]
+                matches = self.memory.search(
+                    action.query,
+                    memory_types=types,
+                    task_id=self.memory_task_id,
+                    session_id=self.memory_session_id,
+                )
+                return ToolResult(
+                    tool=action.action,
+                    success=True,
+                    data={"memories": [item.model_dump(mode="json") for item in matches]},
+                )
+            if action.action == "memory_list":
+                items = self.memory.list(
+                    memory_type=None if action.memory_type == "semantic" else action.memory_type,
+                    limit=max(1, min(action.limit or 20, 100)),
+                )
+                return ToolResult(
+                    tool=action.action,
+                    success=True,
+                    data={"memories": [item.model_dump(mode="json") for item in items]},
+                )
+            if action.action == "memory_save":
+                scope = MemoryScope(action.memory_scope)
+                if scope == MemoryScope.GLOBAL and not re.search(
+                    r"\b(for all|always|across (?:all )?projects|i prefer)\b",
+                    action.content,
+                    re.I,
+                ):
+                    return ToolResult(
+                        tool=action.action,
+                        success=False,
+                        error="Global memory requires an explicit cross-project user preference.",
+                    )
+                memory_id = self.memory.remember(
+                    action.content,
+                    memory_type=MemoryType(action.memory_type),
+                    scope=scope,
+                    summary=action.summary,
+                    importance=action.importance,
+                    confidence=action.confidence,
+                    source=action.source or "agent-memory-tool",
+                    source_type="agent",
+                    tags=action.tags,
+                    task_id=self.memory_task_id,
+                    session_id=self.memory_session_id,
+                    rationale="Created through the validated memory_save tool",
+                )
+                return ToolResult(
+                    tool=action.action,
+                    success=True,
+                    data={"memory_id": memory_id},
+                )
+            if action.action == "memory_update":
+                updates: dict[str, object] = {}
+                if action.content:
+                    updates["content"] = action.content
+                if action.summary:
+                    updates["summary"] = action.summary
+                updates["importance"] = action.importance
+                updates["confidence"] = action.confidence
+                self.memory.update(action.memory_id, **updates)
+                return ToolResult(
+                    tool=action.action,
+                    success=True,
+                    data={"memory_id": action.memory_id},
+                )
+            if action.action == "memory_forget":
+                self.memory.forget(action.memory_id)
+                return ToolResult(
+                    tool=action.action,
+                    success=True,
+                    data={"memory_id": action.memory_id},
+                )
+            if action.action == "memory_verify":
+                self.memory.verify(action.memory_id, confidence=action.confidence)
+                return ToolResult(
+                    tool=action.action,
+                    success=True,
+                    data={"memory_id": action.memory_id},
+                )
+        except (ValueError, OSError) as exc:
+            return ToolResult(tool=action.action, success=False, error=str(exc))
+        return ToolResult(tool=action.action, success=False, error="Unknown memory operation")
+
+    def _record_read(self, relative: str, result: ToolResult) -> None:
+        normalized = self.editor.normalize(relative)
+        total = int(result.data.get("total_lines", 0))
+        first = int(result.data.get("start_line", 1))
+        last = int(result.data.get("end_line", 0))
+        if bool(result.data.get("complete")) or total == 0:
+            self.editor.mark_seen(normalized)
+            return
+        ranges = self.read_ranges.setdefault(normalized, [])
+        ranges.append((first, last))
+        covered = 0
+        for start, end in sorted(ranges):
+            if start > covered + 1:
+                break
+            covered = max(covered, end)
+        if covered >= total:
+            self.editor.mark_seen(normalized)
 
     def _multi_edit(self, action: AgentAction) -> tuple[ToolResult, list[str]]:
         """Apply several exact replacements to one file, all or nothing.
@@ -642,34 +889,9 @@ class ActionExecutor:
         in the middle; applying them together avoids both. If any anchor fails to
         match, nothing is written.
         """
-        if not action.edits:
-            return ToolResult(tool="multi_edit", success=False, error="No edits given."), []
         relative = self.editor.normalize(action.path)
-        applied = 0
-        for index, edit in enumerate(action.edits, 1):
-            result = self.editor.replace_in_file(
-                relative,
-                edit.old_string,
-                edit.new_string,
-                replace_all=edit.replace_all,
-            )
-            if not result.success:
-                return (
-                    ToolResult(
-                        tool="multi_edit",
-                        success=False,
-                        error=(
-                            f"Edit {index} of {len(action.edits)} failed: {result.error} "
-                            f"({applied} earlier edit(s) were applied)."
-                        ),
-                    ),
-                    [relative] if applied else [],
-                )
-            applied += 1
-        return (
-            ToolResult(tool="multi_edit", success=True, data={"path": relative, "edits": applied}),
-            [relative],
-        )
+        result = self.editor.multi_replace(relative, action.edits)
+        return result, [relative] if result.success else []
 
 
 class RecordingActionExecutor(ActionExecutor):
@@ -685,8 +907,24 @@ class RecordingActionExecutor(ActionExecutor):
     #: Actions that can alter a file on disk.
     MUTATIONS = frozenset({"write", "replace", "delete", "multi_edit"})
 
-    def __init__(self, editor: EditTools, commands: CommandRunner | None = None) -> None:
-        super().__init__(editor, commands)
+    def __init__(
+        self,
+        editor: EditTools,
+        commands: CommandRunner | None = None,
+        *,
+        web: WebResearchTool | None = None,
+        memory: MemoryManager | None = None,
+        memory_task_id: str | None = None,
+        memory_session_id: str | None = None,
+    ) -> None:
+        super().__init__(
+            editor,
+            commands,
+            web=web,
+            memory=memory,
+            memory_task_id=memory_task_id,
+            memory_session_id=memory_session_id,
+        )
         #: Relative path -> contents before the agent touched it, or None when
         #: the file did not exist.
         self.before: dict[str, str | None] = {}

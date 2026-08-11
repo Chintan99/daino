@@ -1,6 +1,7 @@
 """Reusable Textual widgets."""
 
 from vasuki.tui.widgets.approval_modal import ApprovalModal
+from vasuki.tui.widgets.checklist import TaskChecklist
 from vasuki.tui.widgets.command_palette import CommandPalette
 from vasuki.tui.widgets.conversation import ConversationView
 from vasuki.tui.widgets.message import MessageCard
@@ -24,6 +25,7 @@ __all__ = [
     "NavigationTab",
     "NavigationTabs",
     "PromptInput",
+    "TaskChecklist",
     "VasukiHeader",
     "VasukiHintBar",
 ]

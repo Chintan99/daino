@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -16,6 +17,15 @@ StructuredT = TypeVar("StructuredT", bound=BaseModel)
 #: 4096 was routinely hit mid-JSON: the reply came back truncated and unparseable
 #: rather than merely short. Large enough for a real file, still bounded.
 DEFAULT_MAX_OUTPUT_TOKENS = 16_384
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderUsage:
+    """Usage reported by a provider for the current request."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost: float = 0.0
 
 
 class LLMProvider(ABC):
@@ -59,3 +69,8 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def close(self) -> None: ...
+
+    @property
+    def last_usage(self) -> ProviderUsage:
+        """Return usage accumulated during the current provider call."""
+        return ProviderUsage()

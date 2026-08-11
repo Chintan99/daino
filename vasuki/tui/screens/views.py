@@ -17,6 +17,7 @@ from textual.widgets import (
     DataTable,
     Input,
     Label,
+    Markdown,
     RichLog,
     Select,
     Static,
@@ -34,6 +35,8 @@ from vasuki.application import (
 from vasuki.application.view_models import OpenRouterModel, ProviderStatus
 from vasuki.observability import AuditLog
 from vasuki.playbooks import PlaybookLoader
+from vasuki.schemas import QAReport
+from vasuki.tui.highlight import highlight_unified_diff
 from vasuki.tui.keybindings import SHORTCUTS, SLASH_COMMANDS
 
 
@@ -102,6 +105,109 @@ class MissionsView(ViewPanel):
         screen = self.screen
         if hasattr(screen, "set_active_mission"):
             screen.set_active_mission(mission_id)
+
+
+class QAView(ViewPanel):
+    """Live progress and persisted evidence for a comprehensive QA run."""
+
+    title = "Quality assurance"
+
+    def __init__(self) -> None:
+        super().__init__(id="qa-view")
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="qa-scroll"):
+            yield Label(self.title, classes="view-title")
+            with Horizontal(classes="toolbar"):
+                yield Button("Run QA", id="run-qa", variant="primary")
+                yield Button("Refresh scans", id="refresh-qa-history")
+            yield Static(
+                "Parallel read-only reviewers + tests, Playwright, and dependency audits",
+                id="qa-state",
+            )
+            yield Label("Saved scans — select a row to load", classes="section-title")
+            yield Static("No saved scans for this repository.", id="qa-history-state")
+            yield DataTable(id="qa-history", cursor_type="row")
+            yield Label("Specialists", classes="section-title")
+            yield DataTable(id="qa-specialists", cursor_type="row")
+            yield Label("Automated evidence", classes="section-title")
+            yield DataTable(id="qa-checks", cursor_type="row")
+            yield Label("Consolidated report", classes="section-title")
+            yield Markdown(
+                "No QA report yet. Select Run QA to inspect this project.", id="qa-report"
+            )
+
+    def on_mount(self) -> None:
+        self.query_one("#qa-history", DataTable).add_columns(
+            "Started", "Status", "Profile", "Failures", "Report"
+        )
+        self.query_one("#qa-specialists", DataTable).add_columns(
+            "Specialist", "Role", "Status", "Result"
+        )
+        self.query_one("#qa-checks", DataTable).add_columns("Check", "Category", "Status", "Result")
+
+    def set_history(self, reports: list[QAReport]) -> None:
+        table = self.query_one("#qa-history", DataTable)
+        table.clear()
+        for report in reports:
+            failures = sum(item.status == "failed" for item in report.checks)
+            failures += sum(item.status == "failed" for item in report.specialists)
+            table.add_row(
+                report.started_at.strftime("%Y-%m-%d %H:%M"),
+                report.status.replace("_", " ").upper(),
+                ", ".join(report.project_profile) or "general",
+                str(failures),
+                report.id,
+                key=report.id,
+            )
+        self.query_one("#qa-history-state", Static).update(
+            f"{len(reports)} saved scan(s) for this repository."
+            if reports
+            else "No saved scans for this repository."
+        )
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "qa-history":
+            return
+        screen = self.screen
+        if hasattr(screen, "load_qa_report"):
+            screen.load_qa_report(str(event.row_key.value))
+
+    def show_report(self, report: QAReport) -> None:
+        self.query_one("#run-qa", Button).disabled = report.status == "running"
+        failed = sum(item.status == "failed" for item in report.checks)
+        skipped = sum(item.status == "skipped" for item in report.checks)
+        self.query_one("#qa-state", Static).update(
+            f"{report.id}  •  {report.started_at.strftime('%Y-%m-%d %H:%M')}  •  "
+            f"{report.status.replace('_', ' ').title()}  •  "
+            f"{', '.join(report.project_profile)}  •  {failed} failed  •  {skipped} skipped"
+        )
+        specialists = self.query_one("#qa-specialists", DataTable)
+        specialists.clear()
+        for specialist in report.specialists:
+            result = specialist.error or _first_line(specialist.summary) or "—"
+            specialists.add_row(
+                specialist.label,
+                specialist.role,
+                "DONE" if specialist.status == "passed" else specialist.status.upper(),
+                result[:100],
+                key=specialist.id,
+            )
+        checks = self.query_one("#qa-checks", DataTable)
+        checks.clear()
+        for check in report.checks:
+            checks.add_row(
+                check.label,
+                check.category,
+                check.status.upper(),
+                (_first_line(check.summary) or "—")[:100],
+                key=check.id,
+            )
+        self.query_one("#qa-report", Markdown).update(report.summary or "QA is gathering evidence…")
+
+
+def _first_line(value: str) -> str:
+    return next((line.strip() for line in value.splitlines() if line.strip()), "")
 
 
 class RepositoryView(ViewPanel):
@@ -274,9 +380,7 @@ class DiffView(ViewPanel):
         self.query_one("#diff-stats", Static).update(
             f"{files} files  [b]+{added}[/b]  [b]-{removed}[/b]"
         )
-        self.query_one("#diff-content", Static).update(
-            Syntax(diff or "No changes", "diff", line_numbers=False, theme="monokai")
-        )
+        self.query_one("#diff-content", Static).update(highlight_unified_diff(diff))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "refresh-diff":

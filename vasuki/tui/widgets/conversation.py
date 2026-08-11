@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from textual.containers import VerticalScroll
+from textual.timer import Timer
 
 from vasuki.application.view_models import ConversationItem
 from vasuki.tui.widgets.message import MessageCard
@@ -14,16 +15,28 @@ from vasuki.tui.widgets.welcome import WelcomeBanner
 class ConversationView(VerticalScroll):
     can_focus = True
     _BOTTOM_THRESHOLD = 3
+    _PENDING_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stream_card: MessageCard | None = None
         self._pending_card: MessageCard | None = None
+        self._pending_label = "working"
+        self._pending_frame = 0
+        self._pending_timer: Timer | None = None
         self.provider = "offline"
         self.runtime = "local"
         #: Ids of persisted messages already on screen, in order, so a refresh
         #: can mount only what is new.
         self._shown: list[str] = []
+
+    def on_mount(self) -> None:
+        self._pending_timer = self.set_interval(
+            0.12,
+            self._animate_pending,
+            name="chat-working-indicator",
+            pause=True,
+        )
 
     def set_environment(self, provider: str, runtime: str) -> None:
         """Record what the welcome banner should report about this session."""
@@ -55,6 +68,7 @@ class ConversationView(VerticalScroll):
     async def load_messages(self, items: list[ConversationItem]) -> None:
         """Replace the whole transcript. Use ``sync_messages`` after a turn."""
         self._stream_card = None
+        self._stop_pending_animation()
         self._pending_card = None
         self._shown = []
         await self.remove_children()
@@ -120,7 +134,12 @@ class ConversationView(VerticalScroll):
     async def begin_pending(self, label: str = "Working…") -> None:
         """Show an immediate placeholder so a slow first token never looks like a hang."""
         await self.clear_pending()
-        self._pending_card = await self.add_message(label, kind="status", follow=True)
+        self._pending_label = self._clean_pending_label(label)
+        self._pending_frame = 0
+        self._pending_card = await self.add_message("", kind="status", follow=True)
+        self._paint_pending()
+        if self._pending_timer is not None:
+            self._pending_timer.resume()
 
     def update_pending(self, label: str) -> None:
         """Retitle the placeholder with whatever the agent is doing right now.
@@ -130,9 +149,35 @@ class ConversationView(VerticalScroll):
         hang rather than as work in progress.
         """
         if self._pending_card is not None and self._pending_card.is_mounted:
-            self._pending_card.replace_content(label)
+            self._pending_label = self._clean_pending_label(label)
+            self._pending_frame = 0
+            self._paint_pending()
+
+    @staticmethod
+    def _clean_pending_label(label: str) -> str:
+        return label.strip().rstrip(".…").strip() or "working"
+
+    def _paint_pending(self) -> None:
+        if self._pending_card is None or not self._pending_card.is_mounted:
+            return
+        frame = self._PENDING_FRAMES[self._pending_frame % len(self._PENDING_FRAMES)]
+        dots = "." * (self._pending_frame % 3 + 1)
+        self._pending_card.replace_content(f"{frame} {self._pending_label}{dots}")
+
+    def _animate_pending(self) -> None:
+        if self._pending_card is None or not self._pending_card.is_mounted:
+            self._stop_pending_animation()
+            return
+        self._pending_frame += 1
+        self._paint_pending()
+
+    def _stop_pending_animation(self) -> None:
+        if self._pending_timer is not None:
+            self._pending_timer.pause()
+        self._pending_frame = 0
 
     async def clear_pending(self) -> None:
+        self._stop_pending_animation()
         if self._pending_card is not None:
             card, self._pending_card = self._pending_card, None
             if card.is_mounted:
@@ -160,6 +205,7 @@ class ConversationView(VerticalScroll):
 
     async def clear_visible(self) -> None:
         self._stream_card = None
+        self._stop_pending_animation()
         self._pending_card = None
         self._shown = []
         await self.remove_children()

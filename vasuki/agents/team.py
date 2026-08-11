@@ -26,9 +26,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from vasuki.agents.gateway import ModelGateway
-from vasuki.agents.loop import DEFAULT_MAX_STEPS, OnActionCallback, ToolLoop
+from vasuki.agents.loop import OnActionCallback, ToolLoop
+from vasuki.memory import MemoryManager
 from vasuki.model_router import ModelRole
 from vasuki.prompts import TEAM_LEAD_SYSTEM
 from vasuki.schemas import (
@@ -194,13 +196,25 @@ class TeamRunner:
         gateway: ModelGateway,
         root: Path,
         *,
-        max_steps: int = DEFAULT_MAX_STEPS,
+        max_steps: int | None = None,
         require_read_before_write: bool = True,
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+        action_schema: type[AgentAction] = AgentAction,
+        memory: MemoryManager | None = None,
+        memory_task_id: str | None = None,
+        memory_session_id: str | None = None,
     ) -> None:
         self.gateway = gateway
         self.root = root
         self.max_steps = max_steps
         self.require_read_before_write = require_read_before_write
+        self.system = system
+        self.tools = tools
+        self.action_schema = action_schema
+        self.memory = memory
+        self.memory_task_id = memory_task_id
+        self.memory_session_id = memory_session_id
 
     async def run(
         self,
@@ -261,8 +275,16 @@ class TeamRunner:
         loop = ToolLoop(
             self.gateway,
             ModelRole(member.role),
-            ActionExecutor(editor),
+            ActionExecutor(
+                editor,
+                memory=self.memory,
+                memory_task_id=self.memory_task_id,
+                memory_session_id=self.memory_session_id,
+            ),
             max_steps=self.max_steps,
+            system=self.system,
+            tools=self.tools,
+            action_schema=self.action_schema,
         )
         try:
             outcome = await loop.run(
@@ -286,7 +308,12 @@ class TeamRunner:
             summary=outcome.implementation.summary,
             changed=outcome.changed,
             steps=outcome.steps,
-            success=True,
+            success=outcome.completed,
+            error=(
+                "The agent exhausted its step budget before finishing."
+                if not outcome.completed
+                else ""
+            ),
         )
 
     def _member_context(
@@ -297,15 +324,17 @@ class TeamRunner:
     ) -> ContextBundle:
         """Narrow the shared context to one member's objective and inherited findings."""
         briefings = [
-            f"{completed[dependency].role} {dependency}: {completed[dependency].summary}"
+            f"{completed[dependency].role} {dependency}: {completed[dependency].summary[:4_000]}"
             for dependency in member.dependencies
             if dependency in completed and completed[dependency].summary
         ]
         scope = ", ".join(member.scope) if member.scope else "read-only, no file changes"
+        inherited = (
+            "\n\nCompleted dependency findings:\n" + "\n\n".join(briefings) if briefings else ""
+        )
         return base_context.model_copy(
             update={
-                "task": f"{member.objective}\n\nYour editable scope: {scope}",
-                "architecture_decisions": [*base_context.architecture_decisions, *briefings],
+                "task": f"{member.objective}{inherited}\n\nYour editable scope: {scope}",
             }
         )
 

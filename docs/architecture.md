@@ -55,7 +55,29 @@ Command execution is layered so that no single component both decides and acts: 
 decides (allow, ask, refuse) from policy plus session memory, `CommandRunner` asks the interface
 when the gate says to, and the configured `Runtime` executes. The interface supplies the approval
 callback, so a headless caller with no approver gets a refusal rather than silently inheriting
-permissions the TUI would have prompted for.
+permissions the TUI would have prompted for. Mission builders use the same runner for unattended
+safe commands, which lets them inspect tests and builds before the outer verification/repair gate.
+For interactive edits, `finish` is refused until every proposed verification command has most
+recently succeeded in the same tool loop. A failed agent command also remains an unresolved gate:
+the exact command must later pass, or a rejected `a && b` chain must be rerun as two successful
+standalone commands. An environment-specific failure can be cleared by an explicitly linked,
+already-successful equivalent command (for example a Docker build replacing unavailable host
+`npm`); Vasuki rejects the link unless that evidence really passed. This prevents an unrelated
+green check from silently hiding earlier red evidence. The independent verifier then repeats the
+declared checks; a failure records a failed mission and the UI says the changes are incomplete
+instead of rendering the builder's optimistic summary as success.
+
+The model gateway has two independent recovery layers. Request-shape incompatibilities fall back
+from native tools or grammar constraints to structured prompt JSON on the same provider. Provider
+failures move to the role's configured model fallback. Before either request is sent, repository
+context and prior tool exchanges are fitted to the selected profile's actual context window while
+preserving the current task and complete recent tool-call groups.
+
+Planner and agent contracts repair a common small-model ambiguity where one command is returned as
+an argv-shaped string list. The approved task's verification commands remain authoritative over a
+builder's ad-hoc finishing suggestions. After all task checks pass, an independent rejection is
+turned into a scoped corrective task and re-reviewed, with two repair attempts at most; the mission
+blocks if review still fails.
 
 ## Teams of sub-agents
 
@@ -74,6 +96,25 @@ an empty scope means "unrestricted" rather than "nothing".
 This is the concurrency the sequential mission scheduler leaves open, obtained through disjoint
 scopes in one worktree instead of disjoint worktrees. Task contracts are untouched.
 
+The QA workspace reuses `TeamRunner` with a stricter surface. Its fixed roster is entirely
+read-only and receives `QA_TOOL_SPECS`, which omits every mutation and command action. Independent
+architecture, security, code-quality, frontend/backend, and UI specialists form the first wave; a
+summarizer depending on all applicable specialists forms the second. Deterministic checks run
+through the configured runtime and command policy before the model wave, and their bounded output
+is supplied as untrusted evidence. Each resulting `QAReport` carries its project root, is stored in
+that repository's `.vasuki/qa/` directory, and is rendered live by `QAView`. The application service
+also validates, sorts, and reloads the repository-local report history for the QA tab.
+
 The current repository adapter uses Python AST and lightweight syntax extraction. `Runtime` and
 `LLMProvider` are abstract interfaces. A future LSP adapter, Kubernetes runtime, or provider can be
 added without changing mission orchestration.
+
+## Multi-layer memory
+
+`MemoryManager` is the service boundary over project SQLite and the private user memory database.
+`ContextBuilder` centralizes hierarchical `VASUKI.md`, persistent working state, relevant project
+facts/decisions/episodes/failures, source context, compaction, authority rules, and token budgets.
+Mission and chat actions checkpoint working state immediately, so provider failure or process exit
+does not erase the active plan. Source-derived facts carry digests and become stale when the
+repository changes. See [memory architecture](memory.md) for the schema, precedence, retrieval
+ranking, commands, migration, security model, and multi-session demonstration.

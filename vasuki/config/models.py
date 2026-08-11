@@ -107,6 +107,18 @@ class ModelProfileConfig(BaseModel):
     cost_classification: Literal["free", "low", "medium", "high"] = "low"
     expected_latency: Literal["low", "medium", "high"] = "medium"
     data_sensitivity: Literal["public", "internal", "confidential", "restricted"] = "internal"
+    #: ``compact`` optimizes prompts and the action loop for smaller/local
+    #: models. ``auto`` enables it for constrained windows or modest coding /
+    #: tool reliability scores while leaving strong cloud profiles unchanged.
+    execution_mode: Literal["auto", "compact", "standard"] = "auto"
+    #: Optional hard ceiling for the first task packet. Zero lets Vasuki derive
+    #: a safe value from the model window and project context budget.
+    initial_context_tokens: int = Field(default=0, ge=0)
+    #: Optional per-run override. Compact mode otherwise uses a smaller bounded
+    #: loop so repeated low-value actions escalate instead of burning turns.
+    max_agent_steps: int = Field(default=0, ge=0, le=100)
+    no_progress_limit: int = Field(default=3, ge=2, le=12)
+    staged_retrieval: bool = True
 
 
 class DeploymentAuthConfig(BaseModel):
@@ -148,6 +160,35 @@ class TUIConfig(BaseModel):
     keybindings: dict[str, str] = Field(default_factory=dict)
 
 
+class MemoryConfig(BaseModel):
+    """Local-first memory policy; lexical retrieval works with all defaults."""
+
+    enabled: bool = True
+    auto_save: bool = True
+    auto_extract: bool = True
+    auto_resume: bool = False
+    max_retrieved_items: int = Field(default=8, ge=1, le=100)
+    max_context_tokens: int = Field(default=2_000, ge=128)
+    compaction_threshold: float = Field(default=0.80, gt=0.1, le=1.0)
+    embedding_provider: Literal["disabled", "local", "openai-compatible"] = "disabled"
+    embedding_model: str = ""
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    decay_enabled: bool = True
+    decay_half_life_days: int = Field(default=180, ge=1)
+    user_memory_enabled: bool = True
+    failure_memory_enabled: bool = True
+
+    @field_validator("embedding_api_key")
+    @classmethod
+    def embedding_secret_must_be_reference(cls, value: str) -> str:
+        if value and not value.startswith(("env://", "keyring://", "file://")):
+            raise ValueError(
+                "embedding_api_key must be a secret reference (env://, keyring://, file://)"
+            )
+        return value
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="VASUKI_",
@@ -167,6 +208,7 @@ class Settings(BaseSettings):
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     tui: TUIConfig = Field(default_factory=TUIConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
     def safe_dump(self) -> dict[str, Any]:
         """Serialize configuration without ever resolving secret references."""

@@ -97,7 +97,7 @@ class ModelRouter:
         profile = self.settings.models[selected_name]
         requested = _SENSITIVITY.get(context.data_sensitivity, 1)
         allowed = _SENSITIVITY.get(profile.data_sensitivity, 1)
-        if requested > allowed and not profile.local:
+        if requested > allowed:
             local = next(
                 (
                     (name, item)
@@ -122,3 +122,49 @@ class ModelRouter:
             reason=reason,
             escalated=selected_name != profile_name,
         )
+
+    def failover_selections(
+        self,
+        role: ModelRole | str,
+        context: RoutingContext | None = None,
+        *,
+        profile_override: str | None = None,
+    ) -> list[ModelSelection]:
+        """Return the selected profile followed by configured operational fallbacks.
+
+        Escalation chooses a model based on task difficulty.  This list handles a
+        different failure mode: a provider being unavailable, rate limited, or
+        rejecting a request.  An explicit session override remains pinned and is
+        never silently replaced.
+        """
+        role_name = ModelRole(role).value
+        selected = self.select(role, context, profile_override=profile_override)
+        if profile_override:
+            return [selected]
+
+        names = [selected.profile_name]
+        names.extend(self.settings.routing_fallbacks.get(role_name, []))
+        requested = _SENSITIVITY.get((context or RoutingContext()).data_sensitivity, 1)
+        require_local = "data sensitivity requires local processing" in selected.reason
+        results = [selected]
+        for name in names[1:]:
+            if name in {item.profile_name for item in results}:
+                continue
+            profile = self.settings.models.get(name)
+            if profile is None:
+                continue
+            if require_local and not profile.local:
+                continue
+            if requested > _SENSITIVITY.get(profile.data_sensitivity, 1):
+                continue
+            results.append(
+                ModelSelection(
+                    profile_name=name,
+                    profile=profile,
+                    reason=(
+                        f"Operational fallback for {role_name} after an earlier provider failure"
+                    ),
+                    escalated=name != self.settings.routing.get(role_name),
+                )
+            )
+        return results

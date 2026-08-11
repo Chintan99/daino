@@ -12,13 +12,13 @@ from textual.content import Content
 from textual.widgets import Static
 
 from vasuki.tui import palette
-from vasuki.tui.highlight import highlight_body
+from vasuki.tui.highlight import guess_language, highlight_body, highlight_code
 
 LABELS = {
-    "user": "you",
-    "agent": "vasuki",
+    "user": "",
+    "agent": "",
     "plan": "plan",
-    "tool": "tool",
+    "tool": "",
     "test": "test",
     "approval": "approval",
     "error": "error",
@@ -29,19 +29,34 @@ LABELS = {
     "status": "",
 }
 
+# The high-frequency transcript rows use the same tiny glyph language as the
+# composer: a prompt for the user and an ellipsis for background activity. The
+# less common, higher-risk rows keep explicit labels below.
+INLINE_PREFIXES = {
+    "user": ("› ", f"bold {palette.PROMPT_ACCENT}"),
+    "tool": ("… ", palette.FAINT),
+    "status": ("… ", palette.FAINT),
+}
+
 #: Diff bodies are painted per line rather than as one block, so an added line
 #: reads as added at a glance instead of being lost in a wall of text. Each entry
 #: is (gutter style, body style); changed lines carry a filled background.
 DIFF_STYLES = {
     "+": (
-        f"{palette.DIFF_ADDED_GUTTER} on {palette.DIFF_ADDED_BG}",
-        f"{palette.DIFF_ADDED} on {palette.DIFF_ADDED_BG}",
+        f"{palette.DIFF_GUTTER} on {palette.DIFF_ADDED_BG}",
+        f"{palette.TEXT} on {palette.DIFF_ADDED_BG}",
     ),
     "-": (
-        f"{palette.DIFF_REMOVED_GUTTER} on {palette.DIFF_REMOVED_BG}",
-        f"{palette.DIFF_REMOVED} on {palette.DIFF_REMOVED_BG}",
+        f"{palette.DIFF_GUTTER} on {palette.DIFF_REMOVED_BG}",
+        f"{palette.TEXT} on {palette.DIFF_REMOVED_BG}",
     ),
     " ": (palette.DIFF_GUTTER, palette.DIFF_CONTEXT),
+}
+
+DIFF_BACKGROUNDS = {
+    "+": palette.DIFF_ADDED_BG,
+    "-": palette.DIFF_REMOVED_BG,
+    " ": "",
 }
 
 #: Widest a filled diff line is padded to. Padding makes each changed line a
@@ -67,6 +82,8 @@ LABEL_STYLES = {
 
 BODY_STYLES = {
     "user": palette.BRIGHT,
+    "agent": palette.BRIGHT,
+    "tool": palette.FAINT,
     "status": palette.FAINT,
     "error": palette.ALERT,
 }
@@ -112,6 +129,9 @@ class MessageCard(Static):
         message occupy space while painting nothing at all.
         """
         parts: list[str | Content | tuple[str, str]] = []
+        prefix = INLINE_PREFIXES.get(self.kind)
+        if prefix:
+            parts.append(prefix)
         label = LABELS.get(self.kind, self.kind)
         if label:
             parts.append((label, LABEL_STYLES.get(self.kind, palette.MUTED)))
@@ -132,8 +152,13 @@ class MessageCard(Static):
             # Prose stays one span; fenced code is highlighted per token, which
             # is what stops an answer that is mostly code reading as a grey wall.
             parts.extend(highlight_body(self.raw_content, BODY_STYLES.get(self.kind, palette.TEXT)))
+        footer = ""
+        if self.kind == "agent" and self.duration is not None:
+            footer = f"↳ {self.duration:.1f}s"
         if self.metadata:
-            parts.append(("\nenter  details", palette.FAINTEST))
+            footer = f"{footer}  ·  enter details" if footer else "↳ enter  details"
+        if footer:
+            parts.append((f"\n{footer}", palette.FAINTEST))
         if self.expanded and self.metadata:
             details = json.dumps(self.metadata, indent=2, default=str)
             parts.append((f"\n\n{details}", palette.FAINTEST))
@@ -152,6 +177,7 @@ class MessageCard(Static):
         """
         lines = self.raw_content.splitlines()
         width = min(max((len(line) for line in lines), default=0), DIFF_MAX_WIDTH)
+        language = guess_language(lines[0].strip()) if lines else ""
         spans: list[str | Content | tuple[str, str]] = []
         for index, line in enumerate(lines):
             if index:
@@ -164,9 +190,19 @@ class MessageCard(Static):
             # Split "  12 + code" into the "  12 " gutter and "+ code" body.
             cut = len(line) - len(line.lstrip())
             number_end = line.index(" ", cut) + 1
-            body = line[number_end:].ljust(max(width - number_end, 0))
+            marker_text = line[number_end : number_end + 2]
+            code = line[number_end + 2 :]
+            if marker in {"+", "-"}:
+                code = code.ljust(max(width - number_end - 2, 0))
             spans.append((line[:number_end], gutter_style))
-            spans.append((body, body_style))
+            spans.append((marker_text, body_style))
+            spans.append(
+                highlight_code(
+                    code,
+                    language,
+                    background=DIFF_BACKGROUNDS[marker],
+                )
+            )
         return spans
 
     def append_chunk(self, chunk: str) -> None:

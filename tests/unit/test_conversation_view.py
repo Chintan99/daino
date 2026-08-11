@@ -6,9 +6,11 @@ from datetime import UTC, datetime
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.color import Color
 
 from vasuki.application.view_models import ConversationItem
-from vasuki.tui.highlight import highlight_body
+from vasuki.tui import palette
+from vasuki.tui.highlight import guess_language, highlight_body, highlight_unified_diff
 from vasuki.tui.widgets import ConversationView
 from vasuki.tui.widgets.message import MessageCard
 
@@ -104,6 +106,24 @@ async def test_a_rewritten_history_falls_back_to_a_full_reload() -> None:
         assert len(view.query(MessageCard)) == 3
 
 
+@pytest.mark.asyncio
+async def test_pending_work_indicator_animates_and_stops() -> None:
+    async with Harness().run_test(size=(80, 30)) as pilot:
+        view = await mounted(pilot)
+        await view.load_messages([])
+        await view.begin_pending("thinking…")
+        card = view._pending_card
+        assert card is not None
+        first = card.raw_content
+
+        await pilot.pause(0.2)
+
+        assert card.raw_content != first
+        assert "thinking" in card.raw_content
+        await view.clear_pending()
+        assert view._pending_card is None
+
+
 def test_fenced_code_is_highlighted_and_prose_is_not() -> None:
     pieces = highlight_body("Look:\n```python\ndef f():\n    return 'x'\n```\ndone", "#b6bcc7")
     styles = {str(span.style) for piece in pieces for span in piece.spans}
@@ -132,3 +152,64 @@ def test_an_unterminated_fence_highlights_what_has_arrived() -> None:
     pieces = highlight_body("Here:\n```python\ndef f():", "#b6bcc7")
 
     assert "def f():" in "".join(piece.plain for piece in pieces)
+
+
+def test_common_message_kinds_use_quiet_inline_glyphs() -> None:
+    user = MessageCard("inspect alpha", kind="user").render()
+    tool = MessageCard("read compositor.ts", kind="tool").render()
+    agent = MessageCard("Alpha is premultiplied.", kind="agent", duration=1.2).render()
+
+    assert user.plain == "› inspect alpha"
+    assert tool.plain == "… read compositor.ts"
+    assert agent.plain == "Alpha is premultiplied.\n↳ 1.2s"
+
+
+def test_unified_diff_uses_backgrounds_and_source_syntax() -> None:
+    rendered = highlight_unified_diff(
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n"
+        "+++ b/app.py\n"
+        "@@ -1 +1 @@\n"
+        "-value = 1\n"
+        "+value = 2\n"
+    )
+
+    assert "\n\n" not in rendered.plain
+    backgrounds = {
+        span.style.background
+        for span in rendered.spans
+        if getattr(span.style, "background", None) is not None
+    }
+    assert Color.parse(palette.DIFF_ADDED_BG) in backgrounds
+    assert Color.parse(palette.DIFF_REMOVED_BG) in backgrounds
+    foregrounds = {
+        span.style.foreground
+        for span in rendered.spans
+        if getattr(span.style, "foreground", None) is not None
+    }
+    assert len(foregrounds) >= 3
+
+
+def test_extensionless_build_files_have_a_lexer() -> None:
+    assert guess_language("backend/Dockerfile") == "docker"
+    assert guess_language("Dockerfile.production") == "docker"
+    assert guess_language("Makefile") == "make"
+    assert guess_language("public/index.php") == "php"
+
+
+def test_deleted_file_diff_uses_the_old_path_language() -> None:
+    rendered = highlight_unified_diff(
+        "diff --git a/old.py b/old.py\n"
+        "deleted file mode 100644\n"
+        "--- a/old.py\n"
+        "+++ /dev/null\n"
+        "@@ -1 +0,0 @@\n"
+        "-value = 1\n"
+    )
+
+    foregrounds = {
+        span.style.foreground
+        for span in rendered.spans
+        if getattr(span.style, "foreground", None) is not None
+    }
+    assert len(foregrounds) >= 3

@@ -17,6 +17,14 @@ class ProviderError(VasukiError):
     """Raised when a model provider fails."""
 
 
+class ToolCallingUnsupported(ProviderError):
+    """Raised when a backend rejects an otherwise valid native-tools request."""
+
+
+class StructuredConstraintUnsupported(ProviderError):
+    """Raised when a backend rejects its JSON-schema decoding parameter."""
+
+
 class VerificationError(VasukiError):
     """Raised when required verification does not pass."""
 

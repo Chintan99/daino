@@ -6,13 +6,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, select
+from sqlalchemy import Engine, create_engine, inspect, select, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from vasuki.config.models import Settings
 from vasuki.persistence.models import Base, Project
-from vasuki.utils.ids import new_id
+from vasuki.repository.identity import identify_repository
 
 
 def normalized_database_url(settings: Settings, root: Path) -> str:
@@ -39,11 +39,70 @@ class Database:
         if self.engine.url.get_backend_name() == "sqlite" and self.engine.url.database:
             Path(self.engine.url.database).parent.mkdir(parents=True, exist_ok=True)
         Base.metadata.create_all(self.engine)
+        self._upgrade_additive_schema()
         with self.session() as session:
             project = session.scalar(select(Project).where(Project.root_path == str(self.root)))
             if project is None:
+                identity = identify_repository(self.root)
                 session.add(
-                    Project(id=new_id("project"), name=self.root.name, root_path=str(self.root))
+                    Project(
+                        id=identity.project_id,
+                        name=self.root.name,
+                        root_path=str(self.root),
+                    )
+                )
+
+    def _upgrade_additive_schema(self) -> None:
+        """Repair databases created before the memory envelope was expanded.
+
+        Vasuki historically used ``create_all`` at application startup, while
+        Alembic is available to operators and packaging. ``create_all`` cannot
+        add columns to an existing SQLite table, so this tiny idempotent bridge
+        keeps restart recovery working immediately after an upgrade; the 0005
+        migration remains the canonical versioned schema change.
+        """
+        if self.engine.url.get_backend_name() != "sqlite":
+            return
+        inspector = inspect(self.engine)
+        if "memory_records" not in inspector.get_table_names():
+            return
+        existing = {item["name"] for item in inspector.get_columns("memory_records")}
+        definitions = {
+            "memory_type": "VARCHAR(32) NOT NULL DEFAULT 'semantic'",
+            "task_id": "VARCHAR(64)",
+            "session_id": "VARCHAR(64)",
+            "summary": "TEXT NOT NULL DEFAULT ''",
+            "importance": "FLOAT NOT NULL DEFAULT 0.5",
+            "source_type": "VARCHAR(32) NOT NULL DEFAULT 'agent'",
+            "tags": "JSON NOT NULL DEFAULT '[]'",
+            "status": "VARCHAR(32) NOT NULL DEFAULT 'active'",
+            "last_accessed": "DATETIME",
+            "last_verified": "DATETIME",
+            "access_count": "INTEGER NOT NULL DEFAULT 0",
+            "project_revision": "VARCHAR(64)",
+            "source_digest": "VARCHAR(128)",
+            "superseded_by": "VARCHAR(64)",
+            "rationale": "TEXT NOT NULL DEFAULT ''",
+        }
+        missing = [(name, sql) for name, sql in definitions.items() if name not in existing]
+        task_tables = set(inspect(self.engine).get_table_names())
+        task_columns = (
+            {item["name"] for item in inspect(self.engine).get_columns("persistent_task_states")}
+            if "persistent_task_states" in task_tables
+            else set()
+        )
+        missing_questions = bool(task_columns) and "unresolved_questions" not in task_columns
+        if not missing and not missing_questions:
+            return
+        with self.engine.begin() as connection:
+            for name, sql in missing:
+                connection.execute(text(f"ALTER TABLE memory_records ADD COLUMN {name} {sql}"))
+            if missing_questions:
+                connection.execute(
+                    text(
+                        "ALTER TABLE persistent_task_states ADD COLUMN "
+                        "unresolved_questions JSON NOT NULL DEFAULT '[]'"
+                    )
                 )
 
     @contextmanager

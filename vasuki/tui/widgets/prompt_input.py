@@ -32,6 +32,12 @@ class PromptTextArea(TextArea):
             super().__init__()
             self.direction = direction
 
+    class PasteReceived(Message):
+        def __init__(self, lines: int, characters: int) -> None:
+            super().__init__()
+            self.lines = lines
+            self.characters = characters
+
     def __init__(
         self,
         text: str = "",
@@ -92,6 +98,18 @@ class PromptTextArea(TextArea):
             return
         await super()._on_key(event)
 
+    async def _on_paste(self, event: events.Paste) -> None:
+        """Insert a bracketed paste as one normalized multiline edit."""
+        normalized = event.text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+        event.text = normalized
+        await super()._on_paste(event)
+        self.post_message(
+            self.PasteReceived(
+                lines=normalized.count("\n") + 1,
+                characters=len(normalized),
+            )
+        )
+
 
 class PromptInput(Vertical):
     class Submitted(Message):
@@ -112,13 +130,17 @@ class PromptInput(Vertical):
         self.history: list[str] = []
         self.history_index = 0
         self.references: list[str] = []
+        self._paste_received = False
         #: Last rendered completion set, so an unchanged one costs nothing.
         self._suggestions: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
+        with Horizontal(id="prompt-header"):
+            yield Label("message", id="prompt-title")
+            yield Label("0 chars", id="prompt-meta")
         yield ListView(id="prompt-suggestions", classes="hidden")
         with Horizontal(id="prompt-row"):
-            yield Label(f"[{palette.ACCENT}]❯[/]", id="prompt-caret")
+            yield Label(f"[{palette.PROMPT_ACCENT}]›[/]", id="prompt-caret")
             yield PromptTextArea(
                 "",
                 id="prompt",
@@ -155,6 +177,8 @@ class PromptInput(Vertical):
         self.history_index = len(self.history)
         area = self.query_one("#prompt", PromptTextArea)
         area.load_text("")
+        self._paste_received = False
+        self._paint_meta()
         self._hide_suggestions()
         self.post_message(self.Submitted(value))
 
@@ -197,8 +221,15 @@ class PromptInput(Vertical):
     ) -> None:
         self.post_message(self.ChatScrollRequested(event.direction))
 
+    def on_prompt_text_area_paste_received(self, _: PromptTextArea.PasteReceived) -> None:
+        self._paste_received = True
+        self._paint_meta()
+
     async def on_text_area_changed(self, _: TextArea.Changed) -> None:
         value = self.text
+        if not value:
+            self._paste_received = False
+        self._paint_meta()
         token = (
             "" if value.endswith((" ", "\n", "\t")) else value.split()[-1] if value.split() else ""
         )
@@ -246,14 +277,28 @@ class PromptInput(Vertical):
         if not replacement:
             return
         area = self.query_one("#prompt", PromptTextArea)
-        parts = area.text.split()
-        if parts:
-            parts[-1] = replacement
-        else:
-            parts = [replacement]
-        area.load_text(" ".join(parts) + (" " if replacement.startswith("/") else ""))
+        value = area.text
+        end = len(value)
+        start = end
+        while start > 0 and not value[start - 1].isspace():
+            start -= 1
+        suffix = " " if replacement.startswith("/") else ""
+        area.load_text(value[:start] + replacement + suffix)
         self._hide_suggestions()
         area.focus()
+
+    def _paint_meta(self) -> None:
+        if not self.is_mounted:
+            return
+        value = self.text
+        lines = value.count("\n") + 1 if value else 0
+        parts = []
+        if self._paste_received and value:
+            parts.append("PASTED")
+        if lines > 1:
+            parts.append(f"{lines} lines")
+        parts.append(f"{len(value):,} chars")
+        self.query_one("#prompt-meta", Label).update(" · ".join(parts))
 
     def _show_suggestions(self) -> None:
         self.query_one("#prompt-suggestions", ListView).remove_class("hidden")

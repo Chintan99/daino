@@ -33,43 +33,83 @@ configuration, a new directory is initialized silently — database, index, runt
 straight to the workspace. Provider configuration can still be deferred, so a local Ollama or vLLM
 workflow never requires cloud credentials.
 
-Every launch starts a fresh conversation. Resuming the previous one re-sent its whole transcript as
-history on the next prompt, so a new session paid for a conversation that was already finished.
-Earlier sessions stay in the database and remain browsable.
+Every launch starts a fresh conversation rather than resending an old transcript. Earlier sessions
+remain browsable, while structured unfinished-task state is loaded separately. If work was
+interrupted, startup shows its goal, progress, last action, remaining steps, and `/resume` command.
 
 ## Interface
 
-The interface is a single flat column. Hierarchy comes from colour and hairline rules rather than
-from panels, boxes, or borders: each kind of message has its own hue, and diffs are the one place
-the surface is allowed a filled background, so an added line reads as added at a glance.
+The interface is a compact, flat workspace. Hierarchy comes from colour and hairline rules rather
+than boxes: each kind of message has its own hue, and diffs are the one place the surface is
+allowed a filled background. Added and removed lines use green and red fills while their source
+keeps language-aware syntax colours instead of becoming uniformly green, red, or white. When the
+agent creates a multi-step plan, a right-side checklist appears and updates each item from pending
+to active to completed. It hides when there is no plan and on terminals too narrow to show it
+safely. Its small activity label reports the live phase: thinking, planning, inspecting, building,
+verifying, completed, or needs attention.
 
-The top row carries identity and session vitals: project path, branch, provider, model, runtime,
-and on the right a connection dot, token count, and spend. Beneath it a tab strip covers the six
-working views — chat, missions, files, changes, tests, logs — with live counts. The remaining
-views (repository, approvals, checkpoints, playbooks, deployments, providers, settings, help)
-open from the command palette or their slash commands, which is what `ctrl+p  more` advertises.
+While work is active, the checklist header becomes a small terminal runner: the dinosaur runs and
+jumps incoming obstacles as agent phases change. It freezes in a collision frame with `ERROR` when
+a tool, check, or mission fails; successful completion stops it cleanly at `TASK COMPLETED`.
+
+The two-line header keeps project identity and agent state above model, provider, runtime, usage,
+and spend. OpenRouter spend comes from its provider-reported charged `usage.cost`, including the
+final usage chunk of a streamed response; very small non-zero charges retain enough precision to
+stay visible. Beneath it, one tab row covers the seven working views — chat, missions, QA, files,
+changes, tests, logs — with live counts and a subtle active state. Tabs switch views on click and
+can also be focused and opened with Enter or Space. The remaining views (repository, approvals,
+checkpoints, playbooks, deployments, providers, settings, help)
+open from the command palette or their slash commands, which is what `ctrl+p commands` advertises.
 
 Just above the prompt, a dim strip reports the active mission, attached file count, verification
-state, pending approvals, and the most recent activity. `Ctrl+I` hides it. The prompt itself is a
-borderless multiline field behind an accent `❯`, and the bottom row lists the active keys.
+state, pending approvals, and the most recent activity. `Ctrl+I` hides it. The compact multiline
+prompt sits behind an accent `›`, with a line/character counter and a one-line key bar.
 
-Messages are a lowercase role label above their content — `you`, `vasuki`, `edit` for a diff,
-`tool` for a command and its output. Colour distinguishes plans, tools, test results, approvals,
-errors, and deployments. Focus an event and press Enter or Space to expand its structured
-metadata.
+High-frequency messages stay quiet: `›` marks the user's prompt, `…` marks tool and status
+activity, and the answer reads as unlabelled prose with a dim `↳` timing footer. Explicit labels
+remain for plans, diffs, tests, approvals, errors, and deployments, where the message kind matters
+more. Colour distinguishes those events. Focus one and press Enter or Space to expand its
+structured metadata.
 
 The prompt is multiline and supports paste, history, slash completion, and `@` completion.
+Bracketed paste normalizes Windows and terminal line endings without flattening the block; the
+header shows `PASTED`, line count, and character count so large pasted instructions are visible
+before they are submitted. Applying a completion replaces only the active token and preserves all
+earlier pasted lines.
 Files selected in the Files view can be added to or removed from durable session context.
 References resolve inside the repository boundary:
 
 Typing `/` opens the complete command menu. Use Up/Down to choose a command, Enter to insert it,
 and Enter again to run it. An exactly typed command such as `/bye` runs on the first Enter.
-Plain Enter submits normal instructions; Shift+Enter inserts a newline.
+The menu grows upward only to the visible matches, capped at six rows, so the input line stays
+anchored while the drawer shrinks as the query narrows. Plain Enter submits normal instructions;
+Shift+Enter inserts a newline.
+
+`Shift+Tab` cycles the autonomy mode. The active mode is shown as a filled, colour-coded badge in
+the bottom key bar as well as in the header (`Ctrl+Tab` remains a compatibility alias):
+
+| Mode | Behaviour |
+|---|---|
+| `Plan` | Read-only planning. Bare instructions produce a checklist but do not execute it. |
+| `Ask` | Routine repository work runs; installs, network access, and other gated commands ask. |
+| `Session` | Agent command approvals are granted until a new conversation starts. |
+| `Full` | In-scope commands and mission execution/change gates continue without prompts. |
+
+Hard-denied destructive commands remain blocked in every mode. Plan mode also blocks team writes
+and deployment changes. Use `/mode plan|ask|session|full` when a named transition is clearer than
+cycling.
 
 Normal text goes to the agent, which decides whether the request was a question to answer or a
 change to make. `/ask` forces an answer without touching the repository, and a prompt beginning with
 `!` runs a shell command yourself instead of asking the agent. Use `/plan`, `/run`, or `/build` for
 the approval-gated mission workflow.
+
+For research questions, the chat agent can search the public web and fetch readable text from the
+most relevant pages. In Ask mode the first network operation opens an approval modal; approving for
+the session, or using Session/Full mode, lets the agent search and follow source links without
+repeated prompts. Results are marked as untrusted content, public `http`/`https` URLs only are
+accepted, redirects are rechecked, and localhost/private-network destinations are blocked. Ask for
+sources when you want URLs in the final answer.
 
 ```text
 @file:app/services/tariff.py
@@ -86,6 +126,7 @@ the context budget and project boundary still apply.
 | Shortcut | Action |
 |---|---|
 | `Ctrl+P` | Searchable command palette |
+| `Shift+Tab` | Cycle Plan / Ask / Session / Full mode |
 | `Ctrl+N` | New conversation/mission session |
 | `Ctrl+O` | Files |
 | `Ctrl+M` | Session model selector |
@@ -113,6 +154,7 @@ preference, and the custom binding map are validated under the `tui` section of
 | `/help` | Help, workflow, security, shortcuts |
 | `/clear` | Clear the current visible transcript |
 | `/new [title]` | New persistent conversation session |
+| `/mode [plan\|ask\|session\|full]` | Show or set agent autonomy |
 | `/ask <question>` | Stream a repository-grounded answer |
 | `/plan <instruction>` | Create requirements and an approval-gated plan |
 | `/build [instruction]` | Plan a change or execute the active approved plan |
@@ -120,8 +162,11 @@ preference, and the custom binding map are validated under the `tui` section of
 | `/team <instruction>` | Split the work across parallel scoped sub-agents |
 | `/review` | Run a fresh independent model review of active changes |
 | `/test [targeted\|failed\|full\|command]` | Run verification asynchronously |
+| `/qa [run]` | Open QA or run the complete parallel repository audit |
 | `/status` | Current project, mission, model, and runtime |
 | `/missions` | Durable mission browser |
+| `/tasks` | List unfinished crash-safe task state |
+| `/memory [subcommand]` | Inspect/search/verify/forget scoped memory |
 | `/resume [mission-id]` | Open/resume a mission |
 | `/cancel` | Cancel active work safely |
 | `/files [query]` | File/symbol browser |
@@ -155,11 +200,20 @@ one until it answers or finishes. Its actions are
 | `replace`, `multi_edit` | Change exact spans of an existing file |
 | `write`, `delete` | Create a new file, or remove one |
 | `run_command` | Run a command and read its output |
+| `resolve_command_failure` | Link a failed command to a later, successful equivalent check |
 | `todo` | Record and update a plan for multi-step work |
+| `memory_search`, `memory_list` | Inspect relevant facts, decisions, episodes and fixes |
+| `memory_save`, `memory_update`, `memory_verify`, `memory_forget` | Controlled durable memory lifecycle |
 | `respond`, `finish` | Answer without changing anything, or stop after changes |
 
 Every edit posts its diff as it lands, and every command posts what it ran and what came back, so a
 long turn is readable while it happens rather than only at the end.
+
+After files change, any red command remains unresolved and prevents `finish`; an unrelated green
+check cannot erase it. The agent must retry it successfully, split a rejected `a && b` into two
+successful commands, or explicitly link an environment-appropriate equivalent command that has
+already passed. If none of those is possible, the turn remains failed/blocked instead of claiming
+the task was fixed.
 
 Two rules keep the agent honest about what it changed. A whole-file overwrite of a file it has not
 read is refused, because replacing a file it has not seen discards work it does not know exists.
@@ -248,6 +302,34 @@ the same audit ledger as a solo builder, tagged with the member id.
 
 Teams are capped at eight members. Deployment is deliberately not a team role: a sub-agent spawned
 from a chat instruction cannot reach the deployment path.
+
+## Quality assurance workspace
+
+The **QA** tab beside Missions runs a repository-wide, read-only audit. Select **Run QA**, or use
+`/qa run`. Vasuki first detects the project stacks and runs applicable deterministic evidence:
+
+- configured lint, type, test, and build commands;
+- Playwright end-to-end tests when a local Playwright configuration or script exists;
+- `npm`/`pnpm`/`yarn`/`bun` audits, Vasuki's bundled `pip-audit`, and installed `cargo-audit`
+  or `govulncheck` scanners for dependency vulnerabilities.
+
+Unavailable optional scanners are shown as skipped with the missing prerequisite; Vasuki does not
+silently install a scanner during an audit. Dependency scans that can contact registries request
+one network approval in Ask mode, are skipped in Plan mode, and continue automatically in Session
+or Full mode.
+
+After command evidence is collected, architecture, security, general code-quality, and detected
+frontend/backend specialists run concurrently. Frontend projects also get a UI/accessibility
+reviewer that interprets the Playwright result without claiming that static inspection was a
+browser test. A final read-only summarizer receives every specialist report and produces the
+severity-ordered consolidated report.
+
+QA agents receive only file read/search tools: they cannot edit the application or run arbitrary
+commands. The entire QA document scrolls vertically. Reports update live and are preserved under
+the current repository's `.vasuki/qa/` directory. The **Saved scans** table lists prior runs newest
+first; selecting a row reloads its specialists, automated evidence, and consolidated report in the
+same tab. **Refresh scans** discovers reports created since the tab was opened, while `latest.json`
+keeps reopening Vasuki fast.
 
 The Providers screen can add and test OpenRouter, local Ollama, local vLLM, and generic
 OpenAI-compatible endpoints. Selecting OpenRouter fills its official endpoint and fetches

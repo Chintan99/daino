@@ -52,6 +52,78 @@ DANGEROUS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 INSTALLERS = {"pip", "pip3", "uv", "poetry", "npm", "pnpm", "yarn", "apt", "apt-get"}
 NETWORK_TOOLS = {"curl", "wget", "ssh", "scp", "rsync", "nc", "ncat"}
 
+_DOCKER_SAFE_VERBS = {
+    "context",
+    "diff",
+    "events",
+    "history",
+    "images",
+    "info",
+    "inspect",
+    "logs",
+    "port",
+    "ps",
+    "stats",
+    "top",
+    "version",
+}
+_DOCKER_RESOURCE_SAFE_VERBS = {
+    "context": {"inspect", "list", "ls", "show"},
+    "container": {"diff", "inspect", "list", "logs", "ls", "port", "stats", "top"},
+    "image": {"history", "inspect", "list", "ls"},
+    "network": {"inspect", "list", "ls"},
+    "system": {"df", "info"},
+    "volume": {"inspect", "list", "ls"},
+}
+_COMPOSE_SAFE_VERBS = {"config", "images", "list", "ls", "logs", "port", "ps", "top", "version"}
+_DOCKER_GLOBAL_OPTIONS_WITH_VALUE = {"--config", "--context", "--host", "--log-level", "-H"}
+_COMPOSE_OPTIONS_WITH_VALUE = {
+    "--ansi",
+    "--env-file",
+    "--file",
+    "--parallel",
+    "--profile",
+    "--progress",
+    "--project-directory",
+    "--project-name",
+    "-f",
+    "-p",
+}
+
+
+def _first_command(arguments: list[str], options_with_value: set[str]) -> tuple[str, int]:
+    """Return the first non-option command and its index."""
+    skip_value = False
+    for index, argument in enumerate(arguments):
+        if skip_value:
+            skip_value = False
+            continue
+        option = argument.split("=", 1)[0]
+        if option in options_with_value and "=" not in argument:
+            skip_value = True
+            continue
+        if argument.startswith("-"):
+            continue
+        return argument, index
+    return "", -1
+
+
+def docker_command_is_read_only(tokens: list[str]) -> bool:
+    """Classify Docker daemon operations that are safe to repeat unattended."""
+    if not tokens or tokens[0].rsplit("/", 1)[-1] != "docker":
+        return False
+    command, index = _first_command(tokens[1:], _DOCKER_GLOBAL_OPTIONS_WITH_VALUE)
+    if not command:
+        return False
+    remaining = tokens[index + 2 :]
+    if command == "compose":
+        verb, _ = _first_command(remaining, _COMPOSE_OPTIONS_WITH_VALUE)
+        return verb in _COMPOSE_SAFE_VERBS
+    if command in _DOCKER_RESOURCE_SAFE_VERBS:
+        verb, _ = _first_command(remaining, set())
+        return verb in _DOCKER_RESOURCE_SAFE_VERBS[command]
+    return command in _DOCKER_SAFE_VERBS
+
 
 class PolicyEngine:
     """Evaluates permissions without executing commands."""
@@ -112,6 +184,10 @@ class PolicyEngine:
             permission = Permission.ACCESS_NETWORK
             if self.config.require_approval_for_network and not approved:
                 reasons.append("network access requires approval")
+        if executable == "docker" and not docker_command_is_read_only(tokens):
+            permission = Permission.RUN_CONTAINER_COMMAND
+            if not approved:
+                reasons.append("a host Docker mutation requires approval")
         return PolicyDecision(
             allowed=not reasons,
             requires_approval=bool(reasons),

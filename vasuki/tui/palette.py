@@ -13,43 +13,43 @@ ambers — so the surface holds together instead of looking like confetti.
 
 from __future__ import annotations
 
-BACKGROUND = "#0b0c0e"
+BACKGROUND = "#0a0d0b"
 #: Barely lifted from the field. Used for focus, selection, and code blocks.
-SURFACE = "#131620"
-SURFACE_BRIGHT = "#1b1f2c"
-RULE = "#232734"
+SURFACE = "#101511"
+SURFACE_BRIGHT = "#171d18"
+RULE = "#252d27"
 
 #: Brand. Also the agent's own voice and the prompt caret.
-ACCENT = "#3ddc97"
+ACCENT = "#72d895"
+#: Higher-luminance prompt chrome, kept separate so the rest of the interface
+#: retains the calmer brand accent.
+PROMPT_ACCENT = "#86e7a6"
 ACCENT_CHOICES: dict[str, str] = {
-    "jade": "#3ddc97",
+    "jade": ACCENT,
     "azure": "#7aa2f7",
     "violet": "#bb9af7",
     "amber": "#e0af68",
 }
 
-SNAKE = "#3ddc97"
-SNAKE_MARK = "#f7768e"
-
 # Neutral ramp, brightest first. Cooler and higher-contrast than a warm grey
 # scale, so body text stays legible against saturated accents.
-INPUT = "#eceff4"
-BRIGHT = "#dbe0ea"
-TEXT = "#b6bcc7"
-MUTED = "#858d9c"
-VALUE = "#6f7684"
-HINT = "#5f6675"
-DIM = "#565d6b"
-FAINT = "#464c58"
-FAINTEST = "#3a3f4a"
+INPUT = "#e2e8e1"
+BRIGHT = "#ced5cd"
+TEXT = "#b7c0b7"
+MUTED = "#7c877e"
+VALUE = "#909b92"
+HINT = "#626c64"
+DIM = "#59625b"
+FAINT = "#49514b"
+FAINTEST = "#3a413c"
 
 #: Semantic accents, one per kind of thing the agent reports.
 USER = "#7aa2f7"
 PLAN = "#bb9af7"
 TOOL = "#56cfe1"
-READY = "#9ece6a"
-CAUTION = "#e0af68"
-ALERT = "#f7768e"
+READY = "#64d98b"
+CAUTION = "#e2b86b"
+ALERT = "#e2767f"
 DEPLOY = "#ff9e64"
 CHECKPOINT = "#c0a7e8"
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 import shutil
 import time
@@ -55,12 +56,32 @@ class LocalRuntime(Runtime):
         if not arguments:
             raise PolicyDenied("Empty command")
         started = time.monotonic()
-        process = await asyncio.create_subprocess_exec(
-            *arguments,
-            cwd=self.root,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        environment = os.environ.copy()
+        source_root = self.root / "src"
+        if source_root.is_dir():
+            existing_pythonpath = environment.get("PYTHONPATH", "")
+            environment["PYTHONPATH"] = os.pathsep.join(
+                item for item in (str(source_root), existing_pythonpath) if item
+            )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *arguments,
+                cwd=self.root,
+                env=environment,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError:
+            # A missing test runner is verification evidence, not an internal
+            # crash. Returning the conventional command-not-found status lets
+            # the repair loop explain the prerequisite and fail cleanly.
+            return CommandResult(
+                command=command,
+                exit_code=127,
+                stdout="",
+                stderr=f"Executable not found: {arguments[0]}",
+                duration_seconds=time.monotonic() - started,
+            )
         timed_out = False
         try:
             stdout, stderr = await asyncio.wait_for(

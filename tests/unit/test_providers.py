@@ -8,7 +8,7 @@ import pytest
 from pydantic import BaseModel
 
 from vasuki.config.models import ProviderConfig
-from vasuki.exceptions import ProviderError
+from vasuki.exceptions import ProviderError, ToolCallingUnsupported
 from vasuki.providers.base import DEFAULT_MAX_OUTPUT_TOKENS
 from vasuki.providers.factory import create_provider
 from vasuki.providers.ollama import OllamaProvider
@@ -103,6 +103,55 @@ async def test_openrouter_headers_and_vllm_empty_key() -> None:
     assert seen[0].headers["x-title"] == "Vasuki"
     assert seen[0].headers["http-referer"] == "https://example.invalid"
     assert "authorization" not in seen[1].headers
+
+
+@pytest.mark.asyncio
+async def test_openrouter_captures_provider_reported_cost() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        result = response("ok")
+        payload = json.loads(result.content)
+        payload["usage"]["cost"] = 0.01234
+        return httpx.Response(200, json=payload)
+
+    provider = OpenRouterProvider(
+        api_key="secret",
+        model="mock",
+        transport=httpx.MockTransport(handler),
+    )
+    await provider.complete([Message(role="user", content="test")])
+
+    assert provider.last_usage.input_tokens == 4
+    assert provider.last_usage.output_tokens == 2
+    assert provider.last_usage.cost == pytest.approx(0.01234)
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_openrouter_captures_usage_from_final_stream_chunk() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        stream = "\n\n".join(
+            [
+                'data: {"choices":[{"delta":{"content":"hello"}}]}',
+                'data: {"choices":[],"usage":{"prompt_tokens":9,'
+                '"completion_tokens":3,"cost":0.0042}}',
+                "data: [DONE]",
+                "",
+            ]
+        )
+        return httpx.Response(200, text=stream, headers={"content-type": "text/event-stream"})
+
+    provider = OpenRouterProvider(
+        api_key="secret",
+        model="mock",
+        transport=httpx.MockTransport(handler),
+    )
+    chunks = [chunk async for chunk in provider.stream([Message(role="user", content="test")])]
+
+    assert chunks == ["hello"]
+    assert provider.last_usage.input_tokens == 9
+    assert provider.last_usage.output_tokens == 3
+    assert provider.last_usage.cost == pytest.approx(0.0042)
+    await provider.close()
 
 
 @pytest.mark.asyncio
@@ -262,6 +311,35 @@ async def test_complete_sends_tools_and_parses_tool_calls() -> None:
     assert result.tool_calls == [
         ToolCall(id="call_1", name="read_file", arguments={"path": "a.py"})
     ]
+
+
+@pytest.mark.asyncio
+async def test_tool_shape_rejection_is_distinct_from_provider_failure() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "tool parser unavailable"})
+
+    provider = OllamaProvider(model="mock", transport=httpx.MockTransport(handler))
+    with pytest.raises(ToolCallingUnsupported):
+        await provider.complete(
+            [Message(role="user", content="x")],
+            tools=[{"type": "function", "function": {"name": "read_file"}}],
+        )
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_auth_failure_with_tools_is_not_misclassified() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "bad key"})
+
+    provider = OllamaProvider(model="mock", transport=httpx.MockTransport(handler))
+    with pytest.raises(ProviderError) as caught:
+        await provider.complete(
+            [Message(role="user", content="x")],
+            tools=[{"type": "function", "function": {"name": "read_file"}}],
+        )
+    assert not isinstance(caught.value, ToolCallingUnsupported)
+    await provider.close()
 
 
 @pytest.mark.asyncio

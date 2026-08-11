@@ -11,10 +11,22 @@ from vasuki.schemas import ContextBundle, TaskSpec
 class ContextCompiler:
     """Selects exact relevant code while keeping prompts below a hard budget."""
 
-    def __init__(self, root: Path, indexer: RepositoryIndexer, token_budget: int = 24_000) -> None:
+    def __init__(
+        self,
+        root: Path,
+        indexer: RepositoryIndexer,
+        token_budget: int = 24_000,
+        *,
+        max_files: int | None = None,
+        per_file_tokens: int | None = None,
+        prefer_symbol_slices: bool = False,
+    ) -> None:
         self.root = root.resolve()
         self.indexer = indexer
         self.token_budget = token_budget
+        self.max_files = max_files
+        self.per_file_tokens = per_file_tokens
+        self.prefer_symbol_slices = prefer_symbol_slices
 
     @staticmethod
     def _estimate_tokens(text: str) -> int:
@@ -35,6 +47,7 @@ class ContextCompiler:
         lower_terms = {
             word.lower() for word in f"{task.title} {task.objective}".split() if len(word) > 3
         }
+        indexed_files = {item.path: item for item in index.files}
         for item in index.files:
             haystack = f"{item.path} {item.summary}".lower()
             if any(term in haystack for term in lower_terms):
@@ -59,6 +72,13 @@ class ContextCompiler:
                 content = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 return
+            if self.prefer_symbol_slices and self.per_file_tokens:
+                content = _focused_source(
+                    content,
+                    indexed_files.get(relative),
+                    task,
+                    self.per_file_tokens,
+                )
             cost = self._estimate_tokens(content)
             if used + cost > self.token_budget:
                 if not mandatory:
@@ -77,6 +97,8 @@ class ContextCompiler:
         for relative in required:
             include(relative, mandatory=True)
         for relative in dict.fromkeys(discovered):
+            if self.max_files is not None and len(files) + len(tests) >= self.max_files:
+                break
             include(relative, mandatory=False)
         return ContextBundle(
             task=task.objective,
@@ -88,3 +110,44 @@ class ContextCompiler:
             token_estimate=used,
             included_paths=[*files, *tests],
         )
+
+
+def _focused_source(content: str, indexed: object, task: TaskSpec, token_limit: int) -> str:
+    """Return exact symbol windows for a large file without rewriting source lines."""
+    if len(content) <= token_limit * 4:
+        return content
+    symbols = list(getattr(indexed, "symbols", []) or [])
+    wanted = {item.casefold() for item in task.relevant_symbols}
+    objective_terms = {
+        term.strip("()[]{}.,:`'").casefold()
+        for term in f"{task.title} {task.objective}".split()
+        if len(term.strip("()[]{}.,:`'")) > 3
+    }
+    matches = [
+        item
+        for item in symbols
+        if str(getattr(item, "name", "")).casefold() in wanted
+        or any(term in str(getattr(item, "name", "")).casefold() for term in objective_terms)
+    ]
+    if not matches:
+        return content
+    lines = content.splitlines()
+    windows: list[tuple[int, int]] = []
+    for symbol in matches[:4]:
+        line = max(1, int(getattr(symbol, "line", 1)))
+        start = max(1, line - 30)
+        end = min(len(lines), line + 90)
+        if windows and start <= windows[-1][1] + 10:
+            windows[-1] = (windows[-1][0], max(windows[-1][1], end))
+        else:
+            windows.append((start, end))
+    rendered: list[str] = [
+        "… focused source excerpts; use read_file with offset/limit for omitted regions …"
+    ]
+    for start, end in windows:
+        rendered.append(f"\n--- lines {start}-{end} ---")
+        rendered.extend(lines[start - 1 : end])
+        if len("\n".join(rendered)) >= token_limit * 4:
+            break
+    result = "\n".join(rendered)
+    return result[: token_limit * 4]

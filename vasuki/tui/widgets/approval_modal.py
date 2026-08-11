@@ -11,7 +11,7 @@ from textual.widgets import Button, Label, Static
 class ApprovalModal(ModalScreen[tuple[bool, str]]):
     BINDINGS = [
         ("a", "approve_once", "Approve once"),
-        ("m", "approve_mission", "Approve mission"),
+        ("s", "approve_session", "Approve session"),
         ("r", "reject", "Reject"),
         ("escape", "reject", "Reject"),
     ]
@@ -40,14 +40,14 @@ class ApprovalModal(ModalScreen[tuple[bool, str]]):
             )
             with Horizontal(classes="modal-actions"):
                 yield Button("Approve once", id="approve-once", variant="success")
-                yield Button("For mission", id="approve-mission", variant="primary")
+                yield Button("For session", id="approve-session", variant="primary")
                 yield Button("Reject", id="reject", variant="error")
 
     def action_approve_once(self) -> None:
         self.dismiss((True, "once"))
 
-    def action_approve_mission(self) -> None:
-        self.dismiss((True, "mission"))
+    def action_approve_session(self) -> None:
+        self.dismiss((True, "session"))
 
     def action_reject(self) -> None:
         self.dismiss((False, "once"))
@@ -55,7 +55,7 @@ class ApprovalModal(ModalScreen[tuple[bool, str]]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         result = {
             "approve-once": (True, "once"),
-            "approve-mission": (True, "mission"),
+            "approve-session": (True, "session"),
             "reject": (False, "once"),
         }.get(event.button.id or "")
         if result:

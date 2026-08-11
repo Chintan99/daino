@@ -15,6 +15,8 @@ from vasuki.config import (
 )
 from vasuki.config.models import Settings
 from vasuki.events import EventBus, MissionEvent, ModelStreamChunk
+from vasuki.git import GitClient
+from vasuki.memory import MemoryManager
 from vasuki.observability import AuditLog
 from vasuki.persistence import Database
 from vasuki.persistence.models import MissionEventRecord
@@ -30,8 +32,11 @@ class ProjectContext:
     settings: Settings
     database: Database
     events: EventBus
+    memory: MemoryManager | None = None
 
     def close(self) -> None:
+        if self.memory is not None:
+            self.memory.close()
         self.database.engine.dispose()
 
 
@@ -46,11 +51,29 @@ class InitializationResult(TypedDict):
 def _append_ignore_entries(root: Path) -> None:
     ignore_path = root / ".gitignore"
     existing = ignore_path.read_text(encoding="utf-8") if ignore_path.exists() else ""
-    entries = [".vasuki/", ".env", "*.pem", "*.key"]
+    entries = [
+        ".vasuki/",
+        ".venv/",
+        "__pycache__/",
+        "*.py[cod]",
+        "node_modules/",
+        ".env",
+        "*.pem",
+        "*.key",
+    ]
     missing = [entry for entry in entries if entry not in existing.splitlines()]
     if missing:
         suffix = "" if not existing or existing.endswith("\n") else "\n"
         ignore_path.write_text(existing + suffix + "\n".join(missing) + "\n", encoding="utf-8")
+
+
+def _ensure_git_baseline(root: Path) -> None:
+    """Give a greenfield project a revision that checkpoints can reference."""
+    git = GitClient(root)
+    if not git.is_repository():
+        git.run("init", "-b", "main")
+    if not git.run("rev-parse", "--verify", "HEAD", check=False).succeeded:
+        git.commit("Initialize project")
 
 
 def initialize_project(root: Path, *, force: bool = False) -> InitializationResult:
@@ -66,6 +89,7 @@ def initialize_project(root: Path, *, force: bool = False) -> InitializationResu
     settings.runtime.default = preferred_runtime()  # type: ignore[assignment]
     save_settings(settings, root)
     _append_ignore_entries(root)
+    _ensure_git_baseline(root)
     database = Database(settings, root)
     database.initialize()
     try:
@@ -115,7 +139,8 @@ def open_project(path: Path | None = None) -> ProjectContext:
         )
 
     events.subscribe(persist)
-    return ProjectContext(root, settings, database, events)
+    memory = MemoryManager(database, root, settings)
+    return ProjectContext(root, settings, database, events, memory)
 
 
 def adopt_project(root: Path) -> ProjectContext:

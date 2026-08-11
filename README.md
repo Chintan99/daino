@@ -4,8 +4,20 @@ Vasuki is a local-first AI coding agent that lives in your terminal. Type an ins
 reads the repository, edits files, runs your tests, and shows you the diff — in your working tree,
 with a checkpoint taken first.
 
+The interactive agent can also search the public web and fetch source pages for current research.
+Network access follows the active approval mode and blocks private/local destinations.
+
+The QA tab runs a complete read-only project audit: parallel architecture, security,
+frontend/backend, code-quality, and UI specialists; project tests and linters; Playwright when
+configured; and dependency vulnerability scans. Results are consolidated and preserved locally.
+
 It is not a code-snippet chatbot. When you ask for a change, you get the change: the agent writes
 into the files and reports what it did, rather than printing a block of code for you to paste.
+
+Vasuki also has selective local memory: unfinished work survives restarts, scoped `VASUKI.md`
+instructions follow the files being edited, useful project facts and decisions can be retrieved in
+future sessions, and source-derived facts become stale when their files change. User memory stays
+under `~/.vasuki`; no external vector database is required. See [memory](docs/memory.md).
 
 ![Vasuki interactive terminal workspace](docs/assets/vasuki-tui.png)
 
@@ -139,7 +151,8 @@ vasuki missions export <mission-id> --format markdown
 ## Keys and commands
 
 `Enter` sends, `Shift+Enter` inserts a newline, `/` opens commands, `@` references files and
-symbols, `!` runs a shell command, `Esc` cancels.
+symbols, `!` runs a shell command, `Esc` cancels, and `Shift+Tab` cycles Plan, Ask, Session, and
+Full access. Multi-step agent plans stay visible as a live checklist on the right.
 
 Every launch starts a fresh conversation, so a new session never re-sends — or re-pays for — an
 older one. Earlier sessions stay in the database and remain browsable.
@@ -149,11 +162,13 @@ The most used commands:
 | Command | Purpose |
 |---|---|
 | `/ask <question>` | Answer without touching the repository |
+| `/mode plan\|ask\|session\|full` | Set the session autonomy policy |
 | `/team <instruction>` | Split work across parallel sub-agents |
 | `/plan`, `/run`, `/build` | Approval-gated mission workflow |
 | `/test`, `/review`, `/diff` | Verification, independent review, changes |
 | `/checkpoint`, `/restore` | Create and roll back to a recovery point |
 | `/model`, `/provider`, `/runtime` | Session model, provider, sandbox |
+| `/memory`, `/tasks`, `/resume` | Inspect memory and continue crash-safe work |
 
 The [TUI guide](docs/tui.md) lists all of them, plus shortcuts and view details.
 

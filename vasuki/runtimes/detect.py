@@ -48,6 +48,12 @@ def docker_status() -> tuple[bool, str]:
 
 
 def preferred_runtime() -> str:
-    """The runtime to configure for a new project: Docker when it works, else local."""
-    usable, _ = docker_status()
-    return "docker" if usable else "local"
+    """Use the host toolchain by default; Docker sandboxing remains explicit.
+
+    One fixed container image cannot provide every repository's Python, Node,
+    Go, Rust, Docker Compose, and other tools. Selecting it merely because the
+    daemon responds makes an empty project fail as soon as the agent creates a
+    stack for another language. Local execution is still policy-gated, while
+    users who want the fixed-image sandbox can opt in with ``/runtime docker``.
+    """
+    return "local"

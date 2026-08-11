@@ -8,8 +8,9 @@ from pathlib import Path
 from sqlalchemy import select
 
 from vasuki.agents import ModelGateway, ReviewerAgent, ToolLoop
+from vasuki.agents.tool_schemas import AGENT_TOOL_SPECS
 from vasuki.config.models import Settings
-from vasuki.context import ContextCompiler
+from vasuki.context import ContextBuilder, ContextCompiler
 from vasuki.events import (
     AgentRoleChanged,
     ApprovalRequested,
@@ -29,7 +30,7 @@ from vasuki.events import (
     ToolStarted,
 )
 from vasuki.git import GitClient
-from vasuki.memory import MemoryStore
+from vasuki.memory import MemoryManager, MemoryStore, PersistentTaskStatus
 from vasuki.missions.evidence import EvidenceExporter
 from vasuki.model_router import ModelRole
 from vasuki.observability import AuditLog
@@ -63,10 +64,14 @@ from vasuki.schemas import (
     VerificationReport,
 )
 from vasuki.security import PolicyEngine
+from vasuki.security.commands import CommandGate
 from vasuki.tools import ActionExecutor, EditTools
+from vasuki.tools.commands import CommandRunner
 from vasuki.utils.ids import new_id
 from vasuki.verification import RepairLoop, VerificationEngine
 from vasuki.workspace import Workspace, WorkspaceManager
+
+MAX_REVIEW_REPAIR_ATTEMPTS = 2
 
 
 class MissionService:
@@ -78,6 +83,7 @@ class MissionService:
         settings: Settings,
         database: Database,
         events: EventBus | None = None,
+        memory: MemoryManager | None = None,
     ) -> None:
         self.root = root.resolve()
         self.settings = settings
@@ -86,6 +92,7 @@ class MissionService:
         self.workspace_manager = WorkspaceManager(self.root)
         self.events = events or EventBus()
         self.gateway = ModelGateway(settings, database, self.events)
+        self.memory = memory or MemoryManager(database, self.root, settings)
 
     def _gateway(self, profile_override: str = "") -> ModelGateway:
         """Return the gateway for agents, pinned when a session model was chosen."""
@@ -118,6 +125,12 @@ class MissionService:
                 mode=mission.mode,
             )
         )
+        if self.settings.memory.enabled and self.settings.memory.auto_save:
+            self.memory.start_task(
+                request,
+                mission_id=mission.id,
+                status=PersistentTaskStatus.PENDING,
+            )
         return mission
 
     async def plan(
@@ -152,9 +165,24 @@ class MissionService:
                 "without one."
             )
         self._update_mission(mission.id, status=MissionStatus.PLANNING.value)
+        state = self.memory.task_for_mission(mission.id)
+        if state:
+            self.memory.update_task(state.task_id, status=PersistentTaskStatus.PLANNING)
         gateway = self._gateway(profile_override)
         indexer = RepositoryIndexer(self.root)
         summary = indexer.summary()
+        persistent = self.memory.task_for_mission(mission.id)
+        memory_context = ContextBuilder(
+            self.root,
+            self.settings,
+            self.memory,
+            indexer=indexer,
+        ).build_question_context(
+            mission.request,
+            task_state_id=persistent.task_id if persistent else None,
+        )
+        if memory_context:
+            summary += f"\n\n{memory_context}"
         if supplemental_context:
             summary += f"\n\nExplicit user context:\n{supplemental_context}"
         architect_gateway = (
@@ -207,6 +235,24 @@ class MissionService:
                 for dependency in spec.dependencies:
                     session.add(TaskDependency(task_id=spec.id, depends_on_id=dependency))
         result = task_plan.model_copy(update={"tasks": normalized})
+        if state:
+            serialized_plan = [
+                {
+                    "id": item.id,
+                    "content": item.title,
+                    "objective": item.objective,
+                    "status": item.status.value,
+                }
+                for item in normalized
+            ]
+            self.memory.update_task(
+                state.task_id,
+                interpreted_goal=requirements.problem_statement,
+                plan=serialized_plan,
+                pending_steps=[item.title for item in normalized],
+                current_step=normalized[0].title if normalized else "",
+                status=PersistentTaskStatus.PENDING,
+            )
         self._update_mission(mission.id, status=MissionStatus.AWAITING_APPROVAL.value)
         self.log.emit("mission.planned", mission_id=mission.id, tasks=len(normalized))
         self.events.publish(
@@ -266,9 +312,10 @@ class MissionService:
         *,
         require_change_approval: bool = False,
         profile_override: str = "",
+        resume: bool = False,
     ) -> tuple[Mission, Path | None]:
         mission = self.get(mission_id)
-        if mission.status == MissionStatus.RUNNING.value:
+        if mission.status == MissionStatus.RUNNING.value and not resume:
             raise RuntimeError(f"Mission {mission_id} is already running")
         if not self.settings.git.use_worktrees:
             with self.database.session() as session:
@@ -293,10 +340,27 @@ class MissionService:
             )
         if requirements is None or plan is None:
             requirements, plan = self._load_plan(mission_id)
-        workspace = self.workspace_manager.create(
-            mission.id,
-            mission.request,
-            use_worktree=self.settings.git.use_worktrees,
+        resumable_workspace = (
+            resume
+            and mission.workspace_path is not None
+            and Path(mission.workspace_path).is_dir()
+            and mission.branch is not None
+            and mission.initial_revision is not None
+        )
+        workspace = (
+            Workspace(
+                mission.id,
+                Path(mission.workspace_path or self.root),
+                mission.branch or "",
+                mission.initial_revision or "HEAD",
+                "",
+            )
+            if resumable_workspace
+            else self.workspace_manager.create(
+                mission.id,
+                mission.request,
+                use_worktree=self.settings.git.use_worktrees,
+            )
         )
         self._update_mission(
             mission.id,
@@ -305,6 +369,14 @@ class MissionService:
             branch=workspace.branch,
             initial_revision=workspace.initial_revision,
         )
+        persistent = self.memory.task_for_mission(mission.id)
+        if persistent:
+            self.memory.update_task(
+                persistent.task_id,
+                status=PersistentTaskStatus.IN_PROGRESS,
+                repository=workspace.path.as_posix(),
+                branch=workspace.branch,
+            )
         self.events.publish(
             MissionStarted(
                 mission_id=mission.id,
@@ -312,26 +384,29 @@ class MissionService:
                 branch=workspace.branch,
             )
         )
-        checkpoint_id, checkpoint_path = self.workspace_manager.checkpoint(
-            workspace, "Before mission changes", mission_id=mission.id
-        )
-        with self.database.session() as session:
-            session.add(
-                Checkpoint(
-                    id=checkpoint_id,
+        if resumable_workspace:
+            self.log.emit("task_resumed", mission_id=mission.id, workspace=str(workspace.path))
+        else:
+            checkpoint_id, checkpoint_path = self.workspace_manager.checkpoint(
+                workspace, "Before mission changes", mission_id=mission.id
+            )
+            with self.database.session() as session:
+                session.add(
+                    Checkpoint(
+                        id=checkpoint_id,
+                        mission_id=mission.id,
+                        revision=workspace.initial_revision,
+                        archive_path=str(checkpoint_path),
+                        description="Before mission changes",
+                    )
+                )
+            self.events.publish(
+                CheckpointCreated(
                     mission_id=mission.id,
-                    revision=workspace.initial_revision,
-                    archive_path=str(checkpoint_path),
+                    checkpoint_id=checkpoint_id,
                     description="Before mission changes",
                 )
             )
-        self.events.publish(
-            CheckpointCreated(
-                mission_id=mission.id,
-                checkpoint_id=checkpoint_id,
-                description="Before mission changes",
-            )
-        )
         try:
             await self._execute_tasks(
                 workspace,
@@ -356,7 +431,46 @@ class MissionService:
                 )
             self.log.emit("mission.failed", mission_id=mission.id, error=str(exc))
             self.events.publish(MissionFailed(mission_id=mission.id, error=str(exc)))
+            persistent = self.memory.task_for_mission(mission.id)
+            if persistent:
+                self.memory.update_task(
+                    persistent.task_id,
+                    status=(
+                        PersistentTaskStatus.BLOCKED
+                        if current.status == MissionStatus.BLOCKED.value
+                        else PersistentTaskStatus.FAILED
+                    ),
+                    errors=[*persistent.errors, str(exc)],
+                    unresolved_problems=[*persistent.unresolved_problems, str(exc)],
+                    last_action="mission_failed",
+                )
             raise
+
+    async def resume(
+        self,
+        mission_id: str,
+        *,
+        require_change_approval: bool = False,
+        profile_override: str = "",
+    ) -> tuple[Mission, Path | None]:
+        """Continue a persisted mission after a process or provider interruption."""
+        mission = self.get(mission_id)
+        allowed = {
+            MissionStatus.AWAITING_APPROVAL.value,
+            MissionStatus.RUNNING.value,
+            MissionStatus.VERIFYING.value,
+            MissionStatus.REVIEWING.value,
+            MissionStatus.FAILED.value,
+            MissionStatus.BLOCKED.value,
+        }
+        if mission.status not in allowed:
+            raise RuntimeError(f"Mission {mission_id} is not resumable from {mission.status}")
+        return await self.execute(
+            mission_id,
+            require_change_approval=require_change_approval,
+            profile_override=profile_override,
+            resume=True,
+        )
 
     async def _execute_tasks(
         self,
@@ -371,14 +485,56 @@ class MissionService:
         await runtime.prepare()
         indexer = RepositoryIndexer(workspace.path)
         indexer.build()
-        compiler = ContextCompiler(
-            workspace.path, indexer, self.settings.project.context_budget_tokens
-        )
         gateway = self._gateway(profile_override)
+        budgeter = getattr(gateway, "context_budget", None)
+        model_budget = (
+            budgeter(ModelRole.BUILDER, tools=AGENT_TOOL_SPECS)
+            if callable(budgeter)
+            else self.settings.project.context_budget_tokens
+        )
+        profile_resolver = getattr(gateway, "execution_profile", None)
+        builder_profile = (
+            profile_resolver(ModelRole.BUILDER, tools=AGENT_TOOL_SPECS)
+            if callable(profile_resolver)
+            else None
+        )
+        context_reserve = min(2_048, max(512, model_budget // 4))
+        compiler = ContextCompiler(
+            workspace.path,
+            indexer,
+            min(
+                self.settings.project.context_budget_tokens,
+                max(512, model_budget - context_reserve),
+            ),
+        )
+        command_runner = CommandRunner(
+            runtime,
+            CommandGate(self.settings.security),
+            runtime_name=self.settings.runtime.default,
+            default_timeout=self.settings.runtime.command_timeout_seconds,
+        )
         memory = MemoryStore(self.database)
-        completed: set[str] = set()
+        persistent = self.memory.task_for_mission(workspace.mission_id)
+        context_builder = ContextBuilder(
+            workspace.path,
+            self.settings,
+            self.memory,
+            indexer=indexer,
+            token_budget=compiler.token_budget,
+        )
+        with self.database.session() as session:
+            completed = set(
+                session.scalars(
+                    select(Task.id).where(
+                        Task.mission_id == workspace.mission_id,
+                        Task.status == TaskStatus.COMPLETED.value,
+                    )
+                ).all()
+            )
         try:
             for spec in validate_task_graph(plan):
+                if spec.id in completed:
+                    continue
                 if not set(spec.dependencies) <= completed:
                     raise RuntimeError(f"Dependencies not completed for {spec.id}")
                 self._update_task(spec.id, TaskStatus.RUNNING)
@@ -390,7 +546,46 @@ class MissionService:
                     )
                 )
                 decisions = memory.relevant_decisions([*spec.expected_files, *spec.allowed_files])
-                context = compiler.compile(spec, decisions=decisions)
+                context = context_builder.build(
+                    spec,
+                    current_user_instruction=spec.objective,
+                    task_state_id=persistent.task_id if persistent else None,
+                    execution_profile=builder_profile,
+                )
+                if decisions:
+                    packet = context.task_packet
+                    context = context.model_copy(
+                        update={
+                            "architecture_decisions": [
+                                *context.architecture_decisions,
+                                *decisions,
+                            ],
+                            "task_packet": (
+                                packet.model_copy(
+                                    update={
+                                        "active_decisions": [
+                                            *packet.active_decisions,
+                                            *decisions,
+                                        ][:6]
+                                    }
+                                )
+                                if packet
+                                else None
+                            ),
+                        }
+                    )
+                if persistent:
+                    pending = [
+                        item.title
+                        for item in validate_task_graph(plan)
+                        if item.id not in completed and item.id != spec.id
+                    ]
+                    self.memory.update_task(
+                        persistent.task_id,
+                        current_step=spec.title,
+                        pending_steps=pending,
+                        status=PersistentTaskStatus.IN_PROGRESS,
+                    )
                 # The agent was shown the compiled file contents, so they count
                 # as already read: edits to those files may land immediately,
                 # while any other existing file must be read first or the gate
@@ -401,7 +596,12 @@ class MissionService:
                     require_read_before_write=True,
                     seen_files=set(context.included_paths),
                 )
-                executor = ActionExecutor(editor)
+                executor = ActionExecutor(
+                    editor,
+                    command_runner,
+                    memory=self.memory,
+                    memory_task_id=persistent.task_id if persistent else None,
+                )
                 implementation, changed = await self._run_builder(
                     workspace,
                     spec,
@@ -414,7 +614,11 @@ class MissionService:
                 indexer.build()
                 self._update_task(spec.id, TaskStatus.VERIFYING)
                 engine = VerificationEngine(workspace.path, runtime)
-                commands = implementation.verification_commands or spec.verification_commands
+                # The approved task contract is authoritative. A builder may
+                # suggest useful checks in ``finish``, but letting those replace
+                # the planner's commands allows a malformed ad-hoc one-liner to
+                # sink correct code after the planned check already existed.
+                commands = spec.verification_commands or implementation.verification_commands
                 if not commands:
                     commands = engine.discover_commands()
                 self.events.publish(
@@ -441,11 +645,31 @@ class MissionService:
                             details={"repair_attempt": attempt},
                         )
                     )
-                    refreshed = compiler.compile(
-                        current_spec,
-                        decisions=current_decisions,
-                        failure_summary=failure.model_dump_json(indent=2),
+                    repair_role = ModelRole.DEBUGGER if escalated else ModelRole.BUILDER
+                    repair_profile = (
+                        profile_resolver(
+                            repair_role,
+                            tools=AGENT_TOOL_SPECS,
+                        )
+                        if callable(profile_resolver)
+                        else None
                     )
+                    refreshed = context_builder.build(
+                        current_spec,
+                        failure_summary=failure.model_dump_json(indent=2),
+                        current_user_instruction=current_spec.objective,
+                        task_state_id=persistent.task_id if persistent else None,
+                        execution_profile=repair_profile,
+                    )
+                    if current_decisions:
+                        refreshed = refreshed.model_copy(
+                            update={
+                                "architecture_decisions": [
+                                    *refreshed.architecture_decisions,
+                                    *current_decisions,
+                                ]
+                            }
+                        )
                     # The refreshed context shows the failing files, so they count
                     # as read; without this the read-before-write gate rejects the
                     # debugger's first edit of a file the builder created.
@@ -456,7 +680,12 @@ class MissionService:
                         current_spec,
                         refreshed,
                         gateway,
-                        ActionExecutor(current_editor),
+                        ActionExecutor(
+                            current_editor,
+                            command_runner,
+                            memory=self.memory,
+                            memory_task_id=persistent.task_id if persistent else None,
+                        ),
                         debugger=escalated,
                         attempts=attempt,
                     )
@@ -518,6 +747,11 @@ class MissionService:
                                 success=check.passed,
                             )
                         )
+                if persistent:
+                    self.memory.update_task(
+                        persistent.task_id,
+                        test_status=report.model_dump(mode="json"),
+                    )
                 if not report.passed:
                     self._update_task(
                         spec.id,
@@ -530,8 +764,14 @@ class MissionService:
                     )
                 revision = None
                 if commit_verified and self.settings.git.auto_commit_verified_tasks:
-                    revision = GitClient(workspace.path).commit(
-                        f"{spec.title}\n\nVasuki-Mission: {workspace.mission_id}"
+                    changed_paths = sorted(set(changed))
+                    revision = (
+                        GitClient(workspace.path).commit(
+                            f"{spec.title}\n\nVasuki-Mission: {workspace.mission_id}",
+                            paths=changed_paths,
+                        )
+                        if changed_paths
+                        else GitClient(workspace.path).revision()
                     )
                 self._update_task(
                     spec.id,
@@ -551,6 +791,13 @@ class MissionService:
                     )
                 )
                 completed.add(spec.id)
+                if persistent:
+                    refreshed = self.memory.load_task(persistent.task_id)
+                    self.memory.update_task(
+                        persistent.task_id,
+                        completed_steps=_append_unique(refreshed.completed_steps, spec.title),
+                        current_step="",
+                    )
         finally:
             await runtime.cleanup()
 
@@ -619,6 +866,44 @@ class MissionService:
                         success=result.success,
                     )
                 )
+            persistent = self.memory.task_for_mission(workspace.mission_id)
+            if persistent:
+                observed_paths = paths or ([action.path] if action.path else [])
+                output = result.error or _action_summary(result)
+                updated = self.memory.record_action(
+                    persistent.task_id,
+                    action=action.action,
+                    paths=observed_paths,
+                    command=action.command if action.action == "run_command" else "",
+                    success=result.success,
+                    output=output,
+                    error=result.error or "",
+                )
+                if action.action == "resolve_command_failure" and result.success and updated.errors:
+                    self.memory.remember_failure(
+                        updated.errors[-1],
+                        cause="Environment-specific command failure",
+                        solution=f"Equivalent check passed: {action.evidence_command}",
+                        context=updated.interpreted_goal or updated.original_request,
+                        failed_attempts=[action.command],
+                        task_id=updated.task_id,
+                    )
+                if action.action == "todo" and result.success:
+                    todos = [item.model_dump(mode="json") for item in action.todos]
+                    self.memory.update_task(
+                        persistent.task_id,
+                        plan=todos,
+                        completed_steps=[
+                            item.content for item in action.todos if item.status == "completed"
+                        ],
+                        pending_steps=[
+                            item.content for item in action.todos if item.status == "pending"
+                        ],
+                        current_step=next(
+                            (item.content for item in action.todos if item.status == "in_progress"),
+                            "",
+                        ),
+                    )
 
         outcome = await ToolLoop(
             gateway,
@@ -627,6 +912,12 @@ class MissionService:
             debugger=debugger,
             attempts=attempts,
         ).run(workspace.mission_id, context, on_action=observe)
+        if not outcome.completed:
+            raise RuntimeError(
+                f"The {role.value} agent reached its {outcome.steps}-step safety limit before "
+                "it could finish. Partial file changes were preserved but were not reported "
+                "as complete."
+            )
         return outcome.implementation, outcome.changed
 
     async def _review_and_finish(
@@ -640,42 +931,64 @@ class MissionService:
     ) -> Path | None:
         self._update_mission(workspace.mission_id, status=MissionStatus.REVIEWING.value)
         git = GitClient(workspace.path)
-        diff = git.diff(workspace.initial_revision)
-        with self.database.session() as session:
-            verifications = session.scalars(
-                select(VerificationRun).where(VerificationRun.mission_id == workspace.mission_id)
-            ).all()
-            verification_json = json.dumps(
-                [item.report for item in verifications], indent=2, default=str
-            )
         if self.settings.verification.require_review:
             if not self._role_available(ModelRole.REVIEWER, profile_override):
                 raise RuntimeError(
                     "Independent review is required but no reviewer route is configured"
                 )
-            review = await ReviewerAgent(self._gateway(profile_override)).review(
-                workspace.mission_id,
-                requirements,
-                [criterion for task in plan.tasks for criterion in task.acceptance_criteria],
-                diff,
-                verification_json,
-            )
-            with self.database.session() as session:
-                session.add(
-                    Review(
-                        id=new_id("review"),
-                        mission_id=workspace.mission_id,
-                        approved=review.approved,
-                        report=review.model_dump(mode="json"),
+            for review_attempt in range(MAX_REVIEW_REPAIR_ATTEMPTS + 1):
+                diff = git.diff(workspace.initial_revision)
+                with self.database.session() as session:
+                    verifications = session.scalars(
+                        select(VerificationRun).where(
+                            VerificationRun.mission_id == workspace.mission_id
+                        )
+                    ).all()
+                    verification_json = json.dumps(
+                        [item.report for item in verifications], indent=2, default=str
                     )
+                review = await ReviewerAgent(self._gateway(profile_override)).review(
+                    workspace.mission_id,
+                    requirements,
+                    [criterion for task in plan.tasks for criterion in task.acceptance_criteria],
+                    diff,
+                    verification_json,
                 )
-            if not review.approved:
+                with self.database.session() as session:
+                    session.add(
+                        Review(
+                            id=new_id("review"),
+                            mission_id=workspace.mission_id,
+                            approved=review.approved,
+                            report=review.model_dump(mode="json"),
+                        )
+                    )
+                if review.approved:
+                    break
+                if review_attempt >= MAX_REVIEW_REPAIR_ATTEMPTS:
+                    self._update_mission(
+                        workspace.mission_id,
+                        status=MissionStatus.BLOCKED.value,
+                        failure=review.summary,
+                    )
+                    raise RuntimeError(
+                        f"Independent review rejected the mission after "
+                        f"{MAX_REVIEW_REPAIR_ATTEMPTS} repair attempts: {review.summary}"
+                    )
+                await self._repair_review_findings(
+                    workspace,
+                    requirements,
+                    plan,
+                    review.model_dump_json(indent=2),
+                    finding_files=[item.file for item in review.findings if item.file],
+                    missing_tests=review.missing_tests,
+                    commit_verified=not require_change_approval,
+                    profile_override=profile_override,
+                )
                 self._update_mission(
                     workspace.mission_id,
-                    status=MissionStatus.BLOCKED.value,
-                    failure=review.summary,
+                    status=MissionStatus.REVIEWING.value,
                 )
-                raise RuntimeError(f"Independent review rejected the mission: {review.summary}")
         if require_change_approval:
             self._update_mission(
                 workspace.mission_id,
@@ -699,6 +1012,84 @@ class MissionService:
             return None
         return self.finalize_changes(workspace.mission_id)
 
+    async def _repair_review_findings(
+        self,
+        workspace: Workspace,
+        requirements: RequirementSpec,
+        original_plan: TaskPlan,
+        review_json: str,
+        *,
+        finding_files: list[str],
+        missing_tests: list[str],
+        commit_verified: bool,
+        profile_override: str,
+    ) -> None:
+        """Turn a rejected independent review into one bounded corrective task."""
+        original_scopes = [
+            path
+            for task in original_plan.tasks
+            for path in [*task.expected_files, *task.allowed_files]
+        ]
+        test_scopes = [path for path in original_scopes if "test" in Path(path).name.lower()]
+        allowed = list(dict.fromkeys([*finding_files, *test_scopes]))
+        if missing_tests and not test_scopes:
+            allowed.append("tests/**")
+        if not allowed:
+            allowed = list(dict.fromkeys(original_scopes))
+        if not allowed:
+            raise RuntimeError("Independent review rejected the mission without a repairable scope")
+
+        commands = list(
+            dict.fromkeys(
+                self.settings.verification.commands
+                or [
+                    command
+                    for task in original_plan.tasks
+                    for command in task.verification_commands
+                ]
+            )
+        )
+        repair = TaskSpec(
+            id=new_id("task"),
+            title="Address independent review findings",
+            objective=(
+                "Correct the independent review findings below without expanding the requested "
+                f"scope. Re-run the supplied verification commands.\n\n{review_json}"
+            ),
+            risk_level="medium",
+            expected_files=list(dict.fromkeys(finding_files)),
+            allowed_files=allowed,
+            acceptance_criteria=[
+                "Every evidence-backed review finding is corrected.",
+                *missing_tests,
+            ],
+            verification_commands=commands,
+        )
+        with self.database.session() as session:
+            session.add(
+                Task(
+                    id=repair.id,
+                    mission_id=workspace.mission_id,
+                    title=repair.title,
+                    objective=repair.objective,
+                    status=TaskStatus.PENDING.value,
+                    risk_level=repair.risk_level,
+                    specification=repair.model_dump(mode="json"),
+                    assigned_model=repair.assigned_model,
+                )
+            )
+        await self._execute_tasks(
+            workspace,
+            requirements,
+            TaskPlan(
+                summary="Repair independent review findings",
+                mode=ProjectMode(self.get(workspace.mission_id).mode),
+                tasks=[repair],
+            ),
+            commit_verified=commit_verified,
+            profile_override=profile_override,
+        )
+
     def finalize_changes(self, mission_id: str) -> Path:
         """Commit approved changes and export the final evidence bundle."""
         mission = self.get(mission_id)
@@ -710,12 +1101,50 @@ class MissionService:
         }:
             raise RuntimeError(f"Mission {mission_id} is not awaiting change finalization")
         git = GitClient(Path(mission.workspace_path))
-        final_revision = git.commit(f"{mission.request[:72]}\n\nVasuki-Mission: {mission_id}")
+        with self.database.session() as session:
+            mutations = session.scalars(
+                select(ToolCall).where(
+                    ToolCall.mission_id == mission_id,
+                    ToolCall.success.is_(True),
+                    ToolCall.tool.in_(
+                        ["agent.write", "agent.replace", "agent.multi_edit", "agent.delete"]
+                    ),
+                )
+            ).all()
+        changed_paths = sorted(
+            {
+                str(call.arguments.get("path", "")).strip().removeprefix("./")
+                for call in mutations
+                if call.arguments.get("path")
+            }
+        )
+        final_revision = (
+            git.commit(
+                f"{mission.request[:72]}\n\nVasuki-Mission: {mission_id}",
+                paths=changed_paths,
+            )
+            if changed_paths
+            else git.revision()
+        )
         self._update_mission(
             mission_id,
             status=MissionStatus.COMPLETED.value,
             final_revision=final_revision,
         )
+        persistent = self.memory.task_for_mission(mission_id)
+        if persistent:
+            self.memory.extract(
+                mission.request,
+                task_id=persistent.task_id,
+                session_id=persistent.session_id,
+                source="user request",
+                source_type="user",
+            )
+            self.memory.complete_task(
+                persistent.task_id,
+                summary=f"Completed mission: {mission.request}",
+                outcome="completed",
+            )
         path = EvidenceExporter(self.root, self.database).export(mission_id, "markdown")
         self.log.emit(
             "mission.completed",
@@ -795,3 +1224,7 @@ def _action_summary(result: ToolResult) -> str:
         return "ok"
     parts = [f"{key}: {value}" for key, value in data.items() if key != "content"]
     return "; ".join(parts) or "ok"
+
+
+def _append_unique(values: list[str], value: str) -> list[str]:
+    return list(dict.fromkeys([*values, value]))

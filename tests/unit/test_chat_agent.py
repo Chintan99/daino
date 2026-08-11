@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from textual.content import Content
 
 from vasuki.agents.loop import ToolLoop
 from vasuki.agents.tool_schemas import AGENT_TOOL_SPECS, CHAT_TOOL_SPECS, tool_call_to_action
@@ -385,11 +386,13 @@ async def test_an_unavailable_runtime_does_not_report_the_edit_as_failed(
     service.add_message = lambda session_id, **kw: recorded.append(  # type: ignore[method-assign]
         (kw["kind"], kw["content"])
     )
+    service.update_verification_todo = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    service._session_gate = lambda session_id: object()  # type: ignore[method-assign]
 
     class Boom:
         def __init__(self, context: object) -> None: ...
 
-        async def run(self, commands: list[str]) -> object:
+        async def run(self, commands: list[str], **kwargs: object) -> object:
             raise RuntimeError("Docker is not installed or not on PATH")
 
     import vasuki.application.verification_service as verification
@@ -422,42 +425,68 @@ def _spans(text: str) -> list[tuple[str, str]]:
     return [part for part in card._diff_spans() if isinstance(part, tuple)]
 
 
-def test_added_and_removed_lines_get_filled_backgrounds() -> None:
-    """Dimming distinguishes prose; a diff needs colour you can see at a glance."""
-    body = render(build_file_diff("a.py", "a\nb\nc\n", "a\nB\nc\nd\n"))
-    styles = [style for _, style in _spans(body)]
+def _diff_parts(text: str) -> list[str | Content | tuple[str, str]]:
+    card = MessageCard.__new__(MessageCard)
+    card.raw_content = text
+    return card._diff_spans()
 
-    added = [style for style in styles if palette.DIFF_ADDED in style]
-    removed = [style for style in styles if palette.DIFF_REMOVED in style]
-    assert added and removed
-    assert all(f"on {palette.DIFF_ADDED_BG}" in style for style in added)
-    assert all(f"on {palette.DIFF_REMOVED_BG}" in style for style in removed)
+
+def _changed_code(
+    parts: list[str | Content | tuple[str, str]], marker: str
+) -> list[Content]:
+    return [
+        parts[index + 1]
+        for index, part in enumerate(parts[:-1])
+        if isinstance(part, tuple)
+        and part[0] == f"{marker} "
+        and isinstance(parts[index + 1], Content)
+    ]
+
+
+def test_added_and_removed_lines_get_filled_backgrounds() -> None:
+    """Change meaning comes from the fill, not green/red source text."""
+    body = render(build_file_diff("a.py", "a\nb\nc\n", "a\nB\nc\nd\n"))
+    marker_styles = {
+        text: style
+        for text, style in _spans(body)
+        if text in {"+ ", "- "}
+    }
+
+    assert marker_styles["+ "] == f"{palette.TEXT} on {palette.DIFF_ADDED_BG}"
+    assert marker_styles["- "] == f"{palette.TEXT} on {palette.DIFF_REMOVED_BG}"
     # Context lines stay unfilled so the change is what stands out.
-    assert any(style == palette.DIFF_CONTEXT for style in styles)
+    assert any(style == palette.DIFF_CONTEXT for _, style in _spans(body))
 
 
 def test_the_gutter_is_styled_apart_from_the_code() -> None:
     body = render(build_file_diff("a.py", "a\n", "B\n"))
     spans = _spans(body)
 
-    gutters = [text for text, style in spans if palette.DIFF_REMOVED_GUTTER in style]
-    bodies = [text for text, style in spans if palette.DIFF_REMOVED in style]
+    gutters = [text for text, style in spans if style.startswith(palette.DIFF_GUTTER)]
+    bodies = [text for text, style in spans if text == "- " and palette.TEXT in style]
     assert gutters and gutters[0].strip() == "1"
-    assert bodies and bodies[0].startswith("- ")
+    assert bodies == ["- "]
+
+
+def test_diff_code_uses_the_file_language_highlighter() -> None:
+    parts = _diff_parts(render(build_file_diff("a.py", "value = 1\n", "value = 2\n")))
+    added = _changed_code(parts, "+")
+
+    assert added
+    foregrounds = {
+        str(span.style.foreground)
+        for span in added[0].spans
+        if getattr(span.style, "foreground", None) is not None
+    }
+    assert len(foregrounds) >= 2
 
 
 def test_changed_lines_are_padded_into_an_even_block() -> None:
     """Ragged fills look like stripes; equal width reads as a block."""
     before = "short\n"
     after = "a considerably longer replacement line\n"
-    spans = _spans(render(build_file_diff("a.py", before, after)))
-
-    filled = [
-        text
-        for text, style in spans
-        if palette.DIFF_ADDED_BG in style or palette.DIFF_REMOVED_BG in style
-    ]
-    bodies = [text for text in filled if text.startswith(("+ ", "- "))]
+    parts = _diff_parts(render(build_file_diff("a.py", before, after)))
+    bodies = [item.plain for marker in ("+", "-") for item in _changed_code(parts, marker)]
     assert len(bodies) == 2
     assert len({len(text) for text in bodies}) == 1, bodies
 
@@ -465,9 +494,8 @@ def test_changed_lines_are_padded_into_an_even_block() -> None:
 def test_one_long_line_does_not_pad_every_other_line_out_to_match() -> None:
     """The cap bounds padding, and must never truncate the code itself."""
     after = "x" * 400 + "\nshort\n"
-    spans = _spans(render(build_file_diff("a.py", "", after)))
-    bodies = [text for text, style in spans if palette.DIFF_ADDED_BG in style]
-    bodies = [text for text in bodies if text.startswith("+ ")]
+    parts = _diff_parts(render(build_file_diff("a.py", "", after)))
+    bodies = [item.plain for item in _changed_code(parts, "+")]
 
     long_line = max(bodies, key=len)
     short_line = min(bodies, key=len)

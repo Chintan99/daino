@@ -28,6 +28,10 @@ def _is_change(line: str) -> bool:
 
 
 ORIGINAL = "<!DOCTYPE html>\n<html>\n<body>\n<h1>Welcome</h1>\n</body>\n</html>\n"
+FLAKY_CHECK = (
+    "python -c \"from pathlib import Path; p=Path('.vasuki-flaky-check'); "
+    "first=not p.exists(); p.write_text('seen'); raise SystemExit(0 if first else 1)\""
+)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -89,11 +93,17 @@ class _Handler(BaseHTTPRequestHandler):
                 "old_string": "<h1>Welcome</h1>",
                 "new_string": '<h1 class="glass">Welcome</h1>',
             }
+        if cls.turns == 3:
+            return {
+                "thought": "verify the edit",
+                "action": "run_command",
+                "command": FLAKY_CHECK if cls.mode == "flaky" else "git diff --check",
+            }
         return {
             "thought": "done",
             "action": "finish",
             "summary": "Applied the glassmorphism heading style.",
-            "verification_commands": [],
+            "verification_commands": [FLAKY_CHECK if cls.mode == "flaky" else "git diff --check"],
         }
 
 
@@ -165,7 +175,7 @@ async def test_the_transcript_shows_a_diff_rather_than_a_code_dump(
 
         items = workspace.missions.messages(workspace.session_id)
         kinds = [item.kind for item in items]
-        assert kinds == ["user", "diff", "agent"]
+        assert kinds == ["user", "diff", "tool", "test", "agent"]
 
         diff = next(item for item in items if item.kind == "diff")
         assert diff.content.splitlines()[0] == "landing.html"
@@ -219,6 +229,31 @@ async def test_a_checkpoint_is_taken_before_the_agent_edits(
 
         descriptions = [item.description for item in workspace.checkpoints.list()]
         assert "Before chat edit" in descriptions
+
+
+@pytest.mark.asyncio
+async def test_failed_final_verification_does_not_report_the_chat_mission_complete(
+    agent_server: str, tmp_path: Path
+) -> None:
+    _Handler.mode = "flaky"
+    app_instance = connected_app(tmp_path, agent_server)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+
+        await workspace.execute_command("make the heading glassmorphism")
+        await settle(pilot, workspace)
+
+        assert workspace.active_status == "Failed"
+        mission = workspace.missions.list_missions(1)[0]
+        details = workspace.missions.mission_details(mission.id)
+        assert details["mission"]["status"] == "failed"
+        messages = workspace.missions.messages(workspace.session_id)
+        assert any(
+            item.kind == "error" and "task is not complete" in item.content
+            for item in messages
+        )
 
 
 @pytest.mark.asyncio

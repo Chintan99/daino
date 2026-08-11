@@ -14,6 +14,16 @@ into each repository, so changing the global model later would silently fail to 
 API keys for a global provider are stored under `~/.config/vasuki/secrets/`, not inside a
 checkout, so deleting a project cannot break every other one.
 
+Memory policy is configured under `memory`. Durable project/task state uses the project database;
+cross-project user preferences and global `VASUKI.md` live privately under `~/.vasuki` (override
+with `VASUKI_HOME`). Embeddings default to `disabled`; lexical and metadata retrieval still work.
+See the complete [memory architecture](memory.md#configuration) and `config.example.yaml`.
+
+Model profiles accept `execution_mode` (`auto`, `compact`, or `standard`),
+`initial_context_tokens`, `max_agent_steps`, `no_progress_limit`, and `staged_retrieval`.
+Compact mode is designed for small/local coding models: it uses a bounded task packet and expands
+source or memory only through tools. See [small-model execution profiles](model-routing.md#small-model-execution-profiles).
+
 
 Project configuration is `.vasuki/config.yaml`, validated with Pydantic. `DATABASE_URL`,
 `VASUKI_RUNTIME`, `OPENROUTER_BASE_URL`, `OPENROUTER_MODEL`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`,

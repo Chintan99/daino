@@ -32,6 +32,7 @@ from vasuki.config.models import ModelProfileConfig, ProviderConfig
 from vasuki.deployment import DeploymentManager
 from vasuki.git import GitClient
 from vasuki.infra.manager import InfrastructureManager
+from vasuki.memory import MemoryManager, MemoryScope, MemoryType
 from vasuki.missions import EvidenceExporter, MissionService
 from vasuki.model_router import ModelRole
 from vasuki.observability import AuditLog, collect_stats
@@ -59,6 +60,7 @@ providers_app = typer.Typer(help="Manage OpenAI-compatible providers.")
 models_app = typer.Typer(help="Inspect, test, and route model profiles.")
 repo_app = typer.Typer(help="Index and query repository intelligence.")
 missions_app = typer.Typer(help="Inspect and control durable missions.")
+memory_app = typer.Typer(help="Inspect and control local durable memory.")
 checkpoints_app = typer.Typer(help="Create and restore workspace checkpoints.")
 deploy_app = typer.Typer(help="Inspect and deploy versioned Docker Compose releases.")
 playbooks_app = typer.Typer(help="Discover and run versioned engineering playbooks.")
@@ -68,6 +70,7 @@ app.add_typer(providers_app, name="providers")
 app.add_typer(models_app, name="models")
 app.add_typer(repo_app, name="repo")
 app.add_typer(missions_app, name="missions")
+app.add_typer(memory_app, name="memory")
 app.add_typer(checkpoints_app, name="checkpoints")
 app.add_typer(deploy_app, name="deploy")
 app.add_typer(playbooks_app, name="playbooks")
@@ -381,7 +384,9 @@ def providers_remove(name: Annotated[str, typer.Argument()]) -> None:
 @models_app.command("list")
 def models_list() -> None:
     _, settings, _ = _context()
-    routed = {profile: role for role, profile in settings.routing.items()}
+    routed: dict[str, list[str]] = {}
+    for role, profile in settings.routing.items():
+        routed.setdefault(profile, []).append(role)
     table = Table("Profile", "Provider", "Model", "Local", "Context", "Role")
     for name, profile in settings.models.items():
         table.add_row(
@@ -390,7 +395,7 @@ def models_list() -> None:
             profile.model,
             str(profile.local),
             str(profile.context_window),
-            routed.get(name, ""),
+            ", ".join(sorted(routed.get(name, []))),
         )
     console.print(table)
 
@@ -744,9 +749,10 @@ async def _resume(mission_id: str) -> None:
     root, settings, database = _context()
     service = MissionService(root, settings, database)
     mission = service.get(mission_id)
-    if mission.status != MissionStatus.AWAITING_APPROVAL.value:
-        raise typer.BadParameter("Only a planned mission awaiting approval can be resumed")
-    completed, evidence = await service.execute(mission_id)
+    if mission.status == MissionStatus.AWAITING_APPROVAL.value:
+        completed, evidence = await service.execute(mission_id)
+    else:
+        completed, evidence = await service.resume(mission_id)
     console.print(_mission_panel(completed))
     if evidence:
         console.print(str(evidence))
@@ -835,6 +841,85 @@ def missions_discard(
         if stored:
             stored.status = MissionStatus.CANCELLED.value
     console.print(f"[yellow]Discarded workspace and branch[/yellow] for {mission_id}")
+
+
+def _memory_manager() -> MemoryManager:
+    root, settings, database = _context()
+    return MemoryManager(database, root, settings)
+
+
+def _memory_table(items: list[Any]) -> Table:
+    table = Table("ID", "Type", "Scope", "Status", "Memory", "Source", "Confidence")
+    for item in items:
+        table.add_row(
+            item.id,
+            item.type.value,
+            item.scope.value,
+            item.status.value,
+            item.summary or item.content,
+            item.source,
+            f"{item.confidence:.2f}",
+        )
+    return table
+
+
+@memory_app.command("list")
+def memory_list(
+    memory_type: Annotated[str | None, typer.Option("--type")] = None,
+    scope: Annotated[str | None, typer.Option("--scope")] = None,
+) -> None:
+    manager = _memory_manager()
+    try:
+        items = manager.list(
+            memory_type=MemoryType(memory_type) if memory_type else None,
+            scope=MemoryScope(scope) if scope else None,
+        )
+        console.print(_memory_table(items))
+    finally:
+        manager.close()
+
+
+@memory_app.command("search")
+def memory_search(query: Annotated[str, typer.Argument()]) -> None:
+    manager = _memory_manager()
+    try:
+        console.print(_memory_table(manager.search(query, include_stale=True, debug=True)))
+    finally:
+        manager.close()
+
+
+@memory_app.command("forget")
+def memory_forget(memory_id: Annotated[str, typer.Argument()]) -> None:
+    manager = _memory_manager()
+    try:
+        manager.forget(memory_id)
+        console.print(f"[yellow]Forgot[/yellow] {memory_id}")
+    finally:
+        manager.close()
+
+
+@memory_app.command("verify")
+def memory_verify(memory_id: Annotated[str, typer.Argument()]) -> None:
+    manager = _memory_manager()
+    try:
+        manager.verify(memory_id)
+        console.print(f"[green]Verified[/green] {memory_id}")
+    finally:
+        manager.close()
+
+
+@memory_app.command("clear-project")
+def memory_clear_project(
+    yes: Annotated[bool, typer.Option("--yes")] = False,
+) -> None:
+    if not yes and not typer.confirm("Forget all project-scoped memories for this repository?"):
+        raise typer.Abort()
+    manager = _memory_manager()
+    try:
+        count = manager.clear(scope=MemoryScope.PROJECT)
+        console.print(f"[yellow]Forgot[/yellow] {count} project memory item(s)")
+    finally:
+        manager.close()
 
 
 @checkpoints_app.command("list")

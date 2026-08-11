@@ -2,11 +2,50 @@
 
 from __future__ import annotations
 
+import shlex
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+_COMMAND_EXECUTABLES = frozenset(
+    {
+        "bandit",
+        "cargo",
+        "eslint",
+        "git",
+        "go",
+        "make",
+        "mypy",
+        "node",
+        "npm",
+        "npx",
+        "pnpm",
+        "poetry",
+        "pyright",
+        "pytest",
+        "python",
+        "python3",
+        "ruff",
+        "tox",
+        "uv",
+        "yarn",
+    }
+)
+
+
+def _normalize_commands(commands: list[str]) -> list[str]:
+    """Repair the common model mistake of returning one argv as many commands."""
+    values = [item.strip() for item in commands if item.strip()]
+    if len(values) < 2 or any(" " in item for item in values[:2]):
+        return values
+    first = values[0].rsplit("/", 1)[-1]
+    second = values[1].rsplit("/", 1)[-1]
+    looks_like_argv = values[1].startswith("-") or (
+        first in _COMMAND_EXECUTABLES and second not in _COMMAND_EXECUTABLES
+    )
+    return [shlex.join(values)] if looks_like_argv else values
 
 
 class StrictModel(BaseModel):
@@ -48,6 +87,15 @@ class ProjectMode(StrEnum):
     DIRECT = "direct"
     SPECIFICATION = "specification"
     PROGRAM = "program"
+
+
+class InteractionMode(StrEnum):
+    """How much autonomy the interactive coding agent has in this session."""
+
+    PLAN = "plan"
+    ASK = "ask"
+    SESSION = "session"
+    FULL = "full"
 
 
 class MissionStatus(StrEnum):
@@ -113,6 +161,11 @@ class TaskSpec(StrictModel):
     attempt_count: int = 0
     evidence: list[str] = Field(default_factory=list)
 
+    @field_validator("verification_commands")
+    @classmethod
+    def normalize_verification_commands(cls, value: list[str]) -> list[str]:
+        return _normalize_commands(value)
+
 
 class TaskPlan(StrictModel):
     summary: str
@@ -152,7 +205,7 @@ class TodoItem(StrictModel):
     """One step of the agent's plan for the current request."""
 
     content: str
-    status: Literal["pending", "in_progress", "completed"] = "pending"
+    status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
 
 
 class AgentAction(StrictModel):
@@ -173,9 +226,18 @@ class AgentAction(StrictModel):
         "delete",
         "multi_edit",
         "run_command",
+        "resolve_command_failure",
+        "web_search",
+        "fetch_url",
         "glob",
         "grep",
         "todo",
+        "memory_search",
+        "memory_save",
+        "memory_update",
+        "memory_forget",
+        "memory_list",
+        "memory_verify",
         "respond",
         "finish",
     ]
@@ -188,7 +250,15 @@ class AgentAction(StrictModel):
     #: For ``run_command``: the executable and its arguments. Runs without a
     #: shell, so pipes and redirects are not available.
     command: str = ""
+    #: For ``resolve_command_failure``: a later successful command that covers
+    #: the same concern through an environment-appropriate route.
+    evidence_command: str = ""
     timeout: int = 0
+    #: For web research. URL is used by fetch_url; result/character limits are
+    #: bounded again by the executor and cannot disable its safety limits.
+    url: str = ""
+    max_results: int = 0
+    max_chars: int = 0
     #: For ``glob``: a path pattern such as ``src/**/*.py``.
     pattern: str = ""
     #: For ``read_file``: read a window of a large file instead of the head.
@@ -203,7 +273,73 @@ class AgentAction(StrictModel):
     #: ``summary``, which means "what you changed" and is empty when the agent
     #: only answered.
     message: str = ""
+    #: Controlled memory operations. The database is never exposed to the LLM.
+    memory_id: str = ""
+    memory_type: str = "semantic"
+    memory_scope: str = "project"
+    importance: float = 0.5
+    confidence: float = 0.5
+    tags: list[str] = Field(default_factory=list)
+    source: str = ""
     verification_commands: list[str] = Field(default_factory=list)
+
+    @field_validator("verification_commands")
+    @classmethod
+    def normalize_verification_commands(cls, value: list[str]) -> list[str]:
+        return _normalize_commands(value)
+
+    @model_validator(mode="after")
+    def validate_action_arguments(self) -> AgentAction:
+        """Reject incomplete flat actions before they reach the executor.
+
+        The flat contract is intentionally friendly to local grammar-constrained
+        decoders, but its default-valued fields otherwise let a response such as
+        ``{"action": "replace"}`` pass schema validation.  Turning that into a
+        provider repair is both cheaper and clearer than spending an agent step on
+        an edit that could never run.
+        """
+        required_text: dict[str, tuple[str, ...]] = {
+            "read_file": ("path",),
+            "search_text": ("query",),
+            "replace": ("path", "old_string"),
+            "write": ("path",),
+            "delete": ("path",),
+            "multi_edit": ("path",),
+            "run_command": ("command",),
+            "resolve_command_failure": ("command", "evidence_command"),
+            "web_search": ("query",),
+            "fetch_url": ("url",),
+            "glob": ("pattern",),
+            "grep": ("query",),
+            "memory_search": ("query",),
+            "memory_save": ("content",),
+            "memory_update": ("memory_id",),
+            "memory_forget": ("memory_id",),
+            "memory_verify": ("memory_id",),
+            "respond": ("message",),
+            "finish": ("summary",),
+        }
+        missing = [name for name in required_text.get(self.action, ()) if not getattr(self, name)]
+        if missing:
+            raise ValueError(f"{self.action} requires non-empty {', '.join(missing)}")
+        if self.action == "multi_edit" and not self.edits:
+            raise ValueError("multi_edit requires at least one edit")
+        if self.action == "todo" and not self.todos:
+            raise ValueError("todo requires at least one item")
+        return self
+
+
+class QAAgentAction(AgentAction):
+    """Read-only structured-output contract for QA-capable local models."""
+
+    action: Literal[
+        "read_file",
+        "search_text",
+        "list_directory",
+        "glob",
+        "grep",
+        "finish",
+    ]
 
 
 class AgentObservation(StrictModel):
@@ -314,6 +450,52 @@ class TeamOutcome(StrictModel):
     mission_id: str = ""
 
 
+QARunStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
+QACheckStatus = Literal["pending", "running", "passed", "failed", "skipped"]
+
+
+class QACheck(StrictModel):
+    """One deterministic quality, browser, or dependency check."""
+
+    id: str
+    label: str
+    category: Literal["quality", "tests", "browser", "dependencies"]
+    command: str = ""
+    status: QACheckStatus = "pending"
+    summary: str = ""
+    output: str = ""
+    duration_seconds: float = 0.0
+    network_required: bool = False
+
+
+class QASpecialist(StrictModel):
+    """Progress and final evidence from one read-only QA sub-agent."""
+
+    id: str
+    label: str
+    role: str
+    objective: str
+    status: QACheckStatus = "pending"
+    summary: str = ""
+    steps: int = 0
+    error: str = ""
+
+
+class QAReport(StrictModel):
+    """Persisted result shown in the QA workspace."""
+
+    id: str
+    status: QARunStatus = "pending"
+    started_at: datetime
+    finished_at: datetime | None = None
+    project_root: str = ""
+    project_profile: list[str] = Field(default_factory=list)
+    checks: list[QACheck] = Field(default_factory=list)
+    specialists: list[QASpecialist] = Field(default_factory=list)
+    summary: str = ""
+    mission_id: str = ""
+
+
 class ReviewFinding(StrictModel):
     severity: Literal["info", "low", "medium", "high", "critical"]
     category: str
@@ -405,15 +587,40 @@ class RepositoryIndex(StrictModel):
     entrypoints: list[str] = Field(default_factory=list)
 
 
+class TaskPacket(StrictModel):
+    """A compact, model-independent handoff for one bounded coding step."""
+
+    objective: str
+    acceptance_checks: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+    active_decisions: list[str] = Field(default_factory=list)
+    relevant_files: list[str] = Field(default_factory=list)
+    completed_steps: list[str] = Field(default_factory=list)
+    pending_steps: list[str] = Field(default_factory=list)
+    current_errors: list[str] = Field(default_factory=list)
+    verification_commands: list[str] = Field(default_factory=list)
+    next_action: str = ""
+    retrieval_hint: str = ""
+
+
 class ContextBundle(StrictModel):
     task: str
     acceptance_criteria: list[str]
+    effective_instructions: str = ""
+    working_memory: dict[str, Any] = Field(default_factory=dict)
+    compacted_context: dict[str, Any] = Field(default_factory=dict)
+    relevant_memories: list[dict[str, Any]] = Field(default_factory=list)
+    memory_precedence: str = ""
     architecture_decisions: list[str] = Field(default_factory=list)
     files: dict[str, str] = Field(default_factory=dict)
     tests: dict[str, str] = Field(default_factory=dict)
     failure_summary: str | None = None
     token_estimate: int = 0
     included_paths: list[str] = Field(default_factory=list)
+    task_packet: TaskPacket | None = None
+    execution_mode: Literal["standard", "compact"] = "standard"
+    retrieval_stage: Literal["initial", "expanded"] = "expanded"
+    omitted_context: list[str] = Field(default_factory=list)
 
 
 class DeploymentRisk(StrEnum):

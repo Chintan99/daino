@@ -16,9 +16,10 @@ from sqlalchemy import select
 
 from vasuki.agents import ReviewerAgent, TeamLead, TeamRunner, validate_team_plan
 from vasuki.agents.loop import ToolLoop
-from vasuki.agents.tool_schemas import CHAT_TOOL_SPECS
+from vasuki.agents.tool_schemas import AGENT_TOOL_SPECS, CHAT_TOOL_SPECS
 from vasuki.application.context import ProjectContext
 from vasuki.application.view_models import ConversationItem, MissionSummary
+from vasuki.context import ModelExecutionProfile
 from vasuki.events import (
     ApprovalResolved,
     CheckpointCreated,
@@ -29,10 +30,12 @@ from vasuki.events import (
     TeamMemberCompleted,
     TeamMemberStarted,
     TeamPlanned,
+    TodoUpdated,
     ToolCompleted,
     ToolFailed,
 )
 from vasuki.exceptions import ConfigurationError
+from vasuki.memory import MemoryManager, MemoryScope, MemoryType, PersistentTaskStatus
 from vasuki.missions import MissionService
 from vasuki.model_router import ModelRole
 from vasuki.persistence.models import (
@@ -40,6 +43,7 @@ from vasuki.persistence.models import (
     Checkpoint,
     ConversationMessage,
     ConversationSession,
+    ConversationState,
     Mission,
     RequirementVersion,
     Review,
@@ -55,19 +59,22 @@ from vasuki.schemas import (
     ChatOutcome,
     ContextBundle,
     FileDiff,
+    InteractionMode,
     Message,
     MissionStatus,
     ProjectMode,
     ReviewReport,
     TaskSpec,
+    TaskStatus,
     TeamMember,
     TeamMemberOutcome,
     TeamOutcome,
     TeamPlan,
+    TodoItem,
     ToolResult,
 )
 from vasuki.security.commands import CommandGate
-from vasuki.tools import EditTools, RecordingActionExecutor, build_file_diff
+from vasuki.tools import EditTools, RecordingActionExecutor, WebResearchTool, build_file_diff
 from vasuki.tools.commands import ApprovalCallback, CommandRunner
 from vasuki.tools.diffing import render as render_diff
 from vasuki.utils.ids import new_id
@@ -78,11 +85,17 @@ class MissionApplicationService:
 
     def __init__(self, context: ProjectContext) -> None:
         self.context = context
+        self.memory = getattr(context, "memory", None) or MemoryManager(
+            context.database,
+            context.root,
+            context.settings,
+        )
         self.core = MissionService(
             context.root,
             context.settings,
             context.database,
             events=context.events,
+            memory=self.memory,
         )
         #: Command approval memory per conversation session.
         self._command_gates: dict[str, CommandGate] = {}
@@ -101,7 +114,99 @@ class MissionApplicationService:
         )
         with self.context.database.session() as session:
             session.add(item)
+            session.add(
+                ConversationState(
+                    session_id=item.id,
+                    interaction_mode=InteractionMode.ASK.value,
+                    todos=[],
+                )
+            )
         return item.id
+
+    def interaction_mode(self, session_id: str) -> InteractionMode:
+        """Return the session's autonomy policy, repairing legacy sessions lazily."""
+        with self.context.database.session() as session:
+            item = session.get(ConversationState, session_id)
+            return InteractionMode(item.interaction_mode) if item else InteractionMode.ASK
+
+    def set_interaction_mode(self, session_id: str, mode: InteractionMode | str) -> None:
+        selected = InteractionMode(mode)
+        with self.context.database.session() as session:
+            if session.get(ConversationSession, session_id) is None:
+                raise ValueError(f"Unknown conversation session {session_id}")
+            item = session.get(ConversationState, session_id)
+            if item is None:
+                item = ConversationState(session_id=session_id, todos=[])
+                session.add(item)
+            item.interaction_mode = selected.value
+
+    def session_todos(self, session_id: str) -> list[TodoItem]:
+        with self.context.database.session() as session:
+            item = session.get(ConversationState, session_id)
+            return [TodoItem.model_validate(todo) for todo in (item.todos if item else [])]
+
+    def set_session_todos(
+        self,
+        session_id: str,
+        todos: list[TodoItem],
+        *,
+        mission_id: str | None = None,
+    ) -> None:
+        serialized = [todo.model_dump(mode="json") for todo in todos]
+        with self.context.database.session() as session:
+            if session.get(ConversationSession, session_id) is None:
+                raise ValueError(f"Unknown conversation session {session_id}")
+            item = session.get(ConversationState, session_id)
+            if item is None:
+                item = ConversationState(session_id=session_id)
+                session.add(item)
+            item.todos = serialized
+        self.context.events.publish(
+            TodoUpdated(
+                mission_id=mission_id,
+                session_id=session_id,
+                todos=serialized,
+            )
+        )
+
+    def update_session_todo(
+        self,
+        session_id: str,
+        content: str,
+        status: str,
+        *,
+        mission_id: str | None = None,
+    ) -> None:
+        todos = self.session_todos(session_id)
+        updated = False
+        for index, todo in enumerate(todos):
+            if todo.content == content:
+                todos[index] = todo.model_copy(update={"status": status})
+                updated = True
+                break
+        if updated:
+            self.set_session_todos(session_id, todos, mission_id=mission_id)
+
+    def update_verification_todo(
+        self,
+        session_id: str,
+        status: str,
+        *,
+        mission_id: str | None = None,
+    ) -> None:
+        """Make the final test/build checklist item reflect actual verification."""
+        todos = self.session_todos(session_id)
+        keywords = ("test", "verify", "verification", "build", "check")
+        candidates = [
+            index
+            for index, todo in enumerate(todos)
+            if any(keyword in todo.content.casefold() for keyword in keywords)
+        ]
+        if not candidates:
+            return
+        index = candidates[-1]
+        todos[index] = todos[index].model_copy(update={"status": status})
+        self.set_session_todos(session_id, todos, mission_id=mission_id)
 
     def recent_sessions(self, limit: int = 20) -> list[ConversationSession]:
         with self.context.database.session() as session:
@@ -295,6 +400,9 @@ class MissionApplicationService:
                 content=str(exc),
             )
             raise
+        persistent = self.memory.task_for_mission(mission.id)
+        if persistent:
+            self.memory.update_task(persistent.task_id, session_id=session_id)
         self.add_message(
             session_id,
             kind="plan",
@@ -305,6 +413,25 @@ class MissionApplicationService:
                 "requirements": requirements.model_dump(mode="json"),
                 "tasks": [task.model_dump(mode="json") for task in plan.tasks],
             },
+        )
+        self.set_session_todos(
+            session_id,
+            [
+                TodoItem(
+                    content=task.title,
+                    status=(
+                        "completed"
+                        if task.status == TaskStatus.COMPLETED
+                        else "failed"
+                        if task.status == TaskStatus.FAILED
+                        else "in_progress"
+                        if task.status == TaskStatus.RUNNING
+                        else "pending"
+                    ),
+                )
+                for task in plan.tasks
+            ],
+            mission_id=mission.id,
         )
         return mission, requirements, plan
 
@@ -331,11 +458,28 @@ class MissionApplicationService:
 
     def _question_context(self, session_id: str, question: str) -> tuple[str, str]:
         """Build the repository grounding for a question. Blocking; call in a thread."""
+        from vasuki.context import ContextBuilder
         from vasuki.repository import RepositoryIndexer
 
+        persistent = self._latest_task_for_session(session_id)
+        memory_context = ContextBuilder(
+            self.context.root,
+            self.context.settings,
+            self.memory,
+            indexer=RepositoryIndexer(self.context.root),
+        ).build_question_context(
+            question,
+            paths=self.context_files(session_id),
+            task_state_id=persistent.task_id if persistent else None,
+            session_id=session_id,
+        )
         return (
             RepositoryIndexer(self.context.root).summary(),
-            self._supplemental_context(session_id, question),
+            "\n\n".join(
+                value
+                for value in (memory_context, self._supplemental_context(session_id, question))
+                if value.strip()
+            ),
         )
 
     def conversation_history(self, session_id: str, *, turns: int = 12) -> list[Message]:
@@ -360,6 +504,14 @@ class MissionApplicationService:
         history = self.conversation_history(session_id)
         self.add_message(session_id, kind="user", role="user", content=question)
         mission = self.core.create(question, ProjectMode.DIRECT)
+        persistent = self.memory.task_for_mission(mission.id)
+        if persistent:
+            persistent = self.memory.update_task(
+                persistent.task_id,
+                session_id=session_id,
+                interpreted_goal=question,
+                status=PersistentTaskStatus.IN_PROGRESS,
+            )
         summary, supplemental = await asyncio.to_thread(
             self._question_context,
             session_id,
@@ -398,6 +550,12 @@ class MissionApplicationService:
                 status=MissionStatus.FAILED.value,
                 failure=str(exc),
             )
+            if persistent:
+                self.memory.update_task(
+                    persistent.task_id,
+                    status=PersistentTaskStatus.FAILED,
+                    errors=[*persistent.errors, str(exc)],
+                )
             raise
         answer = "".join(chunks)
         self.add_message(
@@ -408,6 +566,13 @@ class MissionApplicationService:
             mission_id=mission.id,
         )
         self.core._update_mission(mission.id, status=MissionStatus.COMPLETED.value)
+        if persistent:
+            self.memory.complete_task(
+                persistent.task_id,
+                summary=answer[:1_000] or "Question answered",
+                outcome="completed",
+                create_episode=False,
+            )
         return answer
 
     async def run_shell(self, command: str, session_id: str) -> ToolResult:
@@ -551,10 +716,43 @@ class MissionApplicationService:
         history = self.conversation_history(session_id)
         self.add_message(session_id, kind="user", role="user", content=instruction)
         mission = self.core.create(instruction, ProjectMode.DIRECT)
+        persistent = self.memory.task_for_mission(mission.id)
+        if persistent:
+            persistent = self.memory.update_task(
+                persistent.task_id,
+                session_id=session_id,
+                interpreted_goal=instruction,
+                status=PersistentTaskStatus.IN_PROGRESS,
+            )
         # Taken before the first edit so /restore always has a way back; the
         # agent writes to the real working tree, not a worktree.
         self._checkpoint_working_tree(mission.id)
-        base_context = await asyncio.to_thread(self._team_context, instruction)
+        gateway = self.core.gateway.with_profile(profile_override)
+        budgeter = getattr(gateway, "context_budget", None)
+        model_budget = (
+            budgeter(ModelRole.BUILDER, tools=CHAT_TOOL_SPECS)
+            if callable(budgeter)
+            else self.context.settings.project.context_budget_tokens
+        )
+        profile_resolver = getattr(gateway, "execution_profile", None)
+        execution_profile = (
+            profile_resolver(ModelRole.BUILDER, tools=CHAT_TOOL_SPECS)
+            if callable(profile_resolver)
+            else None
+        )
+        context_reserve = min(2_048, max(512, model_budget // 4))
+        context_budget = min(
+            self.context.settings.project.context_budget_tokens,
+            max(512, model_budget - context_reserve),
+        )
+        base_context = await asyncio.to_thread(
+            self._team_context,
+            instruction,
+            context_budget,
+            persistent.task_id if persistent else None,
+            session_id,
+            execution_profile,
+        )
 
         editor = EditTools(
             self.context.root,
@@ -562,13 +760,25 @@ class MissionApplicationService:
             seen_files=set(base_context.included_paths),
         )
         runtime, runner = await self._command_runner(session_id, approve)
-        executor = RecordingActionExecutor(editor, runner)
+        executor = RecordingActionExecutor(
+            editor,
+            runner,
+            web=WebResearchTool(
+                approve=approve,
+                require_approval=self.context.settings.security.require_approval_for_network,
+            ),
+            memory=self.memory,
+            memory_task_id=persistent.task_id if persistent else None,
+            memory_session_id=session_id,
+        )
         loop = ToolLoop(
-            self.core.gateway.with_profile(profile_override),
+            gateway,
             ModelRole.BUILDER,
             executor,
             system=CHAT_AGENT_SYSTEM,
             tools=CHAT_TOOL_SPECS,
+            require_verified_finish=True,
+            execution_profile=execution_profile,
         )
         diffs: list[FileDiff] = []
         try:
@@ -578,6 +788,12 @@ class MissionApplicationService:
                 on_action=self._record_chat_action(mission.id, session_id, executor, diffs),
                 history=history,
             )
+            if not result.completed:
+                raise RuntimeError(
+                    f"The coding agent reached its {result.steps}-step safety limit before it "
+                    "could finish. Partial file changes were preserved but were not reported "
+                    "as complete."
+                )
         except Exception as exc:
             self.core._update_mission(
                 mission.id, status=MissionStatus.FAILED.value, failure=str(exc)
@@ -605,21 +821,73 @@ class MissionApplicationService:
                 content=result.answer,
                 mission_id=mission.id,
             )
+        commands = result.implementation.verification_commands
+        if result.changed:
+            await self._verify_chat_edit(
+                outcome,
+                commands,
+                session_id,
+                mission.id,
+                approve=approve,
+            )
         # No diffs are written here: each edit already posted its own as it
-        # landed, so repeating them would show every change twice.
+        # landed, so repeating them would show every change twice. The summary
+        # comes after verification so it cannot announce success above a later
+        # red tester card.
         if outcome.summary:
+            summary = outcome.summary
+            kind = "agent"
+            if outcome.verified is False:
+                kind = "error"
+                summary = (
+                    "Changes were applied, but the task is not complete because verification "
+                    f"failed.\nBuilder report: {summary}"
+                )
+            elif outcome.verified is None and outcome.changed:
+                kind = "status"
+                summary = f"Changes were applied but remain unverified.\nBuilder report: {summary}"
             self.add_message(
                 session_id,
-                kind="agent",
+                kind=kind,
                 role=ModelRole.BUILDER.value,
-                content=outcome.summary,
+                content=summary,
                 mission_id=mission.id,
             )
 
-        commands = result.implementation.verification_commands
-        if result.changed and commands:
-            await self._verify_chat_edit(outcome, commands, session_id, mission.id)
-        self.core._update_mission(mission.id, status=MissionStatus.COMPLETED.value)
+        if outcome.verified is False:
+            self.core._update_mission(
+                mission.id,
+                status=MissionStatus.FAILED.value,
+                failure=outcome.verification_summary,
+            )
+        elif outcome.verified is None and outcome.changed:
+            self.core._update_mission(
+                mission.id,
+                status=MissionStatus.BLOCKED.value,
+                failure=outcome.verification_summary or "Changes were not verified",
+            )
+        else:
+            self.core._update_mission(mission.id, status=MissionStatus.COMPLETED.value)
+        if persistent:
+            status = (
+                "failed"
+                if outcome.verified is False
+                else "blocked"
+                if outcome.verified is None and outcome.changed
+                else "completed"
+            )
+            self.memory.extract(
+                instruction,
+                task_id=persistent.task_id,
+                session_id=session_id,
+                source="user request",
+                source_type="user",
+            )
+            self.memory.complete_task(
+                persistent.task_id,
+                summary=outcome.answer or outcome.summary or "Chat task finished",
+                outcome=status,
+            )
         return outcome
 
     def _checkpoint_working_tree(self, mission_id: str) -> None:
@@ -639,12 +907,20 @@ class MissionApplicationService:
         commands: list[str],
         session_id: str,
         mission_id: str,
+        *,
+        approve: ApprovalCallback | None = None,
     ) -> None:
         """Run the checks the agent itself proposed and report the result."""
         from vasuki.application.verification_service import VerificationApplicationService
 
+        self.update_verification_todo(session_id, "in_progress", mission_id=mission_id)
         try:
-            report = await VerificationApplicationService(self.context).run(commands)
+            report = await VerificationApplicationService(self.context).run(
+                commands,
+                mission_id=mission_id,
+                approve=approve,
+                gate=self._session_gate(session_id),
+            )
         except Exception as exc:  # noqa: BLE001 - a broken check is a result, not a crash
             # An unavailable runtime means the checks never ran, which says
             # nothing about the edit. Reporting that as a failure makes a
@@ -661,14 +937,19 @@ class MissionApplicationService:
                 content=outcome.verification_summary,
                 mission_id=mission_id,
             )
+            self.update_verification_todo(session_id, "failed", mission_id=mission_id)
             return
         else:
             outcome.verified = bool(getattr(report, "passed", False))
             failures = getattr(report, "failures", [])
+            executed = [check for check in getattr(report, "checks", []) if not check.skipped]
             outcome.verification_summary = (
-                f"{len(commands)} check(s) passed"
+                f"{len(executed)} check(s) passed"
                 if outcome.verified
-                else "; ".join(str(getattr(item, "command", item)) for item in failures)
+                else "; ".join(
+                    f"{getattr(item, 'command', item)}: {getattr(item, 'summary', '')}".rstrip(": ")
+                    for item in failures
+                )
                 or "verification failed"
             )
         self.add_message(
@@ -676,6 +957,11 @@ class MissionApplicationService:
             kind="test" if outcome.verified else "error",
             role="tester",
             content=outcome.verification_summary,
+            mission_id=mission_id,
+        )
+        self.update_verification_todo(
+            session_id,
+            "completed" if outcome.verified else "failed",
             mission_id=mission_id,
         )
 
@@ -687,6 +973,12 @@ class MissionApplicationService:
         diffs: list[FileDiff],
     ) -> Callable[..., None]:
         def observe(action: AgentAction, result: ToolResult, paths: list[str]) -> None:
+            if action.action == "todo" and result.success:
+                self.set_session_todos(
+                    session_id,
+                    list(action.todos),
+                    mission_id=mission_id,
+                )
             # Work the agent does that is not an edit still has to be visible.
             # A command that runs invisibly leaves the user unable to tell a
             # working agent from a stuck one.
@@ -738,12 +1030,40 @@ class MissionApplicationService:
                         success=result.success,
                     )
                 )
+            persistent = self.memory.task_for_mission(mission_id)
+            if persistent:
+                observed_paths = paths or ([action.path] if action.path else [])
+                updated = self.memory.record_action(
+                    persistent.task_id,
+                    action=action.action,
+                    paths=observed_paths,
+                    command=action.command if action.action == "run_command" else "",
+                    success=result.success,
+                    output=result.error or _tool_result_summary(result),
+                    error=result.error or "",
+                )
+                if action.action == "resolve_command_failure" and result.success and updated.errors:
+                    self.memory.remember_failure(
+                        updated.errors[-1],
+                        cause="Environment-specific command failure",
+                        solution=f"Equivalent check passed: {action.evidence_command}",
+                        context=updated.interpreted_goal or updated.original_request,
+                        failed_attempts=[action.command],
+                        task_id=updated.task_id,
+                    )
 
         return observe
 
-    def _team_context(self, instruction: str) -> ContextBundle:
+    def _team_context(
+        self,
+        instruction: str,
+        token_budget: int | None = None,
+        task_state_id: str | None = None,
+        session_id: str | None = None,
+        execution_profile: ModelExecutionProfile | None = None,
+    ) -> ContextBundle:
         """Compile repository grounding for a team. Blocking; call in a thread."""
-        from vasuki.context import ContextCompiler
+        from vasuki.context import ContextBuilder
         from vasuki.repository import RepositoryIndexer
 
         spec = TaskSpec(
@@ -754,7 +1074,19 @@ class MissionApplicationService:
             verification_commands=[],
         )
         root = self.context.root
-        return ContextCompiler(root, RepositoryIndexer(root)).compile(spec)
+        return ContextBuilder(
+            root,
+            self.context.settings,
+            self.memory,
+            indexer=RepositoryIndexer(root),
+            token_budget=token_budget or self.context.settings.project.context_budget_tokens,
+        ).build(
+            spec,
+            current_user_instruction=instruction,
+            task_state_id=task_state_id,
+            session_id=session_id,
+            execution_profile=execution_profile,
+        )
 
     async def team(
         self,
@@ -776,8 +1108,40 @@ class MissionApplicationService:
             )
         self.add_message(session_id, kind="user", role="user", content=instruction)
         mission = self.core.create(instruction, ProjectMode.DIRECT)
+        persistent = self.memory.task_for_mission(mission.id)
+        if persistent:
+            persistent = self.memory.update_task(
+                persistent.task_id,
+                session_id=session_id,
+                interpreted_goal=instruction,
+                status=PersistentTaskStatus.IN_PROGRESS,
+            )
         gateway = self.core.gateway.with_profile(profile_override)
-        base_context = await asyncio.to_thread(self._team_context, instruction)
+        budgeter = getattr(gateway, "context_budget", None)
+        model_budget = (
+            budgeter(ModelRole.BUILDER, tools=AGENT_TOOL_SPECS)
+            if callable(budgeter)
+            else self.context.settings.project.context_budget_tokens
+        )
+        profile_resolver = getattr(gateway, "execution_profile", None)
+        execution_profile = (
+            profile_resolver(ModelRole.BUILDER, tools=AGENT_TOOL_SPECS)
+            if callable(profile_resolver)
+            else None
+        )
+        context_reserve = min(2_048, max(512, model_budget // 4))
+        context_budget = min(
+            self.context.settings.project.context_budget_tokens,
+            max(512, model_budget - context_reserve),
+        )
+        base_context = await asyncio.to_thread(
+            self._team_context,
+            instruction,
+            context_budget,
+            persistent.task_id if persistent else None,
+            session_id,
+            execution_profile,
+        )
 
         try:
             plan = await TeamLead(gateway).plan(
@@ -837,7 +1201,13 @@ class MissionApplicationService:
         )
 
         try:
-            outcome = await TeamRunner(gateway, workspace.path).run(
+            outcome = await TeamRunner(
+                gateway,
+                workspace.path,
+                memory=self.memory,
+                memory_task_id=persistent.task_id if persistent else None,
+                memory_session_id=session_id,
+            ).run(
                 mission.id,
                 plan,
                 base_context,
@@ -865,6 +1235,12 @@ class MissionApplicationService:
             status=(MissionStatus.FAILED if failed else MissionStatus.COMPLETED).value,
             failure="; ".join(f"{item.id}: {item.error}" for item in failed),
         )
+        if persistent:
+            self.memory.complete_task(
+                persistent.task_id,
+                summary=_render_team_outcome(outcome, workspace.path),
+                outcome="failed" if failed else "completed",
+            )
         return outcome.model_copy(update={"mission_id": mission.id})
 
     def _announce_team_member(self, mission_id: str) -> Callable[[TeamMember], None]:
@@ -947,6 +1323,18 @@ class MissionApplicationService:
                         success=result.success,
                     )
                 )
+            persistent = self.memory.task_for_mission(mission_id)
+            if persistent:
+                observed_paths = paths or ([action.path] if action.path else [])
+                self.memory.record_action(
+                    persistent.task_id,
+                    action=f"team.{member.id}.{action.action}",
+                    paths=observed_paths,
+                    command=action.command if action.action == "run_command" else "",
+                    success=result.success,
+                    output=result.error or _tool_result_summary(result),
+                    error=result.error or "",
+                )
 
         return observe
 
@@ -957,11 +1345,19 @@ class MissionApplicationService:
         *,
         profile_override: str = "",
     ) -> tuple[Mission, Path | None]:
-        result, evidence = await self.core.execute(
-            mission_id,
-            require_change_approval=True,
-            profile_override=profile_override,
-        )
+        mission = self.core.get(mission_id)
+        if mission.status == MissionStatus.AWAITING_APPROVAL.value:
+            result, evidence = await self.core.execute(
+                mission_id,
+                require_change_approval=True,
+                profile_override=profile_override,
+            )
+        else:
+            result, evidence = await self.core.resume(
+                mission_id,
+                require_change_approval=True,
+                profile_override=profile_override,
+            )
         if evidence:
             self.add_message(
                 session_id,
@@ -1051,6 +1447,100 @@ class MissionApplicationService:
                 if task.status != "completed":
                     task.status = "cancelled"
         self.context.events.publish(MissionPaused(mission_id=mission_id, reason=reason))
+        persistent = self.memory.task_for_mission(mission_id)
+        if persistent:
+            self.memory.update_task(
+                persistent.task_id,
+                status=PersistentTaskStatus.CANCELLED,
+                last_action="cancelled",
+                unresolved_problems=[*persistent.unresolved_problems, reason],
+            )
+
+    def resumable_tasks(self) -> list[Any]:
+        """Return crash-safe task snapshots for startup and ``/tasks`` flows."""
+        return self.memory.resumable_tasks()
+
+    def memory_command(self, arguments: str, session_id: str) -> str:
+        """Execute the inspectable `/memory` command family for any presentation."""
+        verb, _, rest = arguments.strip().partition(" ")
+        verb = verb.casefold()
+        rest = rest.strip()
+        if verb == "search":
+            if not rest:
+                raise ValueError("Usage: /memory search <query>")
+            items = self.memory.search(rest, include_stale=True, debug=True)
+        elif verb in {"decisions", "failures", "user"}:
+            selected = {
+                "decisions": MemoryType.DECISION,
+                "failures": MemoryType.FAILURE,
+                "user": MemoryType.USER,
+            }[verb]
+            items = self.memory.list(memory_type=selected)
+        elif verb == "project":
+            items = self.memory.list(scope=MemoryScope.PROJECT)
+        elif verb == "forget":
+            if not rest:
+                raise ValueError("Usage: /memory forget <memory-id>")
+            self.memory.forget(rest)
+            return f"Forgot memory {rest}."
+        elif verb == "verify":
+            if not rest:
+                raise ValueError("Usage: /memory verify <memory-id>")
+            self.memory.verify(rest)
+            return f"Verified memory {rest} against its current source."
+        elif verb == "clear-session":
+            count = self.memory.clear(scope=MemoryScope.SESSION, session_id=session_id)
+            return f"Cleared {count} session memory item(s)."
+        elif verb == "clear-project":
+            count = self.memory.clear(scope=MemoryScope.PROJECT)
+            return f"Cleared {count} project memory item(s)."
+        elif not verb:
+            items = self.memory.list(limit=50)
+        else:
+            raise ValueError(
+                "Usage: /memory [search <query>|project|decisions|failures|user|"
+                "forget <id>|verify <id>|clear-session|clear-project]"
+            )
+        if not items:
+            return "No matching memories."
+        lines = ["Vasuki memory:"]
+        for item in items:
+            origin = item.source or "unknown source"
+            stale = f", {item.status.value}" if item.status.value != "active" else ""
+            lines.append(
+                f"- `{item.id}` [{item.type.value}/{item.scope.value}{stale}] "
+                f"{item.summary or item.content} — source: {origin}; "
+                f"confidence: {item.confidence:.2f}"
+            )
+            if item.why:
+                lines.append(f"  selected because: {', '.join(item.why)}")
+        return "\n".join(lines)
+
+    def task_command(self) -> str:
+        items = self.resumable_tasks()
+        if not items:
+            return "No unfinished persistent tasks for this project."
+        lines = ["Resumable tasks:"]
+        for item in items:
+            completed = len(item.completed_steps)
+            total = completed + len(item.pending_steps) + bool(item.current_step)
+            title = item.interpreted_goal or item.original_request
+            lines.append(f"- `{item.task_id}` [{item.status.value}] {title}")
+            lines.append(
+                f"  Progress: {completed}/{total}; current: {item.current_step or 'not set'}; "
+                f"last action: {item.last_action or 'none'}"
+            )
+        return "\n".join(lines)
+
+    def _latest_task_for_session(self, session_id: str) -> Any | None:
+        return next(
+            (
+                item
+                for item in self.memory.resumable_tasks(limit=100)
+                if item.session_id == session_id
+            ),
+            None,
+        )
 
     def list_missions(self, limit: int = 100) -> list[MissionSummary]:
         with self.context.database.session() as session:
@@ -1259,12 +1749,34 @@ def _describe_action(action: AgentAction, result: ToolResult) -> str:
             return f"{header}\n{_tail(str(failure))}"
         body = _tail(str(data.get("stdout") or data.get("stderr") or ""))
         return f"{header}\n{body}" if body else header
+    if action.action == "resolve_command_failure":
+        if not result.success:
+            return f"could not resolve $ {action.command}\n{result.error or 'evidence rejected'}"
+        return (
+            f"resolved failed check $ {action.command}\n"
+            f"using successful evidence $ {action.evidence_command}"
+        )
     if action.action == "glob":
         return f"glob {action.pattern} · {data.get('count', 0)} file(s)"
     if action.action == "grep":
         return f"grep {action.query} · {len(data.get('matches') or [])} match(es)"
+    if action.action == "web_search":
+        results = data.get("results") or []
+        if not result.success:
+            return f"web search {action.query}\n{result.error or 'search failed'}"
+        sources = "\n".join(
+            f"  {item.get('title', 'Untitled')} — {item.get('url', '')}"
+            for item in results[:5]
+            if isinstance(item, dict)
+        )
+        return f"web search {action.query} · {len(results)} result(s)\n{sources}".rstrip()
+    if action.action == "fetch_url":
+        if not result.success:
+            return f"fetch {action.url}\n{result.error or 'fetch failed'}"
+        title = str(data.get("title") or data.get("url") or action.url)
+        return f"fetched {title} · {len(str(data.get('content') or '')):,} characters"
     if action.action == "todo":
-        marks = {"completed": "x", "in_progress": ">", "pending": " "}
+        marks = {"completed": "x", "in_progress": ">", "pending": " ", "failed": "!"}
         return "\n".join(f"[{marks.get(item.status, ' ')}] {item.content}" for item in action.todos)
     return ""
 
@@ -1275,3 +1787,10 @@ def _tail(text: str) -> str:
         return "\n".join(lines)
     dropped = len(lines) - _COMMAND_OUTPUT_LINES
     return "\n".join([f"… {dropped} earlier line(s) …", *lines[-_COMMAND_OUTPUT_LINES:]])
+
+
+def _tool_result_summary(result: ToolResult) -> str:
+    data = result.data or {}
+    if not data:
+        return "ok"
+    return "; ".join(f"{key}: {value}" for key, value in data.items() if key != "content")[:2_000]

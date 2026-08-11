@@ -75,6 +75,17 @@ class ConversationSession(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), default="active")
 
 
+class ConversationState(Base, TimestampMixin):
+    """Mutable workspace state kept separate so old session tables remain compatible."""
+
+    __tablename__ = "conversation_states"
+    session_id: Mapped[str] = mapped_column(
+        ForeignKey("conversation_sessions.id"), primary_key=True
+    )
+    interaction_mode: Mapped[str] = mapped_column(String(32), default="ask")
+    todos: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+
+
 class ConversationMessage(Base, TimestampMixin):
     __tablename__ = "conversation_messages"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -262,3 +273,89 @@ class MemoryRecord(Base, TimestampMixin):
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     related_files: Mapped[list[str]] = mapped_column(JSON, default=list)
     human_approval_status: Mapped[str] = mapped_column(String(32), default="unreviewed")
+    # ``category``/``content``/``human_approval_status`` are retained for
+    # backwards compatibility with the original small memory store.  The
+    # fields below form the richer, typed memory envelope used by
+    # ``MemoryManager``.
+    memory_type: Mapped[str] = mapped_column(String(32), default="semantic", index=True)
+    task_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    session_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    importance: Mapped[float] = mapped_column(Float, default=0.5)
+    source_type: Mapped[str] = mapped_column(String(32), default="agent")
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    last_accessed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_verified: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
+    project_revision: Mapped[str | None] = mapped_column(String(64))
+    source_digest: Mapped[str | None] = mapped_column(String(128))
+    superseded_by: Mapped[str | None] = mapped_column(String(64), index=True)
+    rationale: Mapped[str] = mapped_column(Text, default="")
+
+
+class MemoryEmbedding(Base, TimestampMixin):
+    """Provider-neutral embedding payload kept separate from memory metadata."""
+
+    __tablename__ = "memory_embeddings"
+    memory_id: Mapped[str] = mapped_column(
+        ForeignKey("memory_records.id", ondelete="CASCADE"), primary_key=True
+    )
+    provider: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(255), default="")
+    dimensions: Mapped[int] = mapped_column(Integer)
+    vector: Mapped[list[float]] = mapped_column(JSON)
+
+
+class PersistentTaskState(Base, TimestampMixin):
+    """Incrementally persisted working state for crash-safe task continuation."""
+
+    __tablename__ = "persistent_task_states"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    mission_id: Mapped[str | None] = mapped_column(ForeignKey("missions.id"), index=True)
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("conversation_sessions.id"), index=True
+    )
+    original_request: Mapped[str] = mapped_column(Text)
+    interpreted_goal: Mapped[str] = mapped_column(Text, default="")
+    plan: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    completed_steps: Mapped[list[str]] = mapped_column(JSON, default=list)
+    current_step: Mapped[str] = mapped_column(Text, default="")
+    pending_steps: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    repository: Mapped[str] = mapped_column(Text)
+    branch: Mapped[str | None] = mapped_column(Text)
+    files_inspected: Mapped[list[str]] = mapped_column(JSON, default=list)
+    files_changed: Mapped[list[str]] = mapped_column(JSON, default=list)
+    commands_executed: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    important_outputs: Mapped[list[str]] = mapped_column(JSON, default=list)
+    test_status: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    unresolved_questions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    unresolved_problems: Mapped[list[str]] = mapped_column(JSON, default=list)
+    hypotheses: Mapped[list[str]] = mapped_column(JSON, default=list)
+    errors: Mapped[list[str]] = mapped_column(JSON, default=list)
+    last_action: Mapped[str] = mapped_column(Text, default="")
+    compacted_context: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class MemoryEpisode(Base, TimestampMixin):
+    """A compact, useful session outcome rather than a raw transcript."""
+
+    __tablename__ = "memory_episodes"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    session_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    task_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    goal: Mapped[str] = mapped_column(Text)
+    summary: Mapped[str] = mapped_column(Text)
+    major_actions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    discoveries: Mapped[list[str]] = mapped_column(JSON, default=list)
+    decisions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    files_changed: Mapped[list[str]] = mapped_column(JSON, default=list)
+    commands: Mapped[list[str]] = mapped_column(JSON, default=list)
+    test_results: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    errors: Mapped[list[str]] = mapped_column(JSON, default=list)
+    outcome: Mapped[str] = mapped_column(Text, default="")
+    unresolved_work: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
