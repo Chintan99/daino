@@ -1,4 +1,4 @@
-# Vasuki
+# Vasuki (D[AI]NO.AI)
 
 Vasuki is a local-first AI coding agent that lives in your terminal. Type an instruction and it
 reads the repository, edits files, runs your tests, and shows you the diff — in your working tree,
