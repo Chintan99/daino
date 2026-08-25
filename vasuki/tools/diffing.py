@@ -97,9 +97,12 @@ def render(diff: FileDiff) -> str:
     """Render a diff as the plain text stored in the conversation transcript."""
     width = max((len(str(line.number)) for line in diff.lines), default=3)
     body = [f"{line.number:>{width}} {line.marker} {line.text}" for line in diff.lines]
-    header = f"{diff.path}\n{summarize(diff)}"
+    summary = summarize(diff)
+    header = f"{diff.path}\n{summary}"
     if diff.note and diff.lines:
         body.append(f"… {diff.note}")
     elif diff.note:
-        return f"{header}\n{diff.note}"
+        # A note that is already the summary line must not be printed twice; a
+        # no-op write used to render as "No textual change." on both rows.
+        return header if diff.note == summary else f"{header}\n{diff.note}"
     return "\n".join([header, *body])

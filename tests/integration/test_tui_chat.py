@@ -106,7 +106,19 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
-        for word in ANSWER_WORDS:
+        # A reasoning observer now makes structured/tool-loop requests stream as
+        # well as ordinary answers. Mirror a real Chat Completions server by
+        # streaming the schema result as content fragments; returning prose for
+        # a JSON-schema request would correctly fail validation in production.
+        if any(
+            name in payload for name in ("response_format", "format", "guided_json")
+        ):
+            structured = json.dumps(self._structured_reply(payload))
+            midpoint = max(1, len(structured) // 2)
+            words = (structured[:midpoint], structured[midpoint:])
+        else:
+            words = ANSWER_WORDS
+        for word in words:
             chunk = {"choices": [{"delta": {"content": word}}]}
             self.wfile.write(f"data: {json.dumps(chunk)}\n\n".encode())
             self.wfile.flush()

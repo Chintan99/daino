@@ -519,13 +519,24 @@ async def test_todo_records_the_plan(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_a_new_project_gets_a_runtime_the_machine_can_use(tmp_path: Path) -> None:
-    """Defaulting to docker made every command fail wherever docker is unreachable."""
+def test_a_new_project_sandboxes_in_docker_when_the_daemon_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Docker is the default so agent commands run isolated from the machine."""
     from vasuki.config.models import RuntimeConfig
-    from vasuki.runtimes.detect import preferred_runtime
+    from vasuki.runtimes import detect
 
-    assert RuntimeConfig().default == "local"
-    assert preferred_runtime() == "local"
+    assert RuntimeConfig().default == "docker"
+    monkeypatch.setattr(detect, "docker_status", lambda: (True, ""))
+    assert detect.preferred_runtime() == "docker"
+
+
+def test_an_unreachable_docker_falls_back_to_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A container runtime the user cannot reach fails every command."""
+    from vasuki.runtimes import detect
+
+    monkeypatch.setattr(detect, "docker_status", lambda: (False, "daemon is not running"))
+    assert detect.preferred_runtime() == "local"
 
 
 def test_docker_permission_trouble_names_the_remedy(monkeypatch: pytest.MonkeyPatch) -> None:

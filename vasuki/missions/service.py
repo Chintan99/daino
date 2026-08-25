@@ -107,7 +107,19 @@ class MissionService:
             return False
         return self.settings.models[profile_name].provider in self.settings.providers
 
-    def create(self, request: str, mode: ProjectMode | None = None) -> Mission:
+    def create(
+        self,
+        request: str,
+        mode: ProjectMode | None = None,
+        *,
+        start_task: bool = True,
+    ) -> Mission:
+        """Open a mission. ``start_task=False`` leaves working memory to the caller.
+
+        A chat turn opens a mission per turn but must continue the session's
+        existing working memory, so it opts out of the fresh task this would
+        otherwise create.
+        """
         mission = Mission(
             id=new_id("mission"),
             project_id=self.database.project().id,
@@ -125,7 +137,7 @@ class MissionService:
                 mode=mission.mode,
             )
         )
-        if self.settings.memory.enabled and self.settings.memory.auto_save:
+        if start_task and self.settings.memory.enabled and self.settings.memory.auto_save:
             self.memory.start_task(
                 request,
                 mission_id=mission.id,
@@ -158,11 +170,11 @@ class MissionService:
         # Checked before any model call: a coding mission needs a worktree, so
         # planning one in a plain directory only bills the user for a plan that
         # cannot be executed.
-        if not self.workspace_manager.git.is_repository():
+        if not self.workspace_manager.git.ensure_repository():
             raise RuntimeError(
-                "Coding missions need a Git repository. Run `git init` in "
-                f"{self.root} and commit once, then retry. Plain questions work "
-                "without one."
+                "Coding missions need Git, and it is not usable here. Install Git "
+                f"or initialize {self.root} by hand, then retry. Plain questions "
+                "work without one."
             )
         self._update_mission(mission.id, status=MissionStatus.PLANNING.value)
         state = self.memory.task_for_mission(mission.id)
@@ -815,17 +827,36 @@ class MissionService:
         """Drive the iterative tool loop and audit every action it executes."""
         role = ModelRole.DEBUGGER if debugger else ModelRole.BUILDER
 
-        def observe(action: AgentAction, result: ToolResult, paths: list[str]) -> None:
-            subject = action.path or action.query or action.summary or action.action
-            tool_name = f"agent.{action.action}"
+        def started(action: AgentAction) -> None:
+            subject = (
+                action.path
+                or action.query
+                or action.command
+                or action.url
+                or action.pattern
+                or action.summary
+                or action.action.replace("_", " ")
+            )
             self.events.publish(
                 ToolStarted(
                     mission_id=workspace.mission_id,
-                    tool=tool_name,
+                    tool=f"agent.{action.action}",
                     summary=subject,
                     details={"task_id": spec.id, "role": role.value},
                 )
             )
+
+        def observe(action: AgentAction, result: ToolResult, paths: list[str]) -> None:
+            subject = (
+                action.path
+                or action.query
+                or action.command
+                or action.url
+                or action.pattern
+                or action.summary
+                or action.action.replace("_", " ")
+            )
+            tool_name = f"agent.{action.action}"
             if result.success:
                 self.events.publish(
                     ToolCompleted(
@@ -911,6 +942,7 @@ class MissionService:
             executor,
             debugger=debugger,
             attempts=attempts,
+            on_action_start=started,
         ).run(workspace.mission_id, context, on_action=observe)
         if not outcome.completed:
             raise RuntimeError(

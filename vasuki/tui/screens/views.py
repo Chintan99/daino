@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 import yaml
+from rich.markup import escape
 from rich.syntax import Syntax
 from textual import work
 from textual.app import ComposeResult
@@ -27,15 +29,23 @@ from textual.widgets import (
 from vasuki.application import (
     CheckpointApplicationService,
     DeploymentApplicationService,
+    ExecutionMapApplicationService,
     MissionApplicationService,
     ProviderApplicationService,
     RepositoryApplicationService,
     SettingsApplicationService,
 )
-from vasuki.application.view_models import OpenRouterModel, ProviderStatus
+from vasuki.application.view_models import (
+    ExecutionTrace,
+    ExecutionTraceStep,
+    OpenRouterModel,
+    ProviderStatus,
+)
+from vasuki.events import MissionEvent
 from vasuki.observability import AuditLog
 from vasuki.playbooks import PlaybookLoader
 from vasuki.schemas import QAReport
+from vasuki.security import redact
 from vasuki.tui.highlight import highlight_unified_diff
 from vasuki.tui.keybindings import SHORTCUTS, SLASH_COMMANDS
 
@@ -360,15 +370,19 @@ class DiffView(ViewPanel):
         if mission_id:
             self.mission_id = mission_id
         staged = self.query_one("#diff-mode", Select).value == "staged"
+        if not self.service.has_git():
+            # Nothing is wrong here: a directory that was never initialized has
+            # no diff to show. What the agent wrote is still known, so it is
+            # listed rather than reported as a Git error.
+            self.show_written_files()
+            return
         try:
             diff = self.service.diff(
                 staged=staged,
                 mission_id=self.mission_id,
             )
-        except Exception as exc:
-            self.query_one("#diff-content", Static).update(
-                Content.assemble(("Diff unavailable: ", "bold"), str(exc))
-            )
+        except Exception:
+            self.show_written_files()
             return
         added = sum(
             1 for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")
@@ -381,6 +395,25 @@ class DiffView(ViewPanel):
             f"{files} files  [b]+{added}[/b]  [b]-{removed}[/b]"
         )
         self.query_one("#diff-content", Static).update(highlight_unified_diff(diff))
+
+    def show_written_files(self) -> None:
+        """List the files the agent created or edited, with no Git involved."""
+        written = self.service.written_files(self.mission_id)
+        if not written:
+            self.query_one("#diff-stats", Static).update("0 files")
+            self.query_one("#diff-content", Static).update(
+                "No files have been created or edited yet."
+            )
+            return
+        lines = [
+            f"{item['action']:>10}  {item['path']}"
+            + (f"  ({item['lines']} lines)" if item["exists"] else "  (removed)")
+            for item in written
+        ]
+        self.query_one("#diff-stats", Static).update(
+            f"{len(written)} file(s) written · no Git repository, showing files instead of a diff"
+        )
+        self.query_one("#diff-content", Static).update(Content("\n".join(lines)))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "refresh-diff":
@@ -527,19 +560,28 @@ class DeploymentsView(ViewPanel):
         )
 
 
+#: Provider types that report their own model list, mapped to what the picker
+#: calls that list. Everything else takes a typed identifier.
+CATALOG_PROVIDERS = {
+    "openrouter": "the OpenRouter model catalog",
+    "ollama": "the models installed on this Ollama",
+}
+
+
 class ProvidersView(ViewPanel):
     title = "Providers and models"
 
     def __init__(self, service: ProviderApplicationService) -> None:
         super().__init__(id="providers-view")
         self.service = service
-        self._openrouter_models: list[OpenRouterModel] = []
+        self._catalog_models: list[OpenRouterModel] = []
         self._configured_provider: ProviderStatus | None = self._active_provider()
         self._preferred_openrouter_model = (
             self._configured_provider.model
             if self._configured_provider and self._configured_provider.type == "openrouter"
             else ""
         )
+        self.scope = "project"
 
     def _active_provider(self) -> ProviderStatus | None:
         """Prefer the provider the agent roles actually route to over an arbitrary one."""
@@ -605,7 +647,7 @@ class ProvidersView(ViewPanel):
                     )
                     yield Select(
                         [],
-                        prompt="Select an OpenRouter model",
+                        prompt="Select a model",
                         id="provider-model-select",
                         classes="hidden",
                     )
@@ -617,6 +659,7 @@ class ProvidersView(ViewPanel):
                         id="provider-secret",
                     )
             with Horizontal(id="provider-actions"):
+                yield Button("Use global settings", id="use-global-provider")
                 yield Button(
                     "Refresh models",
                     id="refresh-provider-models",
@@ -624,7 +667,7 @@ class ProvidersView(ViewPanel):
                 )
                 yield Button("Validate + save", id="save-provider", variant="primary")
             yield Static(
-                "Choose a provider type. OpenRouter keys are validated before saving.",
+                "Project provider settings. OpenRouter and Ollama list their own models.",
                 id="provider-form-status",
             )
         yield DataTable(id="providers-table")
@@ -642,16 +685,29 @@ class ProvidersView(ViewPanel):
         )
         self.refresh_data()
 
+    def set_scope(self, scope: str) -> None:
+        if scope not in {"project", "global"}:
+            raise ValueError(f"Unknown provider scope {scope}")
+        self.scope = scope
+        global_scope = scope == "global"
+        self.query_one("#use-global-provider", Button).display = not global_scope
+        self.query_one("#provider-form-status", Static).update(
+            "Global provider settings shared by every project."
+            if global_scope
+            else "Project provider settings. Choose Use global settings to remove overrides."
+        )
+
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "provider-type":
             self.apply_provider_type(str(event.value))
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "provider-model-search":
-            self.filter_openrouter_models(event.value)
+            self.filter_catalog_models(event.value)
 
     def apply_provider_type(self, provider_type: str, *, fetch: bool = True) -> None:
         openrouter = provider_type == "openrouter"
+        listable = provider_type in CATALOG_PROVIDERS
         name = self.query_one("#provider-name", Input)
         base_url = self.query_one("#provider-base-url", Input)
         model_input = self.query_one("#provider-model", Input)
@@ -676,14 +732,7 @@ class ProvidersView(ViewPanel):
                 name.value = "openrouter"
             if base_url.value in known_urls:
                 base_url.value = "https://openrouter.ai/api/v1"
-            model_input.add_class("hidden")
-            model_search.remove_class("hidden")
-            model_select.remove_class("hidden")
-            refresh.remove_class("hidden")
             secret.placeholder = "Paste OpenRouter API key or secret reference"
-            self.set_save_state("Fetching the OpenRouter model catalog…", busy=False)
-            if fetch:
-                self.load_openrouter_models()
         else:
             default_name, default_url = local_defaults.get(
                 provider_type, local_defaults["openai-compatible"]
@@ -692,81 +741,113 @@ class ProvidersView(ViewPanel):
                 name.value = default_name
             if base_url.value in known_urls:
                 base_url.value = default_url
+            secret.placeholder = "Secret reference (optional)"
+        if listable:
+            # Ollama names its models by tag — "qwen3.8:27b-mlx" — which nobody
+            # recalls exactly, and a near miss only fails at the first request.
+            # Listing what the provider actually has makes it a choice.
+            model_input.add_class("hidden")
+            model_search.remove_class("hidden")
+            model_select.remove_class("hidden")
+            refresh.remove_class("hidden")
+            model_select.prompt = f"Select from {CATALOG_PROVIDERS[provider_type]}"
+            self._catalog_models = []
+            model_select.set_options([])
+            self.set_save_state(f"Loading {CATALOG_PROVIDERS[provider_type]}…", busy=False)
+            if fetch:
+                self.load_catalog_models()
+        else:
             model_search.add_class("hidden")
             model_select.add_class("hidden")
             model_input.remove_class("hidden")
             refresh.add_class("hidden")
-            secret.placeholder = "Secret reference (optional)"
             self.set_save_state(
                 "Local and compatible providers accept a model identifier and optional "
                 "secret reference.",
                 busy=False,
             )
 
-    @work(exclusive=True, group="openrouter-models")
-    async def load_openrouter_models(self) -> None:
-        if str(self.query_one("#provider-type", Select).value) != "openrouter":
+    @work(exclusive=True, group="catalog-models")
+    async def load_catalog_models(self) -> None:
+        provider_type = str(self.query_one("#provider-type", Select).value)
+        label = CATALOG_PROVIDERS.get(provider_type)
+        if label is None:
             return
-        self.set_save_state("Fetching all available OpenRouter models…", busy=True)
+        self.set_save_state(f"Loading {label}…", busy=True)
         try:
-            models = await self.service.openrouter_models(
-                api_key_input=self.query_one("#provider-secret", Input).value,
-                base_url=self.query_one("#provider-base-url", Input).value,
-            )
+            if provider_type == "ollama":
+                models = await self.service.ollama_models(
+                    base_url=self.query_one("#provider-base-url", Input).value,
+                )
+            else:
+                models = await self.service.openrouter_models(
+                    api_key_input=self.query_one("#provider-secret", Input).value,
+                    base_url=self.query_one("#provider-base-url", Input).value,
+                )
         except Exception as exc:
-            self.set_save_state(f"Could not load OpenRouter models: {exc}", busy=False)
+            # A provider that cannot be listed must not leave the form with no
+            # way to name a model, so the free-text field comes back.
+            self.allow_typed_model(f"Could not load {label}: {exc}")
             return
-        if str(self.query_one("#provider-type", Select).value) != "openrouter":
+        if str(self.query_one("#provider-type", Select).value) != provider_type:
             return
-        self.set_openrouter_models(
-            models,
-            selected=self._preferred_openrouter_model,
-        )
+        self.set_catalog_models(models, selected=self._preferred_openrouter_model)
         self._preferred_openrouter_model = ""
-        self.set_save_state(f"Loaded {len(models)} OpenRouter models.", busy=False)
+        self.set_save_state(f"Loaded {len(models)} model(s).", busy=False)
+
+    def allow_typed_model(self, reason: str) -> None:
+        """Fall back to a typed identifier when the catalog is unreachable."""
+        self.query_one("#provider-model-search", Input).add_class("hidden")
+        self.query_one("#provider-model-select", Select).add_class("hidden")
+        self.query_one("#provider-model", Input).remove_class("hidden")
+        self.set_save_state(f"{reason} Enter the model identifier instead.", busy=False)
+
+    # Kept as the name the provider screen's Refresh button and tests use.
+    def load_openrouter_models(self) -> None:
+        self.load_catalog_models()
 
     def ensure_openrouter_models(self) -> None:
-        if not self._openrouter_models:
-            self.load_openrouter_models()
+        if not self._catalog_models:
+            self.load_catalog_models()
 
-    def set_openrouter_models(
+    def set_catalog_models(
         self,
         models: list[OpenRouterModel],
         *,
         selected: str = "",
     ) -> None:
-        self._openrouter_models = models
+        self._catalog_models = models
         selector = self.query_one("#provider-model-select", Select)
         previous = selected or (str(selector.value) if selector.value is not Select.BLANK else "")
         query = self.query_one("#provider-model-search", Input).value
-        filtered = self._matching_openrouter_models(query)
+        filtered = self._matching_catalog_models(query)
         selector.set_options([(item.label, item.id) for item in filtered])
         available = {item.id for item in filtered}
         if previous in available:
             selector.value = previous
 
-    def filter_openrouter_models(self, query: str) -> None:
+    def filter_catalog_models(self, query: str) -> None:
         selector = self.query_one("#provider-model-select", Select)
         previous = str(selector.value) if selector.value is not Select.BLANK else ""
-        models = self._matching_openrouter_models(query)
+        models = self._matching_catalog_models(query)
         selector.set_options([(item.label, item.id) for item in models])
         available = {item.id for item in models}
         if previous in available:
             selector.value = previous
-        total = len(self._openrouter_models)
+        total = len(self._catalog_models)
         self.query_one("#provider-form-status", Static).update(
-            f"Showing {len(models)} of {total} OpenRouter models."
+            f"Showing {len(models)} of {total} model(s)."
             if query.strip()
-            else f"Loaded {total} OpenRouter models."
+            else f"Loaded {total} model(s)."
         )
 
-    def _matching_openrouter_models(self, query: str) -> list[OpenRouterModel]:
+    def _matching_catalog_models(self, query: str) -> list[OpenRouterModel]:
         terms = query.casefold().split()
         if not terms:
-            return self._openrouter_models
+            return self._catalog_models
         return [
             model
-            for model in self._openrouter_models
+            for model in self._catalog_models
             if all(term in f"{model.name} {model.id}".casefold() for term in terms)
         ]
 
@@ -825,11 +906,12 @@ class ProvidersView(ViewPanel):
 
     def pending_provider(self) -> dict[str, str]:
         provider_type = str(self.query_one("#provider-type", Select).value)
-        selected_model = self.query_one("#provider-model-select", Select).value
+        selector = self.query_one("#provider-model-select", Select)
+        typed = self.query_one("#provider-model", Input).value.strip()
         model = (
-            ("" if selected_model is Select.BLANK else str(selected_model))
-            if provider_type == "openrouter"
-            else self.query_one("#provider-model", Input).value.strip()
+            ("" if selector.value is Select.BLANK else str(selector.value))
+            if provider_type in CATALOG_PROVIDERS and not selector.has_class("hidden")
+            else typed
         )
         return {
             "name": self.query_one("#provider-name", Input).value.strip(),
@@ -891,9 +973,16 @@ class LogsView(ViewPanel):
     def __init__(self, root: Path) -> None:
         super().__init__(id="logs-view")
         self.audit_log = AuditLog(root)
+        self._live_label = "Idle — waiting for the next prompt"
+        self._live_started = 0.0
+        self._live_active = False
 
     def compose(self) -> ComposeResult:
         yield from super().compose()
+        yield Label("Live activity", classes="section-title")
+        yield Static(self._live_label, id="log-live-state")
+        yield RichLog(id="log-live-content", wrap=True, markup=True, max_lines=120)
+        yield Label("Recorded audit log", classes="section-title")
         with Horizontal(classes="toolbar"):
             yield Select(
                 [("Summary", "summary"), ("Detailed", "detailed"), ("Raw", "raw")],
@@ -904,7 +993,57 @@ class LogsView(ViewPanel):
         yield RichLog(id="log-content", wrap=True, markup=True)
 
     def on_mount(self) -> None:
+        self.set_interval(1.0, self._update_live_elapsed)
         self.refresh_data()
+
+    def record_event(self, event: MissionEvent, *, verbose: bool = False) -> None:
+        """Append one structured event to the live pane without exposing model thoughts."""
+        if event.kind == "ModelReasoningChunk":
+            # Reasoning chunks can arrive many times per second. The chat owns
+            # their transient text; Logs exposes only one coalesced safe state
+            # and never appends chunk content (or one line per chunk).
+            label = "Model reasoning…" if verbose else "Working…"
+            if label != self._live_label or not self._live_active:
+                self._live_label = label
+                self._live_started = monotonic()
+                self._live_active = True
+                self._update_live_elapsed()
+            return
+        summary = _live_event_summary(event)
+        if not summary or not self.is_mounted:
+            return
+        summary = redact(summary)
+        self._live_label = summary
+        self._live_started = monotonic()
+        self._live_active = event.kind not in {
+            "MissionCompleted",
+            "MissionFailed",
+        }
+        self._update_live_elapsed()
+        timestamp = event.timestamp.strftime("%H:%M:%S")
+        self.query_one("#log-live-content", RichLog).write(
+            f"[dim]{timestamp}[/dim] {escape(summary)}"
+        )
+
+    def finish_activity(self, summary: str) -> None:
+        """Mark a direct chat/answer worker complete when it has no mission terminal event."""
+        if not self.is_mounted:
+            return
+        self._live_label = redact(summary)
+        self._live_active = False
+        self._live_started = monotonic()
+        self._update_live_elapsed()
+        self.query_one("#log-live-content", RichLog).write(escape(self._live_label))
+
+    def _update_live_elapsed(self) -> None:
+        if not self.is_mounted:
+            return
+        elapsed = (
+            f" · {max(0, int(monotonic() - self._live_started))}s"
+            if self._live_active and self._live_started
+            else ""
+        )
+        self.query_one("#log-live-state", Static).update(f"{self._live_label}{elapsed}")
 
     def refresh_data(self, query: str = "") -> None:
         view = self.query_one("#log-content", RichLog)
@@ -915,21 +1054,21 @@ class LogsView(ViewPanel):
             if query and query.lower() not in rendered.lower():
                 continue
             if mode == "raw":
-                view.write(rendered)
+                view.write(escape(rendered))
             elif mode == "detailed":
                 detail = {
                     key: value for key, value in event.items() if key not in {"timestamp", "event"}
                 }
                 view.write(
-                    f"[dim]{event.get('timestamp', '')}[/dim] "
-                    f"[b]{event.get('event', 'event')}[/b] "
-                    f"{json.dumps(detail, default=str)}"
+                    f"[dim]{escape(str(event.get('timestamp', '')))}[/dim] "
+                    f"[b]{escape(str(event.get('event', 'event')))}[/b] "
+                    f"{escape(json.dumps(detail, default=str))}"
                 )
             else:
                 view.write(
-                    f"[dim]{str(event.get('timestamp', ''))[11:19]}[/dim] "
-                    f"{event.get('event', 'event')} "
-                    f"{event.get('mission_id', '') or ''}"
+                    f"[dim]{escape(str(event.get('timestamp', ''))[11:19])}[/dim] "
+                    f"{escape(str(event.get('event', 'event')))} "
+                    f"{escape(str(event.get('mission_id', '') or ''))}"
                 )
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -939,6 +1078,212 @@ class LogsView(ViewPanel):
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "log-mode":
             self.refresh_data(self.query_one("#log-filter", Input).value)
+
+
+def _live_event_summary(event: MissionEvent) -> str:
+    """Render only safe operational facts from a mission event."""
+    kind = event.kind
+    if kind in {"ModelStreamChunk", "ModelReasoningChunk"}:
+        return ""
+    if kind == "MissionCreated":
+        return "Understanding the prompt"
+    if kind == "AgentRoleChanged":
+        return f"{str(getattr(event, 'role', 'agent')).title()} preparing the next action"
+    if kind == "ModelSelected":
+        role = str(getattr(event, "role", "agent")).title()
+        model = str(getattr(event, "model", "model"))
+        return f"{role} using {model} to generate the next action"
+    if kind in {"ToolStarted", "ToolProgress", "ToolCompleted"}:
+        tool = str(getattr(event, "tool", "tool")).removeprefix("agent.")
+        summary = str(getattr(event, "summary", ""))
+        suffix = " completed; deciding the next action" if kind == "ToolCompleted" else ""
+        return f"{tool}: {summary}{suffix}".strip()
+    if kind == "ToolFailed":
+        return f"{getattr(event, 'tool', 'tool')} failed: {getattr(event, 'error', '')}"
+    if kind == "TaskStarted":
+        return f"Task started: {getattr(event, 'title', '')}"
+    if kind == "TaskCompleted":
+        return f"Task completed: {getattr(event, 'title', '')}"
+    if kind == "FileChanged":
+        return f"Changed {getattr(event, 'path', '')}"
+    if kind == "TestsStarted":
+        commands = list(getattr(event, "commands", []))
+        return f"Running {len(commands)} verification command(s)"
+    if kind == "TestsCompleted":
+        return (
+            f"Verification {'passed' if getattr(event, 'passed', False) else 'failed'}: "
+            f"{getattr(event, 'passed_count', 0)} passed, "
+            f"{getattr(event, 'failed_count', 0)} failed"
+        )
+    if kind == "MissionCompleted":
+        return "Prompt completed"
+    if kind == "MissionFailed":
+        return f"Prompt failed: {getattr(event, 'error', '')}"
+    if kind == "TeamMemberStarted":
+        return f"Team member {getattr(event, 'member', '')} started"
+    if kind == "TeamMemberCompleted":
+        return f"Team member {getattr(event, 'member', '')} completed"
+    if kind.startswith("Deployment"):
+        return f"Deployment: {getattr(event, 'stage', kind.replace('Deployment', ''))}"
+    return kind.replace("_", " ")
+
+
+class ExecutionMapView(ViewPanel):
+    """Clickable prompt index and a chronological execution graph."""
+
+    title = "Prompt execution map"
+
+    def __init__(self, service: ExecutionMapApplicationService) -> None:
+        super().__init__(id="map-view")
+        self.service = service
+        self.selected_mission_id = ""
+
+    def compose(self) -> ComposeResult:
+        yield from super().compose()
+        yield Static(
+            "Select a prompt to inspect models, tools, tests, timing, tokens, and cost. "
+            "The map uses structured audit events and never private chain-of-thought.",
+            classes="hint",
+        )
+        with Horizontal(id="execution-map-layout"):
+            with Vertical(id="map-prompt-panel"):
+                yield Label("Prompts", classes="section-title")
+                yield DataTable(id="map-prompts", cursor_type="row")
+            with Vertical(id="map-trace-panel"):
+                yield Static("Select a prompt", id="map-trace-summary")
+                yield VerticalScroll(Static("", id="map-graph"), id="map-graph-scroll")
+
+    def on_mount(self) -> None:
+        self.query_one("#map-prompts", DataTable).add_columns(
+            "Started", "Prompt", "Status", "Tokens", "Steps"
+        )
+        self.refresh_data()
+
+    def refresh_data(self) -> None:
+        prompts = self.service.prompts()
+        table = self.query_one("#map-prompts", DataTable)
+        table.clear()
+        for prompt in prompts:
+            table.add_row(
+                prompt.created_at.strftime("%m-%d %H:%M"),
+                prompt.title,
+                prompt.status.replace("_", " ").upper(),
+                f"{prompt.total_tokens:,}",
+                str(prompt.step_count),
+                key=prompt.mission_id,
+            )
+        if not prompts:
+            self.selected_mission_id = ""
+            self.query_one("#map-trace-summary", Static).update("No prompts recorded yet")
+            self.query_one("#map-graph", Static).update(
+                "Send a prompt in Chat; its audited execution graph will appear here."
+            )
+            return
+        available = {prompt.mission_id for prompt in prompts}
+        if self.selected_mission_id not in available:
+            self.selected_mission_id = prompts[0].mission_id
+        self.refresh_selected()
+
+    def refresh_selected(self) -> None:
+        if not self.selected_mission_id:
+            return
+        try:
+            trace = self.service.trace(self.selected_mission_id)
+        except ValueError as exc:
+            self.query_one("#map-trace-summary", Static).update(str(exc))
+            return
+        self.query_one("#map-trace-summary", Static).update(_trace_summary(trace))
+        self.query_one("#map-graph", Static).update(_render_execution_graph(trace))
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "map-prompts":
+            return
+        self._select_prompt(str(event.row_key.value))
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id != "map-prompts" or event.row_key.value is None:
+            return
+        self._select_prompt(str(event.row_key.value))
+
+    def _select_prompt(self, mission_id: str) -> None:
+        if mission_id == self.selected_mission_id:
+            return
+        self.selected_mission_id = mission_id
+        self.refresh_selected()
+        self.query_one("#map-graph-scroll", VerticalScroll).scroll_home(animate=False)
+
+
+def _trace_summary(trace: ExecutionTrace) -> Content:
+    return Content.assemble(
+        (trace.request, "bold"),
+        "\n",
+        f"{trace.status.replace('_', ' ').upper()}  •  "
+        f"{len(trace.steps)} steps  •  {trace.model_call_count} model  •  "
+        f"{trace.tool_count} tools  •  {trace.total_tokens:,} tokens  •  "
+        f"{_trace_cost(trace.estimated_cost)}",
+    )
+
+
+def _render_execution_graph(trace: ExecutionTrace) -> Content:
+    parts: list[str | tuple[str, str]] = [
+        ("● PROMPT", "bold cyan"),
+        f"  {trace.created_at.strftime('%H:%M:%S')}  {trace.request}\n",
+    ]
+    if not trace.steps:
+        parts.extend(["│\n", ("└─ No execution steps recorded", "dim")])
+        return Content.assemble(*parts)
+    for index, step in enumerate(trace.steps, start=1):
+        last = index == len(trace.steps)
+        branch = "└─" if last else "├─"
+        continuation = "  " if last else "│ "
+        colour = _step_colour(step)
+        parts.extend(
+            [
+                "│\n",
+                (f"{branch} {index:02d} {_step_label(step)}", f"bold {colour}"),
+                f"  [{step.status.upper()}]  {step.timestamp.strftime('%H:%M:%S')}\n",
+            ]
+        )
+        if step.detail:
+            parts.append(f"{continuation}   {step.detail}\n")
+        if step.target and step.target != step.detail:
+            parts.append(f"{continuation}   target {step.target}\n")
+        if step.model_usage is not None:
+            usage = step.model_usage
+            parts.append(
+                f"{continuation}   tokens {usage.input_tokens:,} in + "
+                f"{usage.output_tokens:,} out = {usage.total_tokens:,}  •  "
+                f"{_trace_cost(usage.estimated_cost)}  •  "
+                f"{usage.latency_ms / 1000:.2f}s\n"
+            )
+        else:
+            duration = f"{step.duration_seconds:.2f}s" if step.duration_seconds else "instant"
+            parts.append(f"{continuation}   tokens —  •  {duration}\n")
+    return Content.assemble(*parts)
+
+
+def _step_label(step: ExecutionTraceStep) -> str:
+    return f"{step.kind.upper()}  {step.title}"
+
+
+def _step_colour(step: ExecutionTraceStep) -> str:
+    if step.status.casefold() in {"failed", "error", "blocked"}:
+        return "red"
+    return {
+        "model": "magenta",
+        "tool": "cyan",
+        "tests": "yellow",
+        "verification": "yellow",
+        "file": "green",
+    }.get(step.kind.casefold(), "white")
+
+
+def _trace_cost(value: float) -> str:
+    if value <= 0:
+        return "$0.0000"
+    if value < 0.0001:
+        return f"${value:.10f}".rstrip("0")
+    return f"${value:.4f}"
 
 
 class ApprovalsView(ViewPanel):

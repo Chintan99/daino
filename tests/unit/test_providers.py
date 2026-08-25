@@ -35,6 +35,13 @@ def response(content: str) -> httpx.Response:
     )
 
 
+def stream_response(*events: dict[str, Any]) -> httpx.Response:
+    body = "\n\n".join(
+        [*(f"data: {json.dumps(event)}" for event in events), "data: [DONE]", ""]
+    )
+    return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+
 @pytest.mark.asyncio
 async def test_openai_compatible_complete_and_health() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
@@ -106,6 +113,49 @@ async def test_openrouter_headers_and_vllm_empty_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reasoning_effort_uses_provider_specific_wire_format() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return response("ok")
+
+    transport = httpx.MockTransport(handler)
+    compatible = OpenAICompatibleProvider(
+        name="compatible",
+        base_url="https://compatible.invalid/v1",
+        api_key="",
+        model="reasoning-model",
+        reasoning_effort="high",
+        transport=transport,
+    )
+    openrouter = OpenRouterProvider(
+        api_key="secret",
+        model="openai/reasoning-model",
+        reasoning_effort="low",
+        transport=transport,
+    )
+    ollama = OllamaProvider(
+        model="qwen3",
+        reasoning_effort="medium",
+        transport=transport,
+    )
+
+    await compatible.complete([Message(role="user", content="test")])
+    await openrouter.complete([Message(role="user", content="test")])
+    await ollama.complete([Message(role="user", content="test")])
+    await compatible.close()
+    await openrouter.close()
+    await ollama.close()
+
+    assert seen[0]["reasoning_effort"] == "high"
+    assert "reasoning" not in seen[0]
+    assert seen[1]["reasoning"] == {"effort": "low"}
+    assert "reasoning_effort" not in seen[1]
+    assert seen[2]["reasoning_effort"] == "medium"
+
+
+@pytest.mark.asyncio
 async def test_openrouter_captures_provider_reported_cost() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         result = response("ok")
@@ -152,6 +202,252 @@ async def test_openrouter_captures_usage_from_final_stream_chunk() -> None:
     assert provider.last_usage.output_tokens == 3
     assert provider.last_usage.cost == pytest.approx(0.0042)
     await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_ollama_stream_forwards_delta_reasoning_but_yields_only_answer() -> None:
+    seen: list[dict[str, Any]] = []
+    reasoning: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return stream_response(
+            {
+                "model": "qwen3.8:27b-mlx",
+                "choices": [
+                    {"index": 0, "delta": {"content": "", "reasoning": "Inspect"}}
+                ],
+            },
+            {
+                "model": "qwen3.8:27b-mlx",
+                "choices": [
+                    {"index": 0, "delta": {"content": "", "reasoning": " files"}}
+                ],
+            },
+            {
+                "model": "qwen3.8:27b-mlx",
+                "choices": [{"index": 0, "delta": {"content": "Done"}}],
+            },
+            {
+                "choices": [],
+                "usage": {"prompt_tokens": 9, "completion_tokens": 3, "cost": 0.0},
+            },
+        )
+
+    provider = OllamaProvider(
+        model="qwen3.8:27b-mlx", transport=httpx.MockTransport(handler)
+    )
+    provider.set_reasoning_handler(reasoning.append)
+    chunks = [chunk async for chunk in provider.stream([Message(role="user", content="x")])]
+    await provider.close()
+
+    assert chunks == ["Done"]
+    assert reasoning == ["Inspect", " files"]
+    assert seen[0]["stream"] is True
+    assert seen[0]["stream_options"] == {"include_usage": True}
+    assert provider.last_usage == provider.last_usage.__class__(
+        input_tokens=9, output_tokens=3, cost=0.0
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_streams_reasoning_and_reconstructs_fragmented_tool_calls() -> None:
+    reasoning: list[str] = []
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return stream_response(
+            {
+                "model": "qwen3.8:27b-mlx",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "reasoning": "I should inspect app.py.",
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_7",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read_",
+                                        "arguments": '{"path":"',
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": None,
+                    }
+                ],
+            },
+            {
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {"name": "file", "arguments": 'app.py"}'},
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            },
+            {
+                "choices": [],
+                "usage": {"prompt_tokens": 12, "completion_tokens": 7, "cost": 0.002},
+            },
+        )
+
+    provider = OllamaProvider(
+        model="qwen3.8:27b-mlx", transport=httpx.MockTransport(handler)
+    )
+    provider.set_reasoning_handler(reasoning.append)
+    result = await provider.complete(
+        [Message(role="user", content="inspect")],
+        tools=[{"type": "function", "function": {"name": "read_file"}}],
+        tool_choice="required",
+    )
+    await provider.close()
+
+    assert seen[0]["stream"] is True
+    assert reasoning == ["I should inspect app.py."]
+    assert result.finish_reason == "tool_calls"
+    assert result.model == "qwen3.8:27b-mlx"
+    assert result.tool_calls == [
+        ToolCall(id="call_7", name="read_file", arguments={"path": "app.py"})
+    ]
+    assert (result.input_tokens, result.output_tokens) == (12, 7)
+    assert provider.last_usage.cost == pytest.approx(0.002)
+
+
+@pytest.mark.asyncio
+async def test_structured_completion_streams_reasoning_and_json_fragments() -> None:
+    reasoning: list[str] = []
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return stream_response(
+            {
+                "model": "qwen3",
+                "choices": [
+                    {"index": 0, "delta": {"thinking": "Check the schema. "}}
+                ],
+            },
+            {
+                "model": "qwen3",
+                "choices": [{"index": 0, "delta": {"content": '{"val'}}],
+            },
+            {
+                "model": "qwen3",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"reasoning_content": "Return an integer."},
+                    }
+                ],
+            },
+            {
+                "model": "qwen3",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": 'ue":42}'},
+                        "finish_reason": "stop",
+                    }
+                ],
+            },
+            {
+                "choices": [],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 8},
+            },
+        )
+
+    provider = OllamaProvider(model="qwen3", transport=httpx.MockTransport(handler))
+    provider.set_reasoning_handler(reasoning.append)
+    result = await provider.structured_complete(
+        [Message(role="user", content="answer")], Answer
+    )
+    await provider.close()
+
+    assert result.value == 42
+    assert reasoning == ["Check the schema. ", "Return an integer."]
+    assert provider.last_usage.input_tokens == 20
+    assert provider.last_usage.output_tokens == 8
+
+
+@pytest.mark.parametrize("field_name", ["reasoning", "reasoning_content", "thinking"])
+@pytest.mark.asyncio
+async def test_json_fallback_forwards_nonstream_reasoning_alias_once(field_name: str) -> None:
+    seen: list[dict[str, Any]] = []
+    reasoning: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        result = response("done")
+        payload = json.loads(result.content)
+        payload["choices"][0]["message"][field_name] = "provider reasoning"
+        return httpx.Response(200, json=payload)
+
+    provider = OpenAICompatibleProvider(
+        name="compatible",
+        base_url="https://compatible.invalid/v1",
+        api_key="",
+        model="reasoning-model",
+        transport=httpx.MockTransport(handler),
+    )
+    provider.set_reasoning_handler(reasoning.append)
+    result = await provider.complete([Message(role="user", content="test")])
+    await provider.close()
+
+    assert seen[0]["stream"] is True
+    assert result.content == "done"
+    assert reasoning == ["provider reasoning"]
+
+
+@pytest.mark.asyncio
+async def test_reasoning_stream_retries_once_without_unsupported_usage_option() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        seen.append(payload)
+        if "stream_options" in payload:
+            return httpx.Response(400, json={"error": "unknown field stream_options"})
+        return stream_response(
+            {
+                "model": "legacy",
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"reasoning": "thinking", "content": "done"},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+
+    provider = OpenAICompatibleProvider(
+        name="legacy",
+        base_url="https://legacy.invalid/v1",
+        api_key="",
+        model="legacy",
+        max_retries=0,
+        transport=httpx.MockTransport(handler),
+    )
+    reasoning: list[str] = []
+    provider.set_reasoning_handler(reasoning.append)
+    result = await provider.complete([Message(role="user", content="x")])
+    await provider.close()
+
+    assert len(seen) == 2
+    assert seen[0]["stream_options"] == {"include_usage": True}
+    assert "stream_options" not in seen[1]
+    assert result.content == "done"
+    assert reasoning == ["thinking"]
 
 
 @pytest.mark.asyncio
@@ -376,11 +672,13 @@ def test_factory_builds_ollama_provider_with_default_features() -> None:
             type="ollama",
             base_url="http://127.0.0.1:11434/v1",
             model="qwen2.5-coder",
+            reasoning_effort="high",
         ),
     )
     assert isinstance(provider, OllamaProvider)
     assert provider.supports_tools() is True
     assert provider.supports_json_schema() is True
+    assert provider.reasoning_effort == "high"
 
 
 def _truncated_json_reply(request: httpx.Request) -> httpx.Response:
@@ -479,3 +777,95 @@ def test_output_token_default_is_large_enough_for_a_real_file() -> None:
     assert ProviderConfig(type="ollama", base_url="http://x/v1", model="m").max_output_tokens == (
         DEFAULT_MAX_OUTPUT_TOKENS
     )
+
+
+# --------------------------------------------------------------------------
+# Listing the models a provider actually has
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ollama_lists_installed_models_from_the_native_endpoint() -> None:
+    """The picker needs sizes and capabilities, which only /api/tags carries."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "name": "qwen3.8:27b-mlx",
+                        "model": "qwen3.8:27b-mlx",
+                        "size": 18174721847,
+                        "details": {"parameter_size": "27B", "quantization_level": "nvfp4"},
+                        "capabilities": ["completion", "tools"],
+                    }
+                ]
+            },
+        )
+
+    provider = OllamaProvider(model="", transport=httpx.MockTransport(handler))
+    try:
+        items = await provider.list_models()
+    finally:
+        await provider.close()
+
+    assert seen == ["http://127.0.0.1:11434/api/tags"]
+    assert items[0]["model"] == "qwen3.8:27b-mlx"
+
+
+@pytest.mark.asyncio
+async def test_ollama_falls_back_to_the_openai_model_endpoint() -> None:
+    """Not every Ollama-compatible server serves the native tags endpoint."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(404)
+        return httpx.Response(200, json={"data": [{"id": "llama3.2"}]})
+
+    provider = OllamaProvider(model="", transport=httpx.MockTransport(handler))
+    try:
+        items = await provider.list_models()
+    finally:
+        await provider.close()
+
+    assert items == [{"id": "llama3.2"}]
+
+
+@pytest.mark.asyncio
+async def test_an_ollama_with_no_models_says_how_to_pull_one() -> None:
+    provider = OllamaProvider(
+        model="",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"models": []})),
+    )
+    with pytest.raises(ProviderError, match="ollama pull"):
+        try:
+            await provider.list_models()
+        finally:
+            await provider.close()
+
+
+def test_installed_ollama_models_are_shaped_for_the_picker() -> None:
+    """A bare tag is unreadable; size and capabilities make it a choice."""
+    from vasuki.application.provider_service import ProviderApplicationService
+
+    models = ProviderApplicationService._ollama_models(
+        [
+            {
+                "model": "qwen3.8:27b-mlx",
+                "size": 18174721847,
+                "details": {"parameter_size": "27B", "quantization_level": "nvfp4"},
+                "capabilities": ["tools", "thinking"],
+            },
+            {"model": ""},
+        ]
+    )
+
+    assert len(models) == 1, "an entry with no identifier is not selectable"
+    assert models[0].id == "qwen3.8:27b-mlx"
+    assert "16.9 GB" in models[0].label
+    assert "27B" in models[0].label
+    assert "tools, thinking" in models[0].label
+    assert models[0].label.count("qwen3.8:27b-mlx") == 1, "the tag must not be printed twice"

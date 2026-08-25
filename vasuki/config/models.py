@@ -19,13 +19,18 @@ class DatabaseConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
-    #: Chosen by ``vasuki init`` from what the machine can actually run. The
-    #: fallback is local rather than docker: a container runtime the user cannot
-    #: reach fails every command, which looks like a broken agent.
-    default: Literal["local", "docker", "ssh"] = "local"
+    #: Docker by default so agent commands run sandboxed. ``vasuki init`` probes
+    #: the daemon and records ``local`` instead when it cannot be reached: a
+    #: container runtime the user cannot talk to fails every command, which
+    #: looks like a broken agent rather than a missing sandbox.
+    default: Literal["local", "docker", "ssh"] = "docker"
     network_access: Literal["restricted", "allowed"] = "restricted"
     command_timeout_seconds: int = 600
-    docker_image: str = "python:3.12-slim"
+    #: The non-slim image is deliberate: it ships Git, and ``git diff --check``
+    #: is the fallback verification command, so the slim image failed every
+    #: check with "git: not found". One image still cannot carry every
+    #: toolchain — a Node or Go project needs its own image set here.
+    docker_image: str = "python:3.12"
     cpu_limit: float = 2.0
     memory_limit: str = "2g"
 
@@ -74,6 +79,9 @@ class ProviderConfig(BaseModel):
     application_name: str | None = None
     referring_url: str | None = None
     features: list[str] = Field(default_factory=list)
+    reasoning_effort: Literal[
+        "none", "minimal", "low", "medium", "high", "xhigh", "max"
+    ] | None = None
 
     @field_validator("api_key")
     @classmethod
@@ -95,6 +103,9 @@ class ModelProfileConfig(BaseModel):
     local: bool = False
     context_window: int = 32_768
     max_output_tokens: int = 16_384
+    reasoning_effort: Literal[
+        "none", "minimal", "low", "medium", "high", "xhigh", "max"
+    ] | None = None
     planning_score: int = 5
     coding_score: int = 5
     debugging_score: int = 5
@@ -114,8 +125,8 @@ class ModelProfileConfig(BaseModel):
     #: Optional hard ceiling for the first task packet. Zero lets Vasuki derive
     #: a safe value from the model window and project context budget.
     initial_context_tokens: int = Field(default=0, ge=0)
-    #: Optional per-run override. Compact mode otherwise uses a smaller bounded
-    #: loop so repeated low-value actions escalate instead of burning turns.
+    #: Optional per-run hard ceiling. Zero leaves productive runs unlimited;
+    #: repeated low-value actions are handled separately by escalation.
     max_agent_steps: int = Field(default=0, ge=0, le=100)
     no_progress_limit: int = Field(default=3, ge=2, le=12)
     staged_retrieval: bool = True

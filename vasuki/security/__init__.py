@@ -1,5 +1,10 @@
 from vasuki.security.policy import Permission, PolicyDecision, PolicyEngine
-from vasuki.security.secrets import redact, resolve_secret, store_project_secret
+from vasuki.security.secrets import (
+    redact,
+    resolve_secret,
+    store_global_secret,
+    store_project_secret,
+)
 
 __all__ = [
     "Permission",
@@ -7,5 +12,6 @@ __all__ = [
     "PolicyEngine",
     "redact",
     "resolve_secret",
+    "store_global_secret",
     "store_project_secret",
 ]

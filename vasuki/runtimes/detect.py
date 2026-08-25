@@ -48,12 +48,13 @@ def docker_status() -> tuple[bool, str]:
 
 
 def preferred_runtime() -> str:
-    """Use the host toolchain by default; Docker sandboxing remains explicit.
+    """Sandbox in Docker when the daemon answers, and fall back to the host.
 
-    One fixed container image cannot provide every repository's Python, Node,
-    Go, Rust, Docker Compose, and other tools. Selecting it merely because the
-    daemon responds makes an empty project fail as soon as the agent creates a
-    stack for another language. Local execution is still policy-gated, while
-    users who want the fixed-image sandbox can opt in with ``/runtime docker``.
+    Docker is the intended default: agent commands run isolated from the
+    machine. It is only chosen when the daemon actually responds, because a
+    container runtime the user cannot reach fails every command, which reads as
+    a broken agent rather than as a missing sandbox. Either choice is recorded
+    in the project's configuration and can be changed with ``/runtime``.
     """
-    return "local"
+    usable, _ = docker_status()
+    return "docker" if usable else "local"

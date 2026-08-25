@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from vasuki.config import load_settings, save_settings
+from vasuki.config import find_project_root, load_settings, save_settings
 from vasuki.config.globals import (
     GLOBAL_SECTIONS,
     global_config_dir,
@@ -35,6 +35,27 @@ def configured() -> Settings:
 def project_at(root: Path) -> Path:
     (root / ".vasuki").mkdir(parents=True, exist_ok=True)
     return root
+
+
+def test_explicit_project_directory_is_not_captured_by_parent(tmp_path: Path) -> None:
+    parent = project_at(tmp_path / "parent")
+    (parent / ".git").mkdir()
+    child = parent / "test2"
+    child.mkdir()
+
+    assert find_project_root(child) == child
+
+
+def test_implicit_cli_discovery_still_uses_the_git_repository(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repository = tmp_path / "repository"
+    (repository / ".git").mkdir(parents=True)
+    child = repository / "src" / "package"
+    child.mkdir(parents=True)
+    monkeypatch.chdir(child)
+
+    assert find_project_root() == repository
 
 
 # --------------------------------------------------------------------------

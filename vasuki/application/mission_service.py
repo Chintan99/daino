@@ -33,6 +33,7 @@ from vasuki.events import (
     TodoUpdated,
     ToolCompleted,
     ToolFailed,
+    ToolStarted,
 )
 from vasuki.exceptions import ConfigurationError
 from vasuki.memory import MemoryManager, MemoryScope, MemoryType, PersistentTaskStatus
@@ -78,6 +79,7 @@ from vasuki.tools import EditTools, RecordingActionExecutor, WebResearchTool, bu
 from vasuki.tools.commands import ApprovalCallback, CommandRunner
 from vasuki.tools.diffing import render as render_diff
 from vasuki.utils.ids import new_id
+from vasuki.verification import missing_executable
 
 
 class MissionApplicationService:
@@ -111,6 +113,9 @@ class MissionApplicationService:
             project_id=self.context.database.project().id,
             mission_id=mission_id,
             title=title[:255],
+            display_mode=(
+                "compact" if self.context.settings.tui.display_mode == "compact" else "verbose"
+            ),
         )
         with self.context.database.session() as session:
             session.add(item)
@@ -128,6 +133,20 @@ class MissionApplicationService:
         with self.context.database.session() as session:
             item = session.get(ConversationState, session_id)
             return InteractionMode(item.interaction_mode) if item else InteractionMode.ASK
+
+    def verbose_enabled(self, session_id: str) -> bool:
+        with self.context.database.session() as session:
+            item = session.get(ConversationSession, session_id)
+            # Legacy sessions used "standard" before /verbose existed. Treat
+            # them as detailed so upgrading does not silently hide progress.
+            return bool(item and item.display_mode != "compact")
+
+    def set_verbose(self, session_id: str, enabled: bool) -> None:
+        with self.context.database.session() as session:
+            item = session.get(ConversationSession, session_id)
+            if item is None:
+                raise ValueError(f"Unknown conversation session {session_id}")
+            item.display_mode = "verbose" if enabled else "compact"
 
     def set_interaction_mode(self, session_id: str, mode: InteractionMode | str) -> None:
         selected = InteractionMode(mode)
@@ -239,6 +258,54 @@ class MissionApplicationService:
             )
             return item.id if item else None
 
+    def attach_session_mission(self, session_id: str, mission_id: str) -> None:
+        """Make a newly created mission part of this conversation immediately.
+
+        Model usage is recorded against missions. Waiting until the final answer
+        message is saved means live token and cost counters cannot see a running
+        turn, and a failed turn is never linked at all. Attach it before the first
+        provider call instead.
+        """
+        with self.context.database.session() as session:
+            stored_session = session.get(ConversationSession, session_id)
+            if stored_session is None:
+                raise ValueError(f"Unknown conversation session {session_id}")
+            stored_session.mission_id = mission_id
+            existing_link = session.scalar(
+                select(ConversationMessage.id).where(
+                    ConversationMessage.session_id == session_id,
+                    ConversationMessage.mission_id == mission_id,
+                )
+            )
+            if existing_link is not None:
+                return
+            pending_prompt = session.scalar(
+                select(ConversationMessage)
+                .where(
+                    ConversationMessage.session_id == session_id,
+                    ConversationMessage.kind == "user",
+                    ConversationMessage.mission_id.is_(None),
+                )
+                .order_by(ConversationMessage.created_at.desc())
+            )
+            if pending_prompt is not None:
+                pending_prompt.mission_id = mission_id
+                return
+            # Some callers create an auditing mission without a visible prompt.
+            # Keep a hidden durable link so a later turn cannot make this
+            # mission's usage disappear when ConversationSession.mission_id moves.
+            session.add(
+                ConversationMessage(
+                    id=new_id("message"),
+                    session_id=session_id,
+                    mission_id=mission_id,
+                    kind="mission_link",
+                    role="system",
+                    content="",
+                    metadata_json={"hidden": True},
+                )
+            )
+
     def add_message(
         self,
         session_id: str,
@@ -271,7 +338,10 @@ class MissionApplicationService:
         with self.context.database.session() as session:
             items = session.scalars(
                 select(ConversationMessage)
-                .where(ConversationMessage.session_id == session_id)
+                .where(
+                    ConversationMessage.session_id == session_id,
+                    ConversationMessage.kind != "mission_link",
+                )
                 .order_by(ConversationMessage.created_at)
                 .limit(limit)
             ).all()
@@ -504,6 +574,7 @@ class MissionApplicationService:
         history = self.conversation_history(session_id)
         self.add_message(session_id, kind="user", role="user", content=question)
         mission = self.core.create(question, ProjectMode.DIRECT)
+        self.attach_session_mission(session_id, mission.id)
         persistent = self.memory.task_for_mission(mission.id)
         if persistent:
             persistent = self.memory.update_task(
@@ -556,6 +627,7 @@ class MissionApplicationService:
                     status=PersistentTaskStatus.FAILED,
                     errors=[*persistent.errors, str(exc)],
                 )
+            self.record_failure(session_id, mission.id, exc)
             raise
         answer = "".join(chunks)
         self.add_message(
@@ -710,20 +782,16 @@ class MissionApplicationService:
                 "No model is connected yet. Open Providers (Ctrl+P → Switch provider, "
                 "or /provider), fill in the form, and press Validate + save."
             )
-        history = self.conversation_history(session_id)
         # Read before this turn is persisted, or the instruction would appear
         # twice: once as history and again as the task.
         history = self.conversation_history(session_id)
         self.add_message(session_id, kind="user", role="user", content=instruction)
-        mission = self.core.create(instruction, ProjectMode.DIRECT)
-        persistent = self.memory.task_for_mission(mission.id)
-        if persistent:
-            persistent = self.memory.update_task(
-                persistent.task_id,
-                session_id=session_id,
-                interpreted_goal=instruction,
-                status=PersistentTaskStatus.IN_PROGRESS,
-            )
+        # A chat turn opens its own mission for auditing, but the work itself
+        # continues across turns, so the session's existing working memory is
+        # carried forward rather than replaced by an empty one.
+        mission = self.core.create(instruction, ProjectMode.DIRECT, start_task=False)
+        self.attach_session_mission(session_id, mission.id)
+        persistent = self._continue_session_task(session_id, mission.id, instruction)
         # Taken before the first edit so /restore always has a way back; the
         # agent writes to the real working tree, not a worktree.
         self._checkpoint_working_tree(mission.id)
@@ -760,6 +828,38 @@ class MissionApplicationService:
             seen_files=set(base_context.included_paths),
         )
         runtime, runner = await self._command_runner(session_id, approve)
+        if runner.unavailable:
+            # Learned at the top of the turn, not on the first command near the
+            # end of it. A 50-minute build that only discovers at the finish
+            # that nothing could ever be verified has wasted the whole run and
+            # reports itself as failed for a reason unrelated to the code.
+            base_context = base_context.model_copy(
+                update={
+                    "effective_instructions": "\n\n".join(
+                        item
+                        for item in (
+                            base_context.effective_instructions,
+                            f"RUNTIME UNAVAILABLE: {runner.unavailable} Plan for this from the "
+                            "start: do the work that needs no commands, do not promise "
+                            "verification you cannot perform, and state plainly in your summary "
+                            "which checks the user must run by hand.",
+                        )
+                        if item
+                    )
+                }
+            )
+            self.add_message(
+                session_id,
+                kind="status",
+                role="",
+                content=(
+                    f"Commands cannot run this turn — the "
+                    f"{self.context.settings.runtime.default} runtime is unavailable. "
+                    "The agent will edit files but cannot verify them. "
+                    "Run /runtime local to execute checks on this machine."
+                ),
+                mission_id=mission.id,
+            )
         executor = RecordingActionExecutor(
             editor,
             runner,
@@ -775,6 +875,7 @@ class MissionApplicationService:
             gateway,
             ModelRole.BUILDER,
             executor,
+            on_action_start=self._record_chat_action_started(mission.id),
             system=CHAT_AGENT_SYSTEM,
             tools=CHAT_TOOL_SPECS,
             require_verified_finish=True,
@@ -798,7 +899,7 @@ class MissionApplicationService:
             self.core._update_mission(
                 mission.id, status=MissionStatus.FAILED.value, failure=str(exc)
             )
-            self.context.events.publish(MissionFailed(mission_id=mission.id, error=str(exc)))
+            self.record_failure(session_id, mission.id, exc)
             raise
         finally:
             if runtime is not None:
@@ -883,12 +984,81 @@ class MissionApplicationService:
                 source="user request",
                 source_type="user",
             )
-            self.memory.complete_task(
-                persistent.task_id,
-                summary=outcome.answer or outcome.summary or "Chat task finished",
-                outcome=status,
-            )
+            if status == "completed" and self._unfinished_todos(session_id):
+                # The turn ended cleanly but the plan is not done — a step limit,
+                # a hand-back for input, or simply more work than one turn holds.
+                # Closing the task here is what made the next turn start over.
+                self.memory.update_task(
+                    persistent.task_id,
+                    status=PersistentTaskStatus.IN_PROGRESS,
+                    last_action="awaiting continuation",
+                )
+            else:
+                self.memory.complete_task(
+                    persistent.task_id,
+                    summary=outcome.answer or outcome.summary or "Chat task finished",
+                    outcome=status,
+                )
         return outcome
+
+    def _unfinished_todos(self, session_id: str) -> list[TodoItem]:
+        """Return the session's plan steps that are neither done nor abandoned."""
+        try:
+            todos = self.session_todos(session_id)
+        except Exception:  # noqa: BLE001 - a todo read must not fail a finished turn
+            return []
+        return [item for item in todos if item.status in {"pending", "in_progress"}]
+
+    def _continue_session_task(
+        self,
+        session_id: str,
+        mission_id: str,
+        instruction: str,
+    ) -> Any | None:
+        """Adopt the session's working memory for this turn, or open a new task.
+
+        Every chat turn used to create a mission, and creating a mission created
+        a blank persistent task whose ``original_request`` was the new message.
+        Typing "continue" therefore produced a task whose stated goal was the
+        word "continue" and whose completed steps, inspected files and changed
+        files were all empty — the agent had no record of the work it had
+        already done and began the request again from the start. Continuing the
+        prior task keeps that record and re-points it at the new mission.
+        """
+        if not (self.context.settings.memory.enabled and self.context.settings.memory.auto_save):
+            return None
+        # An unfinished task outranks a newer finished one: a question answered
+        # in the middle of a build closes its own task, and adopting that would
+        # replace the build's goal with the question.
+        previous = self._latest_task_for_session(session_id) or self.memory.latest_task_for_session(
+            session_id
+        )
+        if previous is not None and self._is_continuation(previous, instruction):
+            return self.memory.update_task(
+                previous.task_id,
+                mission_id=mission_id,
+                session_id=session_id,
+                interpreted_goal=instruction,
+                status=PersistentTaskStatus.IN_PROGRESS,
+            )
+        return self.memory.start_task(
+            instruction,
+            mission_id=mission_id,
+            session_id=session_id,
+            status=PersistentTaskStatus.IN_PROGRESS,
+        )
+
+    def _is_continuation(self, previous: Any, instruction: str) -> bool:
+        """Decide whether this turn carries on the session's previous task.
+
+        Unfinished work is the signal: an open task, or a plan with steps still
+        outstanding. A session whose last task finished with an empty plan is
+        treated as a fresh start so an unrelated later question does not inherit
+        stale files and steps.
+        """
+        if previous.status != PersistentTaskStatus.COMPLETED:
+            return True
+        return bool(self._unfinished_todos(previous.session_id or "") or previous.pending_steps)
 
     def _checkpoint_working_tree(self, mission_id: str) -> None:
         """Snapshot the tree before the agent edits it, without blocking the turn."""
@@ -943,6 +1113,38 @@ class MissionApplicationService:
             outcome.verified = bool(getattr(report, "passed", False))
             failures = getattr(report, "failures", [])
             executed = [check for check in getattr(report, "checks", []) if not check.skipped]
+            missing = [
+                tool
+                for tool in (
+                    missing_executable(
+                        str(getattr(item, "command", "")),
+                        str(getattr(item, "output_excerpt", "")),
+                    )
+                    for item in failures
+                )
+                if tool
+            ]
+            if not outcome.verified and failures and len(missing) == len(failures):
+                # Every check failed only because the runtime has no such
+                # program — the container image ships no git or node. The edit
+                # is unverified, not broken, and saying otherwise sends the user
+                # looking for a bug in code that was never checked.
+                outcome.verified = None
+                tools = ", ".join(dict.fromkeys(missing))
+                outcome.verification_summary = (
+                    f"Edit applied but not verified: the "
+                    f"{self.context.settings.runtime.default} runtime has no {tools}. "
+                    f"Run /runtime local, or run these by hand: {'; '.join(commands)}"
+                )
+                self.add_message(
+                    session_id,
+                    kind="status",
+                    role="tester",
+                    content=outcome.verification_summary,
+                    mission_id=mission_id,
+                )
+                self.update_verification_todo(session_id, "failed", mission_id=mission_id)
+                return
             outcome.verification_summary = (
                 f"{len(executed)} check(s) passed"
                 if outcome.verified
@@ -973,6 +1175,25 @@ class MissionApplicationService:
         diffs: list[FileDiff],
     ) -> Callable[..., None]:
         def observe(action: AgentAction, result: ToolResult, paths: list[str]) -> None:
+            tool = f"chat.{action.action}"
+            subject = _action_subject(action)
+            if result.success:
+                self.context.events.publish(
+                    ToolCompleted(
+                        mission_id=mission_id,
+                        tool=tool,
+                        summary=subject,
+                        duration_seconds=result.duration_seconds,
+                    )
+                )
+            else:
+                self.context.events.publish(
+                    ToolFailed(
+                        mission_id=mission_id,
+                        tool=tool,
+                        error=result.error or "action failed",
+                    )
+                )
             if action.action == "todo" and result.success:
                 self.set_session_todos(
                     session_id,
@@ -1054,6 +1275,22 @@ class MissionApplicationService:
 
         return observe
 
+    def _record_chat_action_started(
+        self, mission_id: str
+    ) -> Callable[[AgentAction], None]:
+        """Publish a safe action summary before a chat tool begins executing."""
+
+        def started(action: AgentAction) -> None:
+            self.context.events.publish(
+                ToolStarted(
+                    mission_id=mission_id,
+                    tool=f"chat.{action.action}",
+                    summary=_action_subject(action),
+                )
+            )
+
+        return started
+
     def _team_context(
         self,
         instruction: str,
@@ -1108,6 +1345,7 @@ class MissionApplicationService:
             )
         self.add_message(session_id, kind="user", role="user", content=instruction)
         mission = self.core.create(instruction, ProjectMode.DIRECT)
+        self.attach_session_mission(session_id, mission.id)
         persistent = self.memory.task_for_mission(mission.id)
         if persistent:
             persistent = self.memory.update_task(
@@ -1152,6 +1390,7 @@ class MissionApplicationService:
             self.core._update_mission(
                 mission.id, status=MissionStatus.FAILED.value, failure=str(exc)
             )
+            self.record_failure(session_id, mission.id, exc)
             raise
 
         self.context.events.publish(
@@ -1212,6 +1451,7 @@ class MissionApplicationService:
                 plan,
                 base_context,
                 on_action=self._record_team_action(mission.id),
+                on_action_start=self._record_team_action_started(mission.id),
                 on_member=self._record_team_member(mission.id),
                 on_member_start=self._announce_team_member(mission.id),
             )
@@ -1219,7 +1459,7 @@ class MissionApplicationService:
             self.core._update_mission(
                 mission.id, status=MissionStatus.FAILED.value, failure=str(exc)
             )
-            self.context.events.publish(MissionFailed(mission_id=mission.id, error=str(exc)))
+            self.record_failure(session_id, mission.id, exc)
             raise
 
         self.add_message(
@@ -1337,6 +1577,23 @@ class MissionApplicationService:
                 )
 
         return observe
+
+    def _record_team_action_started(
+        self, mission_id: str
+    ) -> Callable[[TeamMember, AgentAction], None]:
+        """Publish member-attributed progress before a team tool starts."""
+
+        def started(member: TeamMember, action: AgentAction) -> None:
+            self.context.events.publish(
+                ToolStarted(
+                    mission_id=mission_id,
+                    tool=f"team.{member.id}.{action.action}",
+                    summary=_action_subject(action),
+                    details={"member": member.id, "role": member.role},
+                )
+            )
+
+        return started
 
     async def execute(
         self,
@@ -1779,6 +2036,19 @@ def _describe_action(action: AgentAction, result: ToolResult) -> str:
         marks = {"completed": "x", "in_progress": ">", "pending": " ", "failed": "!"}
         return "\n".join(f"[{marks.get(item.status, ' ')}] {item.content}" for item in action.todos)
     return ""
+
+
+def _action_subject(action: AgentAction) -> str:
+    """Describe an action without exposing the model's private thought field."""
+    return (
+        action.path
+        or action.query
+        or action.command
+        or action.url
+        or action.pattern
+        or action.summary
+        or action.action.replace("_", " ")
+    )
 
 
 def _tail(text: str) -> str:

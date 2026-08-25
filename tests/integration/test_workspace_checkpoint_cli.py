@@ -6,7 +6,9 @@ import pytest
 from typer.testing import CliRunner
 
 from tests.conftest import git
+from vasuki.application import open_project
 from vasuki.cli.app import app
+from vasuki.config import default_settings, save_settings
 from vasuki.workspace import WorkspaceManager
 
 
@@ -62,3 +64,50 @@ def test_cli_init_bootstraps_a_greenfield_git_baseline(tmp_path: Path) -> None:
     assert (tmp_path / ".git").is_dir()
     assert git(tmp_path, "rev-parse", "--verify", "HEAD")
     assert git(tmp_path, "log", "-1", "--format=%s") == "Initialize project"
+
+
+def test_cli_init_isolates_a_directory_nested_in_a_parent_repository(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    git(parent, "init", "-b", "main")
+    child = parent / "test1"
+    child.mkdir()
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["init", str(child)])
+
+    assert result.exit_code == 0, result.output
+    assert (child / ".vasuki" / "config.yaml").exists()
+    assert (child / ".git").is_dir()
+    assert Path(git(child, "rev-parse", "--show-toplevel")) == child.resolve()
+    assert git(child, "rev-parse", "--verify", "HEAD")
+
+
+def test_cli_init_creates_head_when_initial_files_are_ignored(tmp_path: Path) -> None:
+    runner = CliRunner()
+    git(tmp_path, "init", "-b", "main")
+    (tmp_path / ".gitignore").write_text("*\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["init", str(tmp_path)])
+
+    assert result.exit_code == 0, result.output
+    assert git(tmp_path, "rev-parse", "--verify", "HEAD")
+    assert git(tmp_path, "log", "-1", "--format=%s") == "Initialize project"
+
+
+def test_open_repairs_child_initialized_by_parent_scoped_version(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    git(parent, "init", "-b", "main")
+    child = parent / "test1"
+    child.mkdir()
+    (child / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+    save_settings(default_settings(child), child)
+    assert not (child / ".git").exists()
+
+    context = open_project(child)
+    context.close()
+
+    assert (child / ".git").is_dir()
+    assert Path(git(child, "rev-parse", "--show-toplevel")) == child.resolve()
+    assert git(child, "rev-parse", "--verify", "HEAD")

@@ -11,6 +11,20 @@ from vasuki.config import default_settings, save_settings
 from vasuki.persistence import Database
 
 
+@pytest.fixture(autouse=True)
+def host_runtime_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Initialize test projects with the host runtime whatever Docker is doing.
+
+    ``initialize_project`` probes the Docker daemon and records it when it
+    answers. Left unpatched, every test that initializes a project would behave
+    one way on a machine running Docker and another way without it. The runtime
+    probe itself is tested directly in ``test_agent_shell``.
+    """
+    from vasuki.application import context as context_module
+
+    monkeypatch.setattr(context_module, "preferred_runtime", lambda: "local")
+
+
 @pytest.fixture
 def project(tmp_path: Path) -> Iterator[tuple[Path, object, Database]]:
     settings = default_settings(tmp_path)

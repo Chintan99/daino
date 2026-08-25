@@ -18,10 +18,22 @@ CONFIG_FILE = "config.yaml"
 
 
 def find_project_root(start: Path | None = None) -> Path:
-    """Find the closest Git or Vasuki project root."""
-    current = (start or Path.cwd()).resolve()
+    """Resolve a workspace, treating an explicitly supplied path as authoritative.
+
+    ``start`` is used by the TUI and ``--project`` flag to express the workspace
+    the user actually chose. It must not be replaced by a parent Git/Vasuki
+    directory: doing so reopens that parent's database, history, and usage in a
+    newly created child directory. Calls without ``start`` retain repository
+    discovery for CLI commands invoked from an existing checkout subdirectory.
+    """
+    if start is not None:
+        return start.resolve()
+
+    current = Path.cwd().resolve()
+    if (current / CONFIG_DIR).exists():
+        return current
     for candidate in (current, *current.parents):
-        if (candidate / ".git").exists() or (candidate / CONFIG_DIR).exists():
+        if (candidate / ".git").exists():
             return candidate
     return current
 
@@ -115,6 +127,21 @@ def save_settings(settings: Settings, root: Path | None = None) -> Path:
     rendered = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
     path.write_text(rendered, encoding="utf-8")
     return path
+
+
+def use_global_provider_settings(root: Path) -> Settings:
+    """Remove project provider/model/routing overrides and reload globals."""
+    path = config_path(root)
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+    data = raw if isinstance(raw, dict) else {}
+    for key in ("providers", "models", "routing", "routing_fallbacks"):
+        data.pop(key, None)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return load_settings(root)
 
 
 def set_value(root: Path, dotted_key: str, raw_value: str) -> Settings:

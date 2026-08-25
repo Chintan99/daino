@@ -1115,6 +1115,24 @@ class MemoryManager:
                 raise ValueError(f"Unknown persistent task {task_id}")
             return self._working(row)
 
+    def latest_task_for_session(self, session_id: str) -> WorkingMemory | None:
+        """Return the newest task for a session whatever its status.
+
+        ``resumable_tasks`` hides finished work, but a chat session that already
+        completed one turn is exactly where the next turn has to pick up from,
+        so continuation needs the newest row rather than the newest active one.
+        """
+        with self.database.session() as session:
+            row = session.scalar(
+                select(PersistentTaskState)
+                .where(
+                    PersistentTaskState.project_id == self.database.project().id,
+                    PersistentTaskState.session_id == session_id,
+                )
+                .order_by(PersistentTaskState.updated_at.desc())
+            )
+            return self._working(row) if row else None
+
     def task_for_mission(self, mission_id: str) -> WorkingMemory | None:
         with self.database.session() as session:
             row = session.scalar(

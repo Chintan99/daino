@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from vasuki.application.context import ProjectContext
 from vasuki.application.view_models import FileItem
 from vasuki.events import ToolCompleted, ToolStarted
@@ -12,6 +14,16 @@ from vasuki.git import GitClient
 from vasuki.repository import RepositoryIndexer
 
 MAX_PREVIEW_BYTES = 1_000_000
+
+
+def _line_count(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    try:
+        with path.open("rb") as handle:
+            return sum(1 for _ in handle)
+    except OSError:
+        return 0
 
 
 class RepositoryApplicationService:
@@ -91,6 +103,51 @@ class RepositoryApplicationService:
                     if mission.initial_revision:
                         refs = (mission.initial_revision,)
         return GitClient(root).diff(*refs, staged=staged)
+
+    def has_git(self) -> bool:
+        """Whether this directory is a Git repository Vasuki can diff against."""
+        try:
+            return GitClient(self.context.root).is_repository()
+        except Exception:  # noqa: BLE001 - a missing git binary is not an error here
+            return False
+
+    def written_files(self, mission_id: str | None = None) -> list[dict[str, Any]]:
+        """Files the agent wrote, taken from its own recorded tool calls.
+
+        Without Git there is no diff to show, but there is still a truthful
+        answer to "what changed": the edits are recorded as they happen, so the
+        work can be listed even in a directory that was never initialized.
+        """
+        from vasuki.persistence.models import ToolCall
+
+        mutations = {
+            "chat.write",
+            "chat.replace",
+            "chat.multi_edit",
+            "chat.delete",
+            "chat.patch",
+        }
+        seen: dict[str, dict[str, Any]] = {}
+        with self.context.database.session() as session:
+            query = select(ToolCall).order_by(ToolCall.created_at)
+            if mission_id:
+                query = query.where(ToolCall.mission_id == mission_id)
+            for row in session.scalars(query).all():
+                if row.tool not in mutations or not row.success:
+                    continue
+                arguments = row.arguments if isinstance(row.arguments, dict) else {}
+                relative = str(arguments.get("path") or "").strip()
+                if not relative:
+                    continue
+                target = self.context.root / relative
+                seen[relative] = {
+                    "path": relative,
+                    "action": row.tool.removeprefix("chat."),
+                    "exists": target.is_file(),
+                    "lines": _line_count(target),
+                    "bytes": target.stat().st_size if target.is_file() else 0,
+                }
+        return sorted(seen.values(), key=lambda item: str(item["path"]))
 
     def find_symbol(self, name: str) -> list[Any]:
         return self.indexer.find_symbol(name)

@@ -108,6 +108,22 @@ class ModelStreamChunk(MissionEvent):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ModelReasoningChunk(MissionEvent):
+    """Ephemeral provider-supplied reasoning emitted while a model is working.
+
+    Reasoning is intentionally a separate event from ``ModelStreamChunk``: the
+    latter is user-facing answer text that belongs in the conversation, while
+    this event is live progress only and must never be persisted.
+    """
+
+    content: str
+    role: str = "assistant"
+    provider: str = ""
+    model: str = ""
+    profile: str = ""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TeamPlanned(MissionEvent):
     """A team lead settled on a roster; members carries id/role/scope per member."""
 

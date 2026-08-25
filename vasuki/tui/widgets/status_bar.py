@@ -26,6 +26,7 @@ PRIMARY_TABS: tuple[tuple[str, str], ...] = (
     ("changes", "changes-view"),
     ("tests", "tests-view"),
     ("logs", "logs-view"),
+    ("map", "map-view"),
 )
 
 

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from vasuki.agents.gateway import ModelGateway
-from vasuki.agents.loop import OnActionCallback, ToolLoop
+from vasuki.agents.loop import OnActionCallback, OnActionStartCallback, ToolLoop
 from vasuki.memory import MemoryManager
 from vasuki.model_router import ModelRole
 from vasuki.prompts import TEAM_LEAD_SYSTEM
@@ -60,6 +60,9 @@ OnMemberStartCallback = Callable[[TeamMember], None]
 #: Notified for every action any member executes; the member is passed so the
 #: caller can attribute the action in events and in the audit ledger.
 MemberActionCallback = Callable[[TeamMember, AgentAction, ToolResult, list[str]], None]
+
+#: Notified before a member action begins, so slow tools are visible while running.
+MemberActionStartCallback = Callable[[TeamMember, AgentAction], None]
 
 
 class TeamPlanError(ValueError):
@@ -223,6 +226,7 @@ class TeamRunner:
         base_context: ContextBundle,
         *,
         on_action: MemberActionCallback | None = None,
+        on_action_start: MemberActionStartCallback | None = None,
         on_member: OnMemberCallback | None = None,
         on_member_start: OnMemberStartCallback | None = None,
     ) -> TeamOutcome:
@@ -233,7 +237,13 @@ class TeamRunner:
             settled = await asyncio.gather(
                 *(
                     self._run_member(
-                        mission_id, member, base_context, completed, on_action, on_member_start
+                        mission_id,
+                        member,
+                        base_context,
+                        completed,
+                        on_action,
+                        on_action_start,
+                        on_member_start,
                     )
                     for member in wave
                 )
@@ -253,6 +263,7 @@ class TeamRunner:
         base_context: ContextBundle,
         completed: dict[str, TeamMemberOutcome],
         on_action: MemberActionCallback | None,
+        on_action_start: MemberActionStartCallback | None,
         on_member_start: OnMemberStartCallback | None = None,
     ) -> TeamMemberOutcome:
         blocked = [
@@ -285,6 +296,7 @@ class TeamRunner:
             system=self.system,
             tools=self.tools,
             action_schema=self.action_schema,
+            on_action_start=_attribute_start(member, on_action_start),
         )
         try:
             outcome = await loop.run(
@@ -348,5 +360,18 @@ def _attribute(
 
     def forward(action: AgentAction, result: ToolResult, paths: list[str]) -> None:
         on_action(member, action, result, paths)
+
+    return forward
+
+
+def _attribute_start(
+    member: TeamMember, on_action: MemberActionStartCallback | None
+) -> OnActionStartCallback | None:
+    """Tag a member's pre-execution action event with its owner."""
+    if on_action is None:
+        return None
+
+    def forward(action: AgentAction) -> None:
+        on_action(member, action)
 
     return forward

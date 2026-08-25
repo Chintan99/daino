@@ -3,7 +3,8 @@
 Configuration is two layers. The **global** file at `~/.config/vasuki/config.yaml`
 (`$XDG_CONFIG_HOME/vasuki`, or `$VASUKI_CONFIG_HOME`) holds what follows you between
 projects: providers, model profiles, routing, and interface preferences. Connect a model once and
-every project uses it — a new directory opens straight to work instead of asking again.
+it becomes available everywhere; new-project onboarding explicitly lets you inherit it or choose
+project-specific model settings.
 
 The **project** file at `.vasuki/config.yaml` holds what is genuinely local — its name, database,
 verification commands, security policy, runtime — and overrides the global layer where the two
@@ -13,6 +14,10 @@ into each repository, so changing the global model later would silently fail to 
 
 API keys for a global provider are stored under `~/.config/vasuki/secrets/`, not inside a
 checkout, so deleting a project cannot break every other one.
+
+Use `/globalprovider` to configure the shared provider from any workspace. `/provider` edits the
+current project's override and includes **Use global settings**, which removes those overrides and
+immediately restores the shared provider, model profiles, and routing.
 
 Memory policy is configured under `memory`. Durable project/task state uses the project database;
 cross-project user preferences and global `VASUKI.md` live privately under `~/.vasuki` (override

@@ -14,7 +14,7 @@ from vasuki.config import (
     save_settings,
 )
 from vasuki.config.models import Settings
-from vasuki.events import EventBus, MissionEvent, ModelStreamChunk
+from vasuki.events import EventBus, MissionEvent, ModelReasoningChunk, ModelStreamChunk
 from vasuki.git import GitClient
 from vasuki.memory import MemoryManager
 from vasuki.observability import AuditLog
@@ -70,7 +70,14 @@ def _append_ignore_entries(root: Path) -> None:
 def _ensure_git_baseline(root: Path) -> None:
     """Give a greenfield project a revision that checkpoints can reference."""
     git = GitClient(root)
-    if not git.is_repository():
+    top_level = git.run("rev-parse", "--show-toplevel", check=False)
+    owns_repository = top_level.succeeded and Path(top_level.stdout.strip()).resolve() == root
+    if not owns_repository:
+        # ``git rev-parse`` also succeeds in a fresh directory nested beneath a
+        # parent repository. Initializing here is intentional: Vasuki state,
+        # history, checkpoints, and edits must remain scoped to the directory
+        # selected during onboarding.
+        _append_ignore_entries(root)
         git.run("init", "-b", "main")
     if not git.run("rev-parse", "--verify", "HEAD", check=False).succeeded:
         git.commit("Initialize project")
@@ -109,6 +116,11 @@ def initialize_project(root: Path, *, force: bool = False) -> InitializationResu
 def open_project(path: Path | None = None) -> ProjectContext:
     root = find_project_root(path)
     settings = load_settings(root)
+    if config_path(root).exists():
+        # Repair projects initialized by versions that accidentally treated a
+        # parent Git checkout as this folder's repository. Without a nested
+        # baseline, checkpoints and edits can still escape the selected root.
+        _ensure_git_baseline(root)
     database = Database(settings, root)
     database.initialize()
     events = EventBus()
@@ -116,10 +128,11 @@ def open_project(path: Path | None = None) -> ProjectContext:
     audit = AuditLog(root)
 
     def persist(event: MissionEvent) -> None:
-        # Token-level chunks arrive hundreds of times per answer. Writing a row and
-        # an audit line for each one dominates streaming latency and adds nothing:
-        # the completed answer is persisted as a conversation message.
-        if isinstance(event, ModelStreamChunk):
+        # Token-level chunks arrive hundreds of times per call. Writing a row and
+        # an audit line for each one would dominate streaming latency. Completed
+        # answers are persisted as conversation messages; provider reasoning is
+        # intentionally ephemeral and is never written to the project ledger.
+        if isinstance(event, (ModelStreamChunk, ModelReasoningChunk)):
             return
         payload = event.payload()
         with database.session() as session:

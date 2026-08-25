@@ -9,6 +9,14 @@ from typing import Any
 from vasuki.config.models import ModelProfileConfig
 from vasuki.schemas import ContextBundle, TaskPacket
 
+#: The value every capability score takes before an operator rates a model.
+#: Scores at or above it carry no information either way.
+_NEUTRAL_SCORE = 5
+
+#: Below this usable input budget the agent cannot hold repository grounding and
+#: a working transcript at once, so compact mode is the honest choice.
+_COMPACT_BUDGET_TOKENS = 12_000
+
 
 class ExecutionMode(StrEnum):
     STANDARD = "standard"
@@ -30,7 +38,7 @@ class ModelExecutionProfile:
     max_source_files: int | None
     per_file_tokens: int | None
     recent_tool_groups: int
-    max_steps: int
+    max_steps: int | None
     no_progress_limit: int
     staged_retrieval: bool
     one_action_per_turn: bool
@@ -51,17 +59,22 @@ class ModelExecutionProfile:
         memory_tokens: int,
     ) -> ModelExecutionProfile:
         # Capability scores default to the neutral value 5 when a provider is
-        # first configured. They therefore cannot classify a remote frontier
-        # model by themselves: doing so incorrectly put every new remote model
-        # into compact mode. A constrained window is objective evidence; local
-        # placement plus modest scores is also a useful small-model signal.
-        auto_compact = model.context_window <= 16_384 or (
-            model.local
-            and (
-                model.coding_score <= 6
-                or min(model.tool_reliability, model.structured_reliability) <= 5
-            )
+        # first configured, so they are not evidence about any model — remote or
+        # local. Treating neutral defaults as a small-model signal forced every
+        # freshly configured local model (a 27B coder included) into compact
+        # mode: 8k of context and one action per turn, which made long tasks
+        # loop by re-doing work that had already been compacted away. Only
+        # scores explicitly set *below* neutral count as evidence of a weak
+        # model; otherwise the deciding factor is the objective one, namely how
+        # much context the model actually leaves for the agent to work in.
+        constrained_window = (
+            model.context_window <= 16_384 or input_budget_tokens < _COMPACT_BUDGET_TOKENS
         )
+        weak_local_model = model.local and (
+            model.coding_score < _NEUTRAL_SCORE
+            or min(model.tool_reliability, model.structured_reliability) < _NEUTRAL_SCORE
+        )
+        auto_compact = constrained_window or weak_local_model
         compact = model.execution_mode == "compact" or (
             model.execution_mode == "auto" and auto_compact
         )
@@ -77,9 +90,6 @@ class ModelExecutionProfile:
             max_source_files: int | None = 4
             per_file_tokens: int | None = 2_000
             recent_groups = 3
-            # Compact mode deliberately permits only one action per turn, so it
-            # needs more turns than standard mode rather than fewer.
-            max_steps = model.max_agent_steps or 32
         else:
             instruction_tokens = max(256, initial // 4)
             selected_memory_tokens = memory_tokens
@@ -88,7 +98,10 @@ class ModelExecutionProfile:
             max_source_files = None
             per_file_tokens = None
             recent_groups = 6
-            max_steps = model.max_agent_steps or 24
+        # Zero means unlimited. Long, productive tasks must not be terminated
+        # merely because they crossed an arbitrary turn count; operators can
+        # still opt into a hard ceiling per model profile.
+        max_steps = model.max_agent_steps or None
         return cls(
             profile_name=profile_name,
             mode=mode,

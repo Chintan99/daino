@@ -40,8 +40,9 @@ See [installation](docs/installation.md) for uv, pipx, and PATH details, or
 
 ## Configure once
 
-Connect a model the first time you run Vasuki and every project uses it afterwards. Configuration
-is global, so a new directory opens straight to work instead of asking again:
+Connect a model the first time you run Vasuki and it is available to every project afterwards.
+When a new directory is initialized, onboarding lets you inherit that global configuration or
+choose a project-specific provider and model:
 
 ```bash
 vasuki providers add openrouter \
@@ -167,8 +168,9 @@ The most used commands:
 | `/plan`, `/run`, `/build` | Approval-gated mission workflow |
 | `/test`, `/review`, `/diff` | Verification, independent review, changes |
 | `/checkpoint`, `/restore` | Create and roll back to a recovery point |
-| `/model`, `/provider`, `/runtime` | Session model, provider, sandbox |
+| `/model`, `/effort`, `/verbose`, `/provider`, `/globalprovider`, `/runtime` | Model and display controls |
 | `/memory`, `/tasks`, `/resume` | Inspect memory and continue crash-safe work |
+| `/logs`, `/map` | Follow live activity and inspect per-prompt execution graphs |
 
 The [TUI guide](docs/tui.md) lists all of them, plus shortcuts and view details.
 

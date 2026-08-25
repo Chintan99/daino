@@ -56,12 +56,19 @@ class NativeGateway:
         self.turns = turns
         self.complete_calls = 0
         self.structured_calls = 0
+        #: Messages as the loop last presented them, for asserting on what the
+        #: agent was actually told about its own actions.
+        self.seen_messages: list[Message] = []
 
     def route_supports_tools(self, role: object, context: object = None) -> bool:
         return True
 
     async def complete(self, *args: object, **kwargs: object) -> LLMResponse:
         self.complete_calls += 1
+        for value in (*args, *kwargs.values()):
+            if isinstance(value, list) and all(isinstance(item, Message) for item in value):
+                self.seen_messages = list(value)
+                break
         return tool_response(*self.turns.pop(0))
 
     async def structured(self, *args: object, **kwargs: object) -> AgentAction:
@@ -100,6 +107,46 @@ async def test_native_tool_calls_drive_the_loop(executor: ActionExecutor, tmp_pa
     assert outcome.implementation.summary == "Added greeter"
     assert (tmp_path / "greeter.py").read_text(encoding="utf-8").startswith("def greet")
     assert gateway.complete_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_action_start_callback_fires_before_completion(
+    executor: ActionExecutor, tmp_path: Path
+) -> None:
+    gateway = NativeGateway(
+        [
+            [
+                ToolCall(
+                    id="call_1",
+                    name="write",
+                    arguments={"thought": "private", "path": "live.py", "content": "x = 1\n"},
+                )
+            ],
+            [
+                ToolCall(
+                    id="call_2",
+                    name="finish",
+                    arguments={"thought": "done", "summary": "Finished"},
+                )
+            ],
+        ]
+    )
+    lifecycle: list[str] = []
+    loop = ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        on_action_start=lambda action: lifecycle.append(f"start:{action.path}"),
+    )
+
+    await loop.run(
+        "mission-live",
+        context(),
+        on_action=lambda action, _result, _paths: lifecycle.append(f"done:{action.path}"),
+    )
+
+    assert lifecycle == ["start:live.py", "done:live.py"]
+    assert (tmp_path / "live.py").exists()
 
 
 @pytest.mark.asyncio
@@ -637,6 +684,27 @@ async def test_the_step_budget_ends_a_looping_agent(tmp_path: Path) -> None:
     assert len(never_finishes) == 7
 
 
+@pytest.mark.asyncio
+async def test_default_loop_can_continue_past_the_old_24_step_limit(tmp_path: Path) -> None:
+    executor = ActionExecutor(EditTools(tmp_path))
+    actions = [
+        AgentAction(thought="continue", action="list_directory", path=".")
+        for _ in range(24)
+    ]
+    actions.append(AgentAction(thought="done", action="finish", summary="finished"))
+    gateway = ScriptedGateway(actions)
+
+    outcome = await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+    ).run("mission-1", context())
+
+    assert outcome.completed
+    assert outcome.steps == 25
+    assert outcome.implementation.summary == "finished"
+
+
 def test_route_supports_tools_follows_the_selected_provider(tmp_path: Path) -> None:
     """The real probe, not a stub: it must read the routed provider's features.
 
@@ -788,3 +856,79 @@ class RecordingDatabase:
 
     def add(self, record: Any) -> None:
         self.records.append(record)
+
+
+def rewrite_turn(index: int, content: str) -> list[ToolCall]:
+    return [
+        ToolCall(
+            id=f"call_{index}",
+            name="write",
+            arguments={
+                "thought": "Write the data file.",
+                "path": "books-data.js",
+                "content": content,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rewriting_identical_content_counts_as_no_progress(tmp_path: Path) -> None:
+    """A write that changes nothing used to reset the no-progress counter.
+
+    Because a successful mutation reports the path it touched, an agent that had
+    compacted away the memory of its own work could rewrite the same file with
+    byte-identical content forever without ever tripping the no-progress limit.
+    Observed in the field as an agent writing books-data.js over and over while
+    every diff read "No textual change."
+    """
+    from vasuki.tools import RecordingActionExecutor
+
+    content = "const books = [];\n"
+    executor = RecordingActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+    gateway = NativeGateway([rewrite_turn(index, content) for index in range(1, 9)])
+    loop = ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        execution_profile=compact_execution_profile(),
+    )
+
+    outcome = await loop.run("mission-loop", context())
+
+    # The first write lands; the identical rewrites after it are not progress,
+    # so the loop stops instead of spinning through every scripted turn.
+    assert (tmp_path / "books-data.js").read_text(encoding="utf-8") == content
+    assert outcome.steps < 8, f"the loop never noticed the no-op rewrites ({outcome.steps} steps)"
+
+
+@pytest.mark.asyncio
+async def test_a_no_op_write_tells_the_agent_nothing_changed(tmp_path: Path) -> None:
+    """Reporting bare success invites the agent to write the same file again."""
+    from vasuki.tools import RecordingActionExecutor
+
+    content = "const books = [];\n"
+    (tmp_path / "books-data.js").write_text(content, encoding="utf-8")
+    executor = RecordingActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+    gateway = NativeGateway(
+        [
+            rewrite_turn(1, content),
+            [
+                ToolCall(
+                    id="call_2",
+                    name="finish",
+                    arguments={"thought": "Done.", "summary": "Nothing to do"},
+                )
+            ],
+        ]
+    )
+    loop = ToolLoop(gateway, ModelRole.BUILDER, executor)  # type: ignore[arg-type]
+
+    await loop.run("mission-noop", context())
+
+    observations = [
+        message.content for message in gateway.seen_messages if message.role == "tool"
+    ]
+    assert any("already contained exactly this content" in item for item in observations), (
+        observations
+    )

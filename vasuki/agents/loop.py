@@ -48,11 +48,6 @@ from vasuki.schemas import (
 )
 from vasuki.tools import ActionExecutor
 
-#: Hard ceiling on turns. A deliberately generous bound: an editor that cannot
-#: finish in this many grounded steps is looping rather than implementing, and
-#: verification will catch the result either way.
-DEFAULT_MAX_STEPS = 24
-
 #: Actions that end the loop. ``finish`` reports work done; ``respond`` answers
 #: without changing anything and is only offered to the chat agent.
 _TERMINAL = frozenset({"finish", "respond"})
@@ -111,6 +106,7 @@ class ToolLoop:
         require_verified_finish: bool = False,
         action_schema: type[AgentAction] = AgentAction,
         execution_profile: ModelExecutionProfile | None = None,
+        on_action_start: OnActionStartCallback | None = None,
     ) -> None:
         self.gateway = gateway
         self.role = role
@@ -136,14 +132,15 @@ class ToolLoop:
                 except Exception:
                     execution_profile = None
         self.execution_profile = execution_profile
-        self.max_steps = max_steps or (
-            execution_profile.max_steps if execution_profile else DEFAULT_MAX_STEPS
-        )
+        self.max_steps = max_steps
+        if self.max_steps is None and execution_profile is not None:
+            self.max_steps = execution_profile.max_steps
         # Interactive edits land directly in the user's checkout. Requiring the
         # agent to run its own proposed checks before claiming completion keeps a
         # confident summary from racing ahead of the verifier.
         self.require_verified_finish = require_verified_finish
         self.action_schema = action_schema
+        self.on_action_start = on_action_start
         #: Set when the backend rejected the native tool-calling request, so the
         #: rest of the run uses schema-constrained JSON without paying for a
         #: failing request on every turn.
@@ -185,7 +182,7 @@ class ToolLoop:
         command_results: dict[str, bool] = {}
         command_recoveries: dict[str, tuple[str, ...]] = {}
         steps = 0
-        while steps < self.max_steps:
+        while self.max_steps is None or steps < self.max_steps:
             steps += 1
             finish = await self._step(
                 mission_id,
@@ -210,11 +207,34 @@ class ToolLoop:
                     escalated=self._escalated,
                     escalation_reason=self._escalation_reason,
                 )
-            if (
+            stalled = (
                 self.execution_profile
                 and self._no_progress_steps >= self.execution_profile.no_progress_limit
-                and routing_context.failed_attempts < 2
-            ):
+            )
+            if stalled and routing_context.failed_attempts >= 2:
+                # Escalation already happened and the agent is still repeating
+                # itself. ``max_agent_steps`` defaults to unlimited, so without
+                # this exit the loop spins forever: the field case was an agent
+                # rewriting one file with identical content for hours, having
+                # been escalated once at the very start.
+                return BuilderOutcome(
+                    implementation=Implementation(
+                        summary=(
+                            "Stopped after "
+                            f"{self._no_progress_steps} actions that changed nothing, even "
+                            "after escalation. The last approach is not working; say what to "
+                            "try instead, or narrow the request."
+                        ),
+                        modifications=[],
+                        verification_commands=[],
+                    ),
+                    changed=sorted(set(changed)),
+                    steps=steps,
+                    completed=False,
+                    escalated=self._escalated,
+                    escalation_reason=self._escalation_reason,
+                )
+            if stalled:
                 self._escalated = True
                 self._escalation_reason = (
                     f"{self._no_progress_steps} consecutive failed or repeated actions"
@@ -239,6 +259,9 @@ class ToolLoop:
                     failed_attempts=2,
                     structured_failures=max(2, routing_context.structured_failures),
                 )
+                # Give the escalated model a full allowance of its own; the
+                # stall exit above triggers only if it also fails to progress.
+                self._no_progress_steps = 0
                 messages.append(
                     Message(
                         role="system",
@@ -628,6 +651,11 @@ class ToolLoop:
         *,
         tool_call_id: str,
     ) -> ToolResult:
+        # Completion observers cannot make a long-running command visible until
+        # it is already over. Notify the UI as soon as the validated action has
+        # been selected, without exposing AgentAction.thought.
+        if self.on_action_start is not None:
+            self.on_action_start(action)
         if action.action == "resolve_command_failure":
             result = self._resolve_command_failure(
                 action,
@@ -650,9 +678,21 @@ class ToolLoop:
                 )
         if on_action is not None:
             on_action(action, result, paths)
-        self._record_progress(action, result, paths)
+        inert = self._was_inert_edit(action, result)
+        self._record_progress(action, result, paths, inert=inert)
+        detail = _detail(action, result)
+        if inert:
+            # A write whose content already matched the file on disk succeeds
+            # while changing nothing. Reporting only "success" let the agent
+            # rewrite the same file indefinitely, believing each pass was new
+            # work, so the observation has to name the no-op.
+            detail = (
+                f"{action.path} already contained exactly this content, so nothing changed. "
+                "Do not write it again; move on to the next unfinished step."
+                + (f"\n{detail}" if detail else "")
+            )
         observation = AgentObservation(
-            action=action.action, success=result.success, detail=_detail(action, result)
+            action=action.action, success=result.success, detail=detail
         )
         messages.append(
             Message(
@@ -663,11 +703,26 @@ class ToolLoop:
         )
         return result
 
+    def _was_inert_edit(self, action: AgentAction, result: ToolResult) -> bool:
+        """Report whether a successful mutation left the file byte-identical."""
+        if not result.success or not action.path:
+            return False
+        mutations = getattr(type(self.executor), "MUTATIONS", frozenset())
+        if action.action not in mutations:
+            return False
+        edit = getattr(self.executor, "last_edit", None)
+        if not isinstance(edit, tuple) or len(edit) != 3:
+            return False
+        _, before, after = edit
+        return before is not None and before == after
+
     def _record_progress(
         self,
         action: AgentAction,
         result: ToolResult,
         paths: list[str],
+        *,
+        inert: bool = False,
     ) -> None:
         signature = "|".join(
             (
@@ -678,7 +733,14 @@ class ToolLoop:
                 action.memory_id,
             )
         )
-        if not result.success or (signature == self._last_action_signature and not paths):
+        # A mutation reports the path it touched, which used to reset the
+        # counter even when the write changed nothing. An agent that rewrote
+        # identical content therefore never tripped the no-progress limit and
+        # looped until the user killed it.
+        stalled = not result.success or inert or (
+            signature == self._last_action_signature and not paths
+        )
+        if stalled:
             self._no_progress_steps += 1
         else:
             self._no_progress_steps = 0
@@ -817,6 +879,9 @@ def _summarize(result: ToolResult) -> str:
 # a callable rather than a Protocol so mission execution can build a closure
 # without defining a new class.
 OnActionCallback = Callable[[AgentAction, ToolResult, list[str]], None]
+
+#: Notified immediately before a validated action reaches the executor.
+OnActionStartCallback = Callable[[AgentAction], None]
 
 
 def _message_estimate(message: Message) -> int:

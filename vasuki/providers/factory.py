@@ -24,6 +24,7 @@ def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
             features=config.features,
             application_name=config.application_name,
             referring_url=config.referring_url,
+            reasoning_effort=config.reasoning_effort,
         )
     if config.type == "ollama":
         return OllamaProvider(
@@ -34,6 +35,7 @@ def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
             max_retries=config.max_retries,
             max_output_tokens=config.max_output_tokens,
             features=config.features,
+            reasoning_effort=config.reasoning_effort,
         )
     if config.type == "vllm":
         return VLLMProvider(
@@ -54,4 +56,5 @@ def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
         max_retries=config.max_retries,
         max_output_tokens=config.max_output_tokens,
         features=config.features,
+        reasoning_effort=config.reasoning_effort,
     )

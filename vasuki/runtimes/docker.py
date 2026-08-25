@@ -18,7 +18,7 @@ class DockerRuntime(LocalRuntime):
         self,
         root: Path,
         *,
-        image: str = "python:3.12-slim",
+        image: str = "python:3.12",
         cpu_limit: float = 2,
         memory_limit: str = "2g",
         network_access: bool = False,

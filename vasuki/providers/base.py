@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from vasuki.schemas import LLMResponse, Message
 
 StructuredT = TypeVar("StructuredT", bound=BaseModel)
+ReasoningHandler = Callable[[str], None]
 
 #: Output ceiling for one model reply. A coding agent writes files, so the old
 #: 4096 was routinely hit mid-JSON: the reply came back truncated and unparseable
@@ -33,6 +34,24 @@ class LLMProvider(ABC):
 
     name: str
     model: str
+
+    def set_reasoning_handler(self, handler: ReasoningHandler | None) -> None:
+        """Receive provider-supplied reasoning text as it arrives.
+
+        The callback is deliberately separate from :meth:`stream`: reasoning
+        must never be mixed into the assistant's answer.  It is optional so
+        existing provider adapters and callers retain their previous behavior.
+        """
+        self._reasoning_handler = handler
+
+    def _emit_reasoning(self, content: str) -> None:
+        """Forward a non-empty reasoning fragment to the optional observer."""
+        handler = getattr(self, "_reasoning_handler", None)
+        if handler is not None and content:
+            handler(content)
+
+    def _has_reasoning_handler(self) -> bool:
+        return getattr(self, "_reasoning_handler", None) is not None
 
     @abstractmethod
     async def complete(

@@ -6,22 +6,26 @@ from pathlib import Path
 import pytest
 from textual import events as textual_events
 from textual.containers import VerticalScroll
-from textual.widgets import ContentSwitcher, DataTable, Input, ListView, Select
+from textual.widgets import Button, ContentSwitcher, DataTable, Input, ListView, Select, Static
 from typer.testing import CliRunner
 
 from tests.conftest import commit_all, painted_text
 from vasuki.application import (
+    MissionApplicationService,
     ProviderApplicationService,
     initialize_project,
     open_project,
 )
-from vasuki.application.view_models import OpenRouterModel
+from vasuki.application.view_models import OpenRouterModel, ProviderStatus
 from vasuki.cli.app import app
+from vasuki.config import config_path
 from vasuki.events import (
     ApprovalRequested,
     DeploymentProgress,
     FileChanged,
     MissionCompleted,
+    ModelReasoningChunk,
+    ModelSelected,
     ModelStreamChunk,
     ToolCompleted,
     ToolFailed,
@@ -33,6 +37,7 @@ from vasuki.events import (
 from vasuki.events import (
     TestsStarted as VerificationStartedEvent,
 )
+from vasuki.persistence.models import ModelCall, ToolCall
 from vasuki.schemas import InteractionMode, QAReport
 from vasuki.tui.app import VasukiApp
 from vasuki.tui.keybindings import SLASH_COMMANDS
@@ -58,6 +63,22 @@ def initialized_app(root: Path) -> VasukiApp:
     commit_all(root)
     initialize_project(root)
     return VasukiApp(root, context=open_project(root))
+
+
+def test_tui_uses_launch_directory_even_beneath_another_project(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    parent = tmp_path / "parent"
+    (parent / ".git").mkdir(parents=True)
+    (parent / ".vasuki").mkdir()
+    child = parent / "test1"
+    child.mkdir()
+    monkeypatch.chdir(child)
+
+    app_instance = VasukiApp()
+
+    assert app_instance.project == child.resolve()
+    assert config_path(app_instance.project) == child.resolve() / ".vasuki" / "config.yaml"
 
 
 @pytest.mark.asyncio
@@ -134,6 +155,7 @@ async def test_clicking_each_primary_tab_switches_the_workspace(tmp_path: Path) 
             "changes-view",
             "tests-view",
             "logs-view",
+            "map-view",
             "chat-view",
         ):
             assert await pilot.click(f"#tab-{view_id}")
@@ -142,6 +164,92 @@ async def test_clicking_each_primary_tab_switches_the_workspace(tmp_path: Path) 
             assert [tab.view_id for tab in workspace.query(NavigationTab) if tab.active] == [
                 view_id
             ]
+
+
+@pytest.mark.asyncio
+async def test_prompt_map_lists_runs_and_draws_safe_token_graph(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+    commit_all(tmp_path)
+    initialize_project(tmp_path)
+    context = open_project(tmp_path)
+    service = MissionApplicationService(context)
+    older = service.core.create("First prompt")
+    newer = service.core.create("Second prompt")
+    with context.database.session() as session:
+        session.add_all(
+            [
+                ModelCall(
+                    id="model-map-old",
+                    mission_id=older.id,
+                    role="builder",
+                    provider="local-ollama",
+                    model="qwen3.8",
+                    selection_reason="selected for this session",
+                    input_tokens=120,
+                    output_tokens=30,
+                    latency_ms=250,
+                    estimated_cost=0.0,
+                    success=True,
+                ),
+                ToolCall(
+                    id="tool-map-old",
+                    mission_id=older.id,
+                    tool="chat.read_file",
+                    arguments={
+                        "thought": "PRIVATE REASONING MUST STAY HIDDEN",
+                        "action": "read_file",
+                        "path": "app.py",
+                        "content": "PRIVATE FILE CONTENT",
+                    },
+                    result_summary="ok",
+                    duration_seconds=0.02,
+                    success=True,
+                ),
+                ModelCall(
+                    id="model-map-new",
+                    mission_id=newer.id,
+                    role="summarizer",
+                    provider="local-ollama",
+                    model="qwen3.8",
+                    selection_reason="selected for this session",
+                    input_tokens=40,
+                    output_tokens=10,
+                    latency_ms=100,
+                    estimated_cost=0.0,
+                    success=True,
+                ),
+            ]
+        )
+    app_instance = VasukiApp(tmp_path, context=context)
+
+    async with app_instance.run_test(size=(140, 44)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        current_session = workspace.session_id
+
+        await workspace.execute_command("/map")
+        await pilot.pause()
+
+        table = workspace.query_one("#map-prompts", DataTable)
+        assert table.row_count == 2
+        assert "Second prompt" in workspace.query_one("#map-trace-summary", Static).render().plain
+        assert "50 tokens" in workspace.query_one("#map-trace-summary", Static).render().plain
+
+        table.focus()
+        table.move_cursor(row=1)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        graph = workspace.query_one("#map-graph", Static).render().plain
+        assert "First prompt" in workspace.query_one("#map-trace-summary", Static).render().plain
+        assert "MODEL" in graph
+        assert "120 in + 30 out = 150" in graph
+        assert "TOOL" in graph
+        assert "app.py" in graph
+        assert "PRIVATE REASONING" not in graph
+        assert "PRIVATE FILE CONTENT" not in graph
+        assert workspace.session_id == current_session
 
 
 @pytest.mark.asyncio
@@ -389,6 +497,7 @@ async def test_task_sidebar_tracks_current_agent_activity(tmp_path: Path) -> Non
         await pilot.pause()
         workspace = app_instance.screen
         assert isinstance(workspace, WorkspaceScreen)
+        await workspace.execute_command("/verbose on")
         checklist = workspace.query_one("#task-checklist", TaskChecklist)
 
         workspace.context.events.publish(
@@ -440,6 +549,345 @@ async def test_task_sidebar_tracks_current_agent_activity(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_verbose_command_controls_live_operational_detail(tmp_path: Path) -> None:
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        checklist = workspace.query_one("#task-checklist", TaskChecklist)
+
+        await workspace.execute_command("/verbose off")
+
+        workspace.context.events.publish(
+            ToolStarted(mission_id="quiet", tool="read_file", summary="Inspect secret.py")
+        )
+        workspace.context.events.publish(
+            ToolCompleted(
+                mission_id="quiet",
+                tool="read_file",
+                summary="Inspected secret.py",
+                duration_seconds=0.1,
+            )
+        )
+        await pilot.pause()
+
+        assert checklist.activity_state == "working"
+        assert "Inspect secret.py" not in painted_text(app_instance)
+
+        await workspace.execute_command("/verbose on")
+        conversation = workspace.query_one("#chat-view", ConversationView)
+        await conversation.begin_pending("understanding request")
+        workspace.context.events.publish(
+            ModelSelected(
+                mission_id="loud",
+                profile="local-ollama",
+                provider="local-ollama",
+                model="qwen",
+                role="builder",
+            )
+        )
+        await pilot.pause()
+        assert "local-ollama generating the next action" in painted_text(app_instance)
+        workspace.context.events.publish(
+            ToolStarted(mission_id="loud", tool="read_file", summary="Inspect visible.py")
+        )
+        workspace.context.events.publish(
+            ToolCompleted(
+                mission_id="loud",
+                tool="read_file",
+                summary="Inspected visible.py",
+                duration_seconds=0.1,
+            )
+        )
+        await pilot.pause()
+
+        assert checklist.activity_state == "inspecting"
+        assert "Inspected visible.py" in painted_text(app_instance)
+
+
+@pytest.mark.asyncio
+async def test_verbose_reasoning_is_ephemeral_and_resets_at_call_boundaries(
+    tmp_path: Path,
+) -> None:
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        await workspace.execute_command("/verbose on")
+        conversation = workspace.query_one("#chat-view", ConversationView)
+        await conversation.begin_pending("generating the next action")
+        bus = workspace.context.events
+
+        bus.publish(
+            ModelSelected(
+                mission_id="reasoning-run",
+                profile="local-ollama",
+                provider="local-ollama",
+                model="qwen",
+                role="builder",
+            )
+        )
+        bus.publish(
+            ModelReasoningChunk(
+                mission_id="reasoning-run",
+                content="Inspecting the requested page structure.",
+                role="builder",
+            )
+        )
+        await pilot.pause(0.12)
+
+        assert conversation.query_one("#live-reasoning", Static)
+        assert "Inspecting the requested page structure." in conversation.reasoning_text
+        assert "thinking · live recent" in painted_text(app_instance)
+        assert all(
+            "Inspecting the requested page structure." not in card.raw_content
+            for card in conversation.query(MessageCard)
+        )
+        assert all(
+            "Inspecting the requested page structure." not in item.content
+            for item in workspace.missions.messages(workspace.session_id)
+        )
+
+        # A new selection starts a different model call and must discard the old
+        # live tail before its first chunk arrives.
+        bus.publish(
+            ModelSelected(
+                mission_id="reasoning-run",
+                profile="local-ollama",
+                provider="local-ollama",
+                model="qwen",
+                role="builder",
+            )
+        )
+        await pilot.pause()
+        assert conversation.reasoning_text == ""
+        assert not list(conversation.query("#live-reasoning"))
+
+        bus.publish(
+            ModelReasoningChunk(
+                mission_id="reasoning-run",
+                content="Choosing a safe write operation.",
+                role="builder",
+            )
+        )
+        await pilot.pause(0.12)
+        bus.publish(
+            ToolStarted(
+                mission_id="reasoning-run",
+                tool="chat.write",
+                summary="Write index.html",
+            )
+        )
+        await pilot.pause()
+        assert conversation.reasoning_text == ""
+        assert not list(conversation.query("#live-reasoning"))
+
+        # User-facing stream chunks get their own answer card; reasoning never
+        # becomes its prefix or metadata.
+        bus.publish(
+            ModelSelected(
+                mission_id="reasoning-run",
+                profile="local-ollama",
+                provider="local-ollama",
+                model="qwen",
+                role="builder",
+            )
+        )
+        bus.publish(
+            ModelReasoningChunk(
+                mission_id="reasoning-run",
+                content="private working tail",
+                role="builder",
+            )
+        )
+        bus.publish(
+            ModelStreamChunk(
+                mission_id="reasoning-run",
+                content="Visible answer",
+                role="builder",
+            )
+        )
+        await pilot.pause(0.12)
+
+        assert conversation.reasoning_text == ""
+        agent_cards = [card for card in conversation.query(MessageCard) if card.kind == "agent"]
+        assert any(card.raw_content == "Visible answer" for card in agent_cards)
+        assert all("private working tail" not in card.raw_content for card in agent_cards)
+
+        bus.publish(
+            ModelSelected(
+                mission_id="reasoning-run",
+                profile="local-ollama",
+                provider="local-ollama",
+                model="qwen",
+                role="builder",
+            )
+        )
+        bus.publish(
+            ModelReasoningChunk(
+                mission_id="reasoning-run",
+                content="final private tail",
+                role="builder",
+            )
+        )
+        await pilot.pause(0.12)
+        assert conversation.reasoning_text
+        bus.publish(MissionCompleted(mission_id="reasoning-run", evidence_path="evidence.json"))
+        await pilot.pause()
+        assert conversation.reasoning_text == ""
+        assert not list(conversation.query("#live-reasoning"))
+
+
+@pytest.mark.asyncio
+async def test_reasoning_is_ignored_when_verbose_is_off_and_logs_stay_safe(
+    tmp_path: Path,
+) -> None:
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        await workspace.execute_command("/verbose off")
+        conversation = workspace.query_one("#chat-view", ConversationView)
+        await conversation.begin_pending("working")
+        raw_reasoning = "never show this private reasoning"
+
+        workspace.context.events.publish(
+            ModelSelected(
+                mission_id="quiet-reasoning",
+                profile="local-ollama",
+                provider="local-ollama",
+                model="qwen",
+                role="builder",
+            )
+        )
+        for _ in range(20):
+            workspace.context.events.publish(
+                ModelReasoningChunk(
+                    mission_id="quiet-reasoning",
+                    content=raw_reasoning,
+                    role="builder",
+                )
+            )
+        await pilot.pause(0.12)
+
+        assert conversation.reasoning_text == ""
+        assert not list(conversation.query("#live-reasoning"))
+        assert raw_reasoning not in painted_text(app_instance)
+        logs = workspace.query_one("#logs-view")
+        assert logs._live_label == "Working…"  # noqa: SLF001 - coalesced safe state
+        assert len(logs.query_one("#log-live-content").lines) == 0
+        audit_path = tmp_path / ".vasuki" / "logs" / "events.jsonl"
+        if audit_path.exists():
+            assert raw_reasoning not in audit_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_reasoning_is_markup_safe_redacted_and_bounded_across_split_chunks(
+    tmp_path: Path,
+) -> None:
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        await workspace.execute_command("/verbose on")
+        conversation = workspace.query_one("#chat-view", ConversationView)
+        await conversation.begin_pending("working")
+        bus = workspace.context.events
+        bus.publish(
+            ModelSelected(
+                mission_id="safe-reasoning",
+                profile="local-ollama",
+                provider="local-ollama",
+                model="qwen",
+                role="builder",
+            )
+        )
+        # Both credential forms are deliberately split across event boundaries.
+        bus.publish(
+            ModelReasoningChunk(
+                mission_id="safe-reasoning",
+                content="[bold red]literal markup[/]\x1b[31m\x00 api_",
+                role="builder",
+            )
+        )
+        bus.publish(
+            ModelReasoningChunk(
+                mission_id="safe-reasoning",
+                content="key=supersecret sk-",
+                role="builder",
+            )
+        )
+        bus.publish(
+            ModelReasoningChunk(
+                mission_id="safe-reasoning",
+                content="A" * 24,
+                role="builder",
+            )
+        )
+        await pilot.pause(0.12)
+
+        safe_tail = conversation.reasoning_text
+        assert "[bold red]literal markup[/]" in safe_tail
+        assert "[bold red]literal markup[/]" in painted_text(app_instance)
+        assert "\x1b" not in safe_tail
+        assert "\x00" not in safe_tail
+        assert "supersecret" not in safe_tail
+        assert "sk-" not in safe_tail
+        assert safe_tail.count("[REDACTED]") == 2
+
+        oversized = "\n".join(f"line-{index}-" + "x" * 240 for index in range(30))
+        bus.publish(
+            ModelReasoningChunk(
+                mission_id="safe-reasoning",
+                content=oversized,
+                role="builder",
+            )
+        )
+        await pilot.pause(0.12)
+
+        assert len(conversation.reasoning_text) <= conversation.REASONING_MAX_CHARS
+        assert len(conversation.reasoning_text.splitlines()) <= conversation.REASONING_MAX_LINES
+
+
+@pytest.mark.asyncio
+async def test_logs_live_section_tracks_current_model_and_tool(tmp_path: Path) -> None:
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+
+        workspace.context.events.publish(
+            ModelSelected(
+                mission_id="mission-live",
+                profile="local-ollama",
+                provider="local-ollama",
+                model="qwen3.8",
+                role="builder",
+            )
+        )
+        workspace.context.events.publish(
+            ToolStarted(
+                mission_id="mission-live",
+                tool="chat.read_file",
+                summary="Inspect app.py",
+            )
+        )
+        await pilot.pause()
+        await workspace.execute_command("/logs")
+        await pilot.pause()
+
+        painted = painted_text(app_instance)
+        assert "Live activity" in painted
+        assert "Builder using qwen3.8" in painted
+        assert "chat.read_file: Inspect app.py" in painted
+
+
+@pytest.mark.asyncio
 async def test_returning_from_providers_focuses_chat_and_enter_sends(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -464,6 +912,24 @@ async def test_returning_from_providers_focuses_chat_and_enter_sends(
 
         assert requests == ["hi"]
         assert any(card.raw_content == "hi" for card in workspace.query(MessageCard))
+
+
+@pytest.mark.asyncio
+async def test_globalprovider_command_and_project_global_button(tmp_path: Path) -> None:
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(110, 36)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        view = workspace.query_one("#providers-view", ProvidersView)
+
+        await workspace.execute_command("/globalprovider")
+        assert view.scope == "global"
+        assert not view.query_one("#use-global-provider", Button).display
+
+        await workspace.execute_command("/provider")
+        assert view.scope == "project"
+        assert view.query_one("#use-global-provider", Button).display
 
 
 @pytest.mark.asyncio
@@ -650,6 +1116,64 @@ async def test_saved_openrouter_provider_and_model_are_restored(
 
 
 @pytest.mark.asyncio
+async def test_connecting_provider_replaces_previous_session_model_pin(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        workspace.providers.add(
+            name="openrouter",
+            provider_type="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            model="openai/test-model",
+            api_key_reference="env://OPENROUTER_API_KEY",
+        )
+        workspace.providers.select_for_session(workspace.session_id, "openrouter")
+        workspace.providers.add(
+            name="local-ollama",
+            provider_type="ollama",
+            base_url="http://127.0.0.1:11434/v1",
+            model="qwen3.8:27b-mlx",
+        )
+        assert workspace.providers.session_profile(workspace.session_id) == "openrouter"
+
+        async def configured(**_: object) -> tuple[ProviderStatus, list[OpenRouterModel]]:
+            return (
+                ProviderStatus(
+                    name="local-ollama",
+                    type="ollama",
+                    base_url="http://127.0.0.1:11434/v1",
+                    model="qwen3.8:27b-mlx",
+                    connected=True,
+                    detail="17 ms; routed all agent roles",
+                ),
+                [],
+            )
+
+        monkeypatch.setattr(workspace.providers, "configure", configured)
+        workspace.save_provider(
+            {
+                "name": "local-ollama",
+                "provider_type": "ollama",
+                "base_url": "http://127.0.0.1:11434/v1",
+                "model": "qwen3.8:27b-mlx",
+                "api_key_input": "",
+            }
+        )
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if workspace.providers.session_profile(workspace.session_id) == "local-ollama":
+                break
+
+        assert workspace.providers.session_profile(workspace.session_id) == "local-ollama"
+        assert workspace.active_model == "local-ollama"
+
+
+@pytest.mark.asyncio
 async def test_chat_scroll_follows_bottom_but_preserves_manual_position(
     tmp_path: Path,
 ) -> None:
@@ -783,6 +1307,7 @@ async def test_live_events_render_without_blocking_and_refresh_context(
         await pilot.pause()
         workspace = app_instance.screen
         assert isinstance(workspace, WorkspaceScreen)
+        await workspace.execute_command("/verbose on")
         bus = workspace.context.events
         bus.publish(ModelStreamChunk(mission_id="M-live", content="Streaming ", role="builder"))
         bus.publish(ModelStreamChunk(mission_id="M-live", content="answer", role="builder"))
@@ -869,10 +1394,10 @@ def test_bare_cli_and_explicit_tui_launch_use_tui(
 
 
 @pytest.mark.asyncio
-async def test_a_new_directory_opens_straight_to_work_when_a_model_is_configured(
+async def test_a_new_directory_offers_global_or_project_specific_settings(
     tmp_path: Path,
 ) -> None:
-    """The reported problem: every new folder asked for configuration again."""
+    """New projects make configuration inheritance an explicit choice."""
     from vasuki.config.globals import save_global
     from vasuki.config.models import ModelProfileConfig, ProviderConfig, Settings
 
@@ -890,16 +1415,10 @@ async def test_a_new_directory_opens_straight_to_work_when_a_model_is_configured
     fresh.mkdir()
     app_instance = VasukiApp(fresh)
     async with app_instance.run_test(size=(110, 36)) as pilot:
-        for _ in range(100):
-            await pilot.pause(0.05)
-            if isinstance(app_instance.screen, WorkspaceScreen):
-                break
-
-        # Straight to the workspace: no form, no questions.
-        assert isinstance(app_instance.screen, WorkspaceScreen)
-        assert not isinstance(app_instance.screen, OnboardingScreen)
-        # And the globally configured model is the one it will use.
-        assert "openrouter" in app_instance.screen.context.settings.providers
+        await pilot.pause()
+        assert isinstance(app_instance.screen, OnboardingScreen)
+        scope = app_instance.screen.query_one("#settings-scope", Select)
+        assert scope.value == "global"
 
 
 @pytest.mark.asyncio

@@ -10,16 +10,62 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 
 from vasuki.application.context import ProjectContext
-from vasuki.application.view_models import OpenRouterModel, ProviderStatus
-from vasuki.config import save_settings
-from vasuki.config.globals import save_global
-from vasuki.config.models import ModelProfileConfig, ProviderConfig
+from vasuki.application.view_models import CatalogModel, OpenRouterModel, ProviderStatus
+from vasuki.config import (
+    default_settings,
+    load_settings,
+    save_settings,
+    use_global_provider_settings,
+)
+from vasuki.config.globals import (
+    has_global_provider,
+    load_global_data,
+    merge_layers,
+    save_global,
+)
+from vasuki.config.models import ModelProfileConfig, ProviderConfig, Settings
 from vasuki.events import ModelSelected
 from vasuki.model_router import ModelRole
 from vasuki.persistence.models import ConversationSession, Provider
-from vasuki.providers import OpenRouterProvider, create_provider
-from vasuki.security import redact, resolve_secret, store_project_secret
+from vasuki.providers import OllamaProvider, OpenRouterProvider, create_provider
+from vasuki.security import redact, resolve_secret, store_global_secret, store_project_secret
 from vasuki.utils.ids import new_id
+
+
+async def list_ollama_models(
+    base_url: str = "http://127.0.0.1:11434/v1",
+) -> list[CatalogModel]:
+    """List the models a local Ollama already has pulled.
+
+    Offering these instead of a free-text field is the difference between
+    choosing a model and guessing its exact tag: ``qwen3.8:27b-mlx`` is not a
+    name anyone recalls, and a near miss fails only at the first request. Kept
+    at module level because onboarding needs it before a project context exists.
+    """
+    provider = OllamaProvider(
+        model="",
+        base_url=base_url.strip() or "http://127.0.0.1:11434/v1",
+        max_retries=0,
+    )
+    try:
+        return ProviderApplicationService._ollama_models(await provider.list_models())
+    finally:
+        await provider.close()
+
+
+def _human_size(value: object) -> str:
+    """Render a byte count the way a model listing should read: "16.9 GB"."""
+    try:
+        size = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return ""
+    if size <= 0:
+        return ""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}" if unit not in {"B", "KB"} else f"{size:.0f} {unit}"
+        size /= 1024
+    return ""
 
 
 class ProviderApplicationService:
@@ -56,7 +102,13 @@ class ProviderApplicationService:
                 return name
         return ""
 
-    def _apply_routing(self, profile_name: str, *, make_default: bool) -> list[str]:
+    def _apply_routing(
+        self,
+        profile_name: str,
+        *,
+        make_default: bool,
+        settings: Settings | None = None,
+    ) -> list[str]:
         """Point agent roles at ``profile_name``.
 
         Routes that no longer resolve to a configured provider are always repaired;
@@ -64,11 +116,17 @@ class ProviderApplicationService:
         Without this a provider connected after the first one is validated, saved,
         and then never used, because every role still points at the original.
         """
-        routing = self.context.settings.routing
+        selected_settings = settings or self.context.settings
+        routing = selected_settings.routing
         rerouted: list[str] = []
         for role in ModelRole:
             current = routing.get(role.value)
-            if not make_default and self.route_is_usable(current):
+            current_profile = selected_settings.models.get(str(current)) if current else None
+            current_is_usable = (
+                current_profile is not None
+                and current_profile.provider in selected_settings.providers
+            )
+            if not make_default and current_is_usable:
                 continue
             if current != profile_name:
                 rerouted.append(role.value)
@@ -84,6 +142,7 @@ class ProviderApplicationService:
         model: str,
         api_key_reference: str = "",
         make_default: bool = True,
+        scope: str = "project",
     ) -> list[str]:
         """Add or update a provider without accepting literal secret values.
 
@@ -101,17 +160,32 @@ class ProviderApplicationService:
         )
         host = urlparse(provider.base_url).hostname or ""
         local = provider_type in {"ollama", "vllm"} or host in {"localhost", "127.0.0.1", "::1"}
-        self.context.settings.providers[normalized] = provider
-        self.context.settings.models[normalized] = ModelProfileConfig(
+        if scope == "global":
+            base = default_settings(self.context.root).safe_dump()
+            target_settings = Settings.model_validate(merge_layers(base, load_global_data()))
+        elif scope == "project":
+            target_settings = self.context.settings
+        else:
+            raise ValueError(f"Unknown provider scope {scope}")
+        target_settings.providers[normalized] = provider
+        target_settings.models[normalized] = ModelProfileConfig(
             provider=normalized,
             model=provider.model,
             local=local,
         )
-        rerouted = self._apply_routing(normalized, make_default=make_default)
-        # Providers and their routing are user-level: a model connected in one
-        # checkout should be available in the next one without repeating this.
-        save_global(self.context.settings)
-        save_settings(self.context.settings, self.context.root)
+        rerouted = self._apply_routing(
+            normalized,
+            make_default=make_default,
+            settings=target_settings,
+        )
+        if scope == "global":
+            save_global(target_settings)
+            effective = load_settings(self.context.root)
+            current = self.context.settings
+            for field_name in type(current).model_fields:
+                setattr(current, field_name, getattr(effective, field_name))
+        else:
+            save_settings(target_settings, self.context.root)
         with self.context.database.session() as session:
             stored = session.scalar(select(Provider).where(Provider.name == normalized))
             if stored:
@@ -157,6 +231,41 @@ class ProviderApplicationService:
         return sorted(models, key=lambda item: (item.name.casefold(), item.id))
 
     @staticmethod
+    def _ollama_models(items: list[dict[str, Any]]) -> list[CatalogModel]:
+        """Shape ``/api/tags`` (or ``/v1/models``) entries for the model picker."""
+        models: list[CatalogModel] = []
+        for item in items:
+            model_id = str(item.get("model") or item.get("name") or item.get("id") or "").strip()
+            if not model_id:
+                continue
+            details = item.get("details")
+            details = details if isinstance(details, dict) else {}
+            capabilities = item.get("capabilities")
+            capabilities = capabilities if isinstance(capabilities, list) else []
+            parts = [
+                _human_size(item.get("size")),
+                str(details.get("parameter_size") or "").strip(),
+                str(details.get("quantization_level") or "").strip(),
+                ", ".join(str(value) for value in capabilities if value),
+            ]
+            models.append(
+                CatalogModel(
+                    id=model_id,
+                    name=model_id,
+                    detail=" · ".join(part for part in parts if part),
+                )
+            )
+        return sorted(models, key=lambda item: item.id.casefold())
+
+    async def ollama_models(
+        self,
+        *,
+        base_url: str = "http://127.0.0.1:11434/v1",
+    ) -> list[CatalogModel]:
+        """List the models a local Ollama already has pulled."""
+        return await list_ollama_models(base_url)
+
+    @staticmethod
     def _secret_value(value_or_reference: str) -> str:
         value = value_or_reference.strip()
         if value.startswith(("env://", "file://", "keyring://")):
@@ -190,6 +299,7 @@ class ProviderApplicationService:
         model: str,
         api_key_input: str = "",
         make_default: bool = True,
+        scope: str = "project",
     ) -> tuple[ProviderStatus, list[OpenRouterModel]]:
         """Validate a provider before saving it, securely storing literal OpenRouter keys."""
         if provider_type != "openrouter":
@@ -200,6 +310,7 @@ class ProviderApplicationService:
                 model=model,
                 api_key_reference=api_key_input,
                 make_default=make_default,
+                scope=scope,
             )
             status = await self.health(name)
             return (
@@ -240,7 +351,11 @@ class ProviderApplicationService:
         reference = (
             supplied
             if supplied.startswith(("env://", "file://", "keyring://"))
-            else store_project_secret(self.context.root, f"{normalized}-openrouter", api_key)
+            else (
+                store_global_secret(f"{normalized}-openrouter", api_key)
+                if scope == "global"
+                else store_project_secret(self.context.root, f"{normalized}-openrouter", api_key)
+            )
         )
         rerouted = self.add(
             name=normalized,
@@ -249,6 +364,7 @@ class ProviderApplicationService:
             model=model,
             api_key_reference=reference,
             make_default=make_default,
+            scope=scope,
         )
         label = str(key_details.get("label") or "validated key")
         remaining = key_details.get("limit_remaining")
@@ -266,6 +382,21 @@ class ProviderApplicationService:
             ),
             models,
         )
+
+    def use_global(self) -> str:
+        """Drop project provider/model routes and inherit the shared configuration."""
+        if not has_global_provider():
+            raise ValueError("No global provider is configured. Use /globalprovider first.")
+        inherited = use_global_provider_settings(self.context.root)
+        # Keep the Settings object identity because gateways and mission services
+        # retain it; replacing only context.settings would leave them stale.
+        current = self.context.settings
+        for field_name in type(current).model_fields:
+            setattr(current, field_name, getattr(inherited, field_name))
+        profile = self.routable_profile()
+        if not profile:
+            raise ValueError("Global settings do not contain a usable model route")
+        return profile
 
     @staticmethod
     def _routing_detail(detail: str, rerouted: list[str]) -> str:
@@ -343,3 +474,58 @@ class ProviderApplicationService:
                 details={"persisted_routing": False},
             )
         )
+
+    def set_session_effort(self, session_id: str, effort: str) -> tuple[str, str]:
+        """Set reasoning effort on the session-selected profile without persisting it."""
+        allowed = {
+            "auto",
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        }
+        normalized = effort.strip().casefold()
+        if normalized not in allowed:
+            raise ValueError(
+                "Effort must be auto, none, minimal, low, medium, high, xhigh, or max."
+            )
+        profile_name = self.session_profile(session_id) or self.routable_profile()
+        if not profile_name:
+            raise ValueError("No model is selected. Configure a provider first.")
+        profile = self.context.settings.models[profile_name]
+        provider = self.context.settings.providers.get(profile.provider)
+        if provider is None:
+            raise ValueError(f"Profile {profile_name} references a missing provider")
+        if provider.type == "ollama" and normalized not in {
+            "auto",
+            "none",
+            "low",
+            "medium",
+            "high",
+            "max",
+        }:
+            raise ValueError(
+                "Ollama effort must be auto, none, low, medium, high, or max."
+            )
+        if (
+            provider.type not in {"openrouter", "openai-compatible", "ollama"}
+            and normalized != "auto"
+        ):
+            raise ValueError(
+                f"{provider.type} does not expose standardized reasoning effort control."
+            )
+        if normalized == "max" and provider.type not in {"openrouter", "ollama"}:
+            raise ValueError("The max effort level is supported through OpenRouter or Ollama.")
+        profile.reasoning_effort = (  # type: ignore[assignment]
+            None if normalized == "auto" else normalized
+        )
+        return profile_name, normalized
+
+    def session_effort(self, session_id: str) -> str:
+        profile_name = self.session_profile(session_id) or self.routable_profile()
+        if not profile_name:
+            return "auto"
+        return self.context.settings.models[profile_name].reasoning_effort or "auto"

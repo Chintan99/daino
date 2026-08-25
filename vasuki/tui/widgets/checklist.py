@@ -14,6 +14,7 @@ from vasuki.tui import palette
 
 _ACTIVITY_LABELS = {
     "idle": "READY",
+    "working": "WORKING",
     "thinking": "THINKING",
     "planning": "PLANNING",
     "inspecting": "INSPECTING",
@@ -23,7 +24,9 @@ _ACTIVITY_LABELS = {
     "failed": "ERROR",
 }
 
-_RUNNING_STATES = frozenset({"thinking", "planning", "inspecting", "building", "verifying"})
+_RUNNING_STATES = frozenset(
+    {"working", "thinking", "planning", "inspecting", "building", "verifying"}
+)
 _DINO_BODY = (
     "   ▄██",
     "▖▄███▀",
@@ -34,6 +37,7 @@ _GROUND = "─  · ───   ·  ──  "
 
 _ACTIVITY_COLOURS = {
     "idle": palette.DIM,
+    "working": palette.ACCENT,
     "thinking": palette.PLAN,
     "planning": palette.PLAN,
     "inspecting": palette.TOOL,

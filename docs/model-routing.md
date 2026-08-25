@@ -36,7 +36,7 @@ models:
     coding_score: 8
     execution_mode: compact       # auto, compact, standard
     initial_context_tokens: 8192  # 0 derives it from the model window
-    max_agent_steps: 32           # 0 uses the mode default
+    max_agent_steps: 0            # 0 is unlimited; positive values set a hard cap
     no_progress_limit: 3
     staged_retrieval: true
 ```

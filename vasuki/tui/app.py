@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
 from textual.app import App
 from textual.theme import Theme
 
-from vasuki.application import ProjectContext, adopt_project, open_project
+from vasuki.application import ProjectContext, open_project
 from vasuki.config import config_path, find_project_root
-from vasuki.config.globals import has_global_provider
 from vasuki.tui import palette
 from vasuki.tui.screens import OnboardingScreen, WorkspaceScreen
 
@@ -67,7 +65,10 @@ class VasukiApp(App[None]):
     ) -> None:
         super().__init__(**kwargs)
         self.register_theme(VASUKI_DARK_THEME)
-        self.project = find_project_root(project)
+        # Starting the TUI in a directory is an explicit workspace choice. Do
+        # not let a parent Git repository capture it and expose that parent's
+        # conversation history and usage totals.
+        self.project = find_project_root(project or Path.cwd())
         self.project_context = context
 
     async def on_mount(self) -> None:
@@ -75,22 +76,6 @@ class VasukiApp(App[None]):
             await self.open_workspace(self.project_context)
             return
         if not config_path(self.project).exists():
-            # Asking again in every new directory is setup work, not a choice.
-            # When a model is already configured globally there is nothing left
-            # to ask: initialize quietly and open the workspace.
-            if has_global_provider():
-                try:
-                    context = await asyncio.to_thread(adopt_project, self.project)
-                except Exception as exc:  # noqa: BLE001 - fall back to asking
-                    await self.push_screen(
-                        OnboardingScreen(
-                            self.project,
-                            error=f"Could not set up this project automatically: {exc}",
-                        )
-                    )
-                    return
-                await self.open_workspace(context)
-                return
             await self.push_screen(OnboardingScreen(self.project))
             return
         try:
@@ -131,7 +116,7 @@ def run_tui(project: Path | None = None) -> None:
     from vasuki.utils import crashlog
 
     try:
-        root = find_project_root(project)
+        root = find_project_root(project or Path.cwd())
     except Exception:  # noqa: BLE001 - diagnostics must not decide whether we start
         root = project or Path.cwd()
     crashlog.install(root)

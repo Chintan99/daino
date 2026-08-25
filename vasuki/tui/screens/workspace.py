@@ -17,6 +17,7 @@ from textual.widgets import Button, ContentSwitcher
 from vasuki.application import (
     CheckpointApplicationService,
     DeploymentApplicationService,
+    ExecutionMapApplicationService,
     MissionApplicationService,
     ProjectContext,
     ProviderApplicationService,
@@ -40,6 +41,7 @@ from vasuki.events import (
     MissionEvent,
     MissionFailed,
     MissionStarted,
+    ModelReasoningChunk,
     ModelSelected,
     ModelStreamChunk,
     RollbackCompleted,
@@ -63,6 +65,7 @@ from vasuki.tui.screens.views import (
     CheckpointsView,
     DeploymentsView,
     DiffView,
+    ExecutionMapView,
     FilesView,
     HelpView,
     LogsView,
@@ -149,6 +152,7 @@ class WorkspaceScreen(Screen[None]):
         self.qa = QAApplicationService(context, self.missions)
         self.verification = VerificationApplicationService(context)
         self.deployments = DeploymentApplicationService(context)
+        self.execution_map = ExecutionMapApplicationService(context)
         self.settings = SettingsApplicationService(context)
         self.checkpoints = CheckpointApplicationService(context)
         self.session_id = ""
@@ -163,6 +167,7 @@ class WorkspaceScreen(Screen[None]):
         self._resolved_approvals: set[tuple[str, str]] = set()
         self._question_missions: set[str] = set()
         self._chat_running = False
+        self._chat_previous_status: str | None = None
         self._event_subscription: Any = None
         self._context_user_hidden = False
         self._refresh_pending = False
@@ -171,6 +176,7 @@ class WorkspaceScreen(Screen[None]):
         self._status_updated_at = 0.0
         self._last_usage: tuple[int, float] = (0, 0.0)
         self._last_qa_report: QAReport | None = None
+        self.verbose = False
         self._home = str(Path.home())
 
     def compose(self) -> ComposeResult:
@@ -192,6 +198,7 @@ class WorkspaceScreen(Screen[None]):
                 yield ProvidersView(self.providers)
                 yield SettingsView(self.settings)
                 yield LogsView(self.context.root)
+                yield ExecutionMapView(self.execution_map)
                 yield HelpView()
             yield TaskChecklist(id="task-checklist", classes="hidden-panel")
         yield ContextStrip(id="context-strip")
@@ -212,6 +219,7 @@ class WorkspaceScreen(Screen[None]):
         # prompt — paying for context from a conversation that is already over.
         # Earlier sessions stay in the database and are still browsable.
         self.session_id = self.missions.create_session()
+        self.verbose = self.missions.verbose_enabled(self.session_id)
         self.interaction_mode = self.missions.interaction_mode(self.session_id)
         conversation = self.query_one("#chat-view", ConversationView)
         conversation.set_environment(
@@ -298,6 +306,14 @@ class WorkspaceScreen(Screen[None]):
         )
 
     def _set_activity(self, state: str, detail: str = "") -> None:
+        if not self.verbose and state in {
+            "thinking",
+            "planning",
+            "inspecting",
+            "building",
+            "verifying",
+        }:
+            state, detail = "working", ""
         self.query_one("#task-checklist", TaskChecklist).set_activity(state, detail)
 
     @staticmethod
@@ -335,6 +351,7 @@ class WorkspaceScreen(Screen[None]):
     async def _render_event(self, event: MissionEvent) -> None:
         conversation = self.query_one("#chat-view", ConversationView)
         context = self.query_one("#context-strip", ContextStrip)
+        self.query_one("#logs-view", LogsView).record_event(event, verbose=self.verbose)
         now = event.timestamp.strftime("%H:%M:%S")
         if isinstance(event, MissionCreated) and event.mode == ProjectMode.DIRECT.value:
             # Questions create a direct-mode mission for auditing only. Adopting it as
@@ -344,11 +361,18 @@ class WorkspaceScreen(Screen[None]):
             self.active_mission_id = event.mission_id
 
         if isinstance(event, MissionCreated):
+            if event.mission_id:
+                # Planning creates its mission inside the core service, while
+                # chat/ask attach theirs directly. This keeps live usage scoped
+                # to the current window for every entry point, including errors.
+                self.missions.attach_session_mission(self.session_id, event.mission_id)
             # A plain question creates a direct-mode mission purely for auditing;
             # announcing it in the transcript is noise between the prompt and answer.
             if event.mode == ProjectMode.DIRECT.value:
                 self._set_activity("thinking", "understanding request")
-                context.add_activity(f"{now}  Question {event.mission_id}")
+                if self.verbose:
+                    context.add_activity(f"{now}  Question {event.mission_id}")
+                    conversation.update_pending("understanding request")
             else:
                 self.active_status = "Planning"
                 self._set_activity("planning", "shaping the task")
@@ -361,12 +385,29 @@ class WorkspaceScreen(Screen[None]):
         elif isinstance(event, AgentRoleChanged):
             self.active_role = event.role.title()
             self._set_activity(self._role_activity(event.role), f"{event.role} active")
-            context.add_activity(f"{now}  {event.role.title()} active")
+            if self.verbose:
+                context.add_activity(f"{now}  {event.role.title()} active")
+                conversation.update_pending(f"{event.role} reasoning about the next action")
         elif isinstance(event, ModelSelected):
+            # Selection is the reliable start boundary for every model call.
+            # Never let the previous call's ephemeral reasoning bleed into it.
+            await conversation.begin_reasoning()
             self.active_model = event.profile
             self.active_provider = event.provider
-            context.add_activity(f"{now}  Model {event.profile}")
+            if self.verbose:
+                context.add_activity(f"{now}  Model {event.profile}")
+                conversation.update_pending(f"{event.profile} generating the next action")
+        elif isinstance(event, ModelReasoningChunk):
+            if self.verbose:
+                first_chunk = not conversation.reasoning_text
+                if first_chunk:
+                    self._set_activity("thinking", "model reasoning")
+                    context.add_activity(f"{now}  Model reasoning")
+                    conversation.update_pending("model reasoning")
+                await conversation.append_reasoning(event.content)
         elif isinstance(event, ModelStreamChunk):
+            # Answer text and private reasoning must never share a card or tail.
+            await conversation.clear_reasoning()
             await conversation.append_stream(event.content, role=event.role)
         elif isinstance(event, MissionStarted):
             self.active_status = "Running"
@@ -386,12 +427,14 @@ class WorkspaceScreen(Screen[None]):
                 "in_progress",
                 mission_id=event.mission_id,
             )
-            await conversation.add_message(
-                f"{event.title}",
-                kind="agent",
-                role=self.active_role or "builder",
-            )
-            context.add_activity(f"{now}  Started {event.title[:24]}")
+            if self.verbose:
+                conversation.update_pending(event.title)
+                await conversation.add_message(
+                    f"{event.title}",
+                    kind="agent",
+                    role=self.active_role or "builder",
+                )
+                context.add_activity(f"{now}  Started {event.title[:24]}")
         elif isinstance(event, TaskCompleted):
             self.missions.update_session_todo(
                 self.session_id,
@@ -399,24 +442,35 @@ class WorkspaceScreen(Screen[None]):
                 "completed",
                 mission_id=event.mission_id,
             )
-            context.add_activity(f"{now}  Completed {event.title[:22]}")
+            if self.verbose:
+                context.add_activity(f"{now}  Completed {event.title[:22]}")
         elif isinstance(event, TodoUpdated):
             if event.session_id == self.session_id:
                 self.query_one("#task-checklist", TaskChecklist).set_todos(
                     [TodoItem.model_validate(item) for item in event.todos]
                 )
         elif isinstance(event, ToolStarted):
+            # A tool invocation means the preceding model call has ended.
+            await conversation.clear_reasoning()
             self._set_activity(self._tool_activity(event.tool), event.summary)
-            context.add_activity(f"{now}  {event.summary[:30]}")
-            conversation.update_pending(f"{event.tool.removeprefix('agent.')} {event.summary}")
+            if self.verbose:
+                context.add_activity(f"{now}  {event.summary[:30]}")
+                conversation.update_pending(
+                    f"{event.tool.removeprefix('agent.')} {event.summary}"
+                )
+            else:
+                conversation.update_pending("working")
         elif isinstance(event, ToolProgress):
-            context.add_activity(f"{now}  {event.summary[:30]}")
+            if self.verbose:
+                context.add_activity(f"{now}  {event.summary[:30]}")
+                conversation.update_pending(event.summary)
         elif isinstance(event, ToolCompleted):
-            await conversation.add_message(
-                f"{event.summary} ({event.duration_seconds:.2f}s)",
-                kind="tool",
-                metadata=event.payload(),
-            )
+            if self.verbose:
+                await conversation.add_message(
+                    f"{event.summary} ({event.duration_seconds:.2f}s)",
+                    kind="tool",
+                    metadata=event.payload(),
+                )
         elif isinstance(event, ToolFailed):
             self._set_activity("failed", event.error)
             await conversation.add_message(
@@ -428,20 +482,23 @@ class WorkspaceScreen(Screen[None]):
             self._set_activity("building", event.path)
             # Show the change itself when the event carries one. "Replace
             # cars.html" says a file moved; the diff says what the agent did.
-            await conversation.add_message(
-                event.diff or f"{event.action.title()} {event.path}",
-                kind="diff" if event.diff else "tool",
-                metadata=event.payload(),
-            )
+            if self.verbose:
+                await conversation.add_message(
+                    event.diff or f"{event.action.title()} {event.path}",
+                    kind="diff" if event.diff else "tool",
+                    metadata=event.payload(),
+                )
             self._refresh_diff()
         elif isinstance(event, TestsStarted):
             self.active_status = "Verifying"
             self._set_activity("verifying", "running checks")
-            await conversation.add_message(
-                "Running:\n" + "\n".join(event.commands),
-                kind="test",
-                role="tester",
-            )
+            if self.verbose:
+                conversation.update_pending("running verification")
+                await conversation.add_message(
+                    "Running:\n" + "\n".join(event.commands),
+                    kind="test",
+                    role="tester",
+                )
             context.set_tests("Running…")
         elif isinstance(event, TestsCompleted):
             label = (
@@ -470,7 +527,8 @@ class WorkspaceScreen(Screen[None]):
             # it each time is noise around the answer the user actually asked
             # for; it still appears in the Checkpoints view and in the activity
             # strip, which is where someone looking to restore one would go.
-            context.add_activity(f"{now}  Checkpoint {event.description}"[:60])
+            if self.verbose:
+                context.add_activity(f"{now}  Checkpoint {event.description}"[:60])
             self.query_one("#checkpoints-view", CheckpointsView).refresh_data()
         elif isinstance(event, ApprovalRequested):
             approval_key = (event.mission_id or "", event.category)
@@ -517,6 +575,7 @@ class WorkspaceScreen(Screen[None]):
                 kind="approval" if event.approved else "error",
             )
         elif isinstance(event, MissionCompleted):
+            await conversation.clear_reasoning()
             conversation.finish_stream()
             self.active_status = "Completed"
             self._set_activity("completed", "all work verified")
@@ -528,6 +587,7 @@ class WorkspaceScreen(Screen[None]):
             self._refresh_missions()
             self._refresh_diff()
         elif isinstance(event, MissionFailed):
+            await conversation.clear_reasoning()
             conversation.finish_stream()
             self.active_status = "Failed"
             self._set_activity("failed", "needs attention")
@@ -544,7 +604,8 @@ class WorkspaceScreen(Screen[None]):
             )
         elif isinstance(event, DeploymentProgress):
             self._set_activity("building", event.stage)
-            context.add_activity(f"{now}  Deploy: {event.stage[:24]}")
+            if self.verbose:
+                context.add_activity(f"{now}  Deploy: {event.stage[:24]}")
         elif isinstance(event, DeploymentVerified):
             self._set_activity(
                 "completed" if event.healthy else "failed",
@@ -590,6 +651,11 @@ class WorkspaceScreen(Screen[None]):
         self._refresh_pending = False
         self._status_updated_at = now
         self._update_status()
+        if self.query_one("#main-workspace", ContentSwitcher).current == "map-view":
+            # Keep the user's selected prompt stable while its in-flight trace
+            # gains model, tool, and verification steps. The complete prompt
+            # index is reloaded whenever Map is opened.
+            self.query_one("#map-view", ExecutionMapView).refresh_selected()
 
     def _show_approval(
         self,
@@ -719,7 +785,7 @@ class WorkspaceScreen(Screen[None]):
     def _update_status(self) -> None:
         try:
             with self.context.database.session() as session:
-                stats = collect_stats(session, self.active_mission_id)
+                stats = collect_stats(session, session_id=self.session_id)
         except Exception:
             stats = {"input_tokens": 0, "output_tokens": 0, "estimated_cost": 0}
         statuses = self.repository.git_status()
@@ -776,6 +842,8 @@ class WorkspaceScreen(Screen[None]):
         self.request_refresh()
 
     def on_navigation_tab_selected(self, event: NavigationTab.Selected) -> None:
+        if event.view_id == "providers-view":
+            self.query_one("#providers-view", ProvidersView).set_scope("project")
         self.action_open_view(event.view_id)
 
     async def on_prompt_input_submitted(self, event: PromptInput.Submitted) -> None:
@@ -830,6 +898,8 @@ class WorkspaceScreen(Screen[None]):
                 )
                 return
             self.save_provider(values)
+        elif event.button.id == "use-global-provider":
+            self.use_global_provider()
         elif event.button.id == "refresh-provider-models":
             self.query_one("#providers-view", ProvidersView).load_openrouter_models()
 
@@ -850,6 +920,14 @@ class WorkspaceScreen(Screen[None]):
             if self.interaction_mode == InteractionMode.PLAN:
                 self.plan_mission(raw)
             else:
+                # Set the busy state before Textual schedules the worker. This
+                # gives immediate feedback and prevents callers from observing
+                # a stale Ready state during the scheduling gap.
+                self._chat_previous_status = self.active_status
+                self._chat_running = True
+                self.active_status = "Working"
+                self._set_activity("thinking", "understanding request")
+                self.request_refresh()
                 self.run_chat_agent(raw)
             return
         command, _, arguments = raw.partition(" ")
@@ -863,11 +941,17 @@ class WorkspaceScreen(Screen[None]):
             "/checkpoints": "checkpoints-view",
             "/playbooks": "playbooks-view",
             "/provider": "providers-view",
+            "/globalprovider": "providers-view",
             "/settings": "settings-view",
             "/logs": "logs-view",
+            "/map": "map-view",
             "/status": "chat-view",
         }
         if command in view_commands and not (command in {"/provider", "/qa"} and arguments):
+            if command in {"/provider", "/globalprovider"}:
+                self.query_one("#providers-view", ProvidersView).set_scope(
+                    "global" if command == "/globalprovider" else "project"
+                )
             self.action_open_view(view_commands[command])
             if command == "/files" and arguments:
                 self.query_one("#files-view", FilesView).refresh_data(arguments)
@@ -877,6 +961,8 @@ class WorkspaceScreen(Screen[None]):
                     f"Mission: {self.active_mission_id or 'none'}\n"
                     f"Status: {self.active_status}\n"
                     f"Runtime: {self.context.settings.runtime.default}\n"
+                    f"Reasoning effort: {self.providers.session_effort(self.session_id)}\n"
+                    f"Verbose: {'on' if self.verbose else 'off'}\n"
                     f"Mode: {self.interaction_mode.value}",
                     kind="status",
                 )
@@ -983,6 +1069,39 @@ class WorkspaceScreen(Screen[None]):
                 self.select_model(arguments)
             else:
                 self.action_model_selector()
+        elif command == "/effort":
+            if not arguments:
+                self.notify(f"Reasoning effort: {self.providers.session_effort(self.session_id)}")
+            else:
+                try:
+                    profile, effort = self.providers.set_session_effort(
+                        self.session_id, arguments
+                    )
+                    self.notify(f"Reasoning effort for {profile}: {effort} (this session)")
+                except ValueError as exc:
+                    self.notify(str(exc), severity="warning")
+        elif command == "/verbose":
+            if not arguments:
+                self.notify(f"Verbose progress: {'on' if self.verbose else 'off'}")
+            elif arguments.casefold() in {"on", "off"}:
+                self.verbose = arguments.casefold() == "on"
+                self.missions.set_verbose(self.session_id, self.verbose)
+                if not self.verbose:
+                    checklist = self.query_one("#task-checklist", TaskChecklist)
+                    if checklist.activity_state in {
+                        "thinking",
+                        "planning",
+                        "inspecting",
+                        "building",
+                        "verifying",
+                    }:
+                        checklist.set_activity("working")
+                    conversation = self.query_one("#chat-view", ConversationView)
+                    await conversation.clear_reasoning()
+                    conversation.update_pending("working")
+                self.notify(f"Verbose progress: {'on' if self.verbose else 'off'}")
+            else:
+                self.notify("Usage: /verbose on|off", severity="warning")
         elif command == "/provider" and arguments:
             self.test_provider(arguments)
         elif command == "/runtime":
@@ -1021,6 +1140,8 @@ class WorkspaceScreen(Screen[None]):
 
     async def new_session(self, title: str = "New conversation") -> None:
         self.session_id = self.missions.create_session(title)
+        self.verbose = self.missions.verbose_enabled(self.session_id)
+        self._last_usage = (0, 0.0)
         self.interaction_mode = InteractionMode.ASK
         self.query_one("#hint-bar", VasukiHintBar).set_mode(self.interaction_mode.value)
         self.active_mission_id = None
@@ -1132,13 +1253,15 @@ class WorkspaceScreen(Screen[None]):
         """Let the agent answer or edit, then show what it actually changed."""
         conversation = self.query_one("#chat-view", ConversationView)
         self.action_open_view("chat-view")
-        previous_status = self.active_status
+        previous_status = self._chat_previous_status or self.active_status
         turn_status = previous_status
         self._chat_running = True
         self.active_status = "Working"
         self._set_activity("thinking", "understanding request")
         self.request_refresh()
-        await conversation.begin_pending("working…")
+        await conversation.begin_pending(
+            "understanding request…" if self.verbose else "working…"
+        )
         started = monotonic()
         try:
             outcome = await self.missions.chat(
@@ -1177,12 +1300,16 @@ class WorkspaceScreen(Screen[None]):
             await conversation.add_message(self._actionable_error(exc), kind="error")
         finally:
             self._chat_running = False
+            self._chat_previous_status = None
             conversation.finish_stream(monotonic() - started)
             await conversation.clear_pending()
             self.active_status = (
                 turn_status
                 if self.active_mission_id
                 else ("Ready" if turn_status == previous_status else turn_status)
+            )
+            self.query_one("#logs-view", LogsView).finish_activity(
+                f"Prompt {turn_status.casefold()}"
             )
             self.request_refresh()
 
@@ -1191,6 +1318,7 @@ class WorkspaceScreen(Screen[None]):
         conversation = self.query_one("#chat-view", ConversationView)
         self.action_open_view("chat-view")
         self.active_status = "Planning team"
+        team_status = "completed"
         self._set_activity("planning", "assembling team")
         self.request_refresh()
         try:
@@ -1213,15 +1341,23 @@ class WorkspaceScreen(Screen[None]):
             if failed:
                 self.notify(f"{len(failed)} team member(s) failed", severity="error")
         except asyncio.CancelledError:
+            team_status = "cancelled"
             if self.active_mission_id:
                 self.missions.cancel(self.active_mission_id)
             raise
         except Exception as exc:
+            team_status = "failed"
             self.active_status = "Failed"
             self._set_activity("failed", "team stopped")
             await conversation.add_message(self._actionable_error(exc), kind="error")
             self.notify("Team run failed", severity="error")
         finally:
+            if self.active_status == "Failed":
+                team_status = "failed"
+            await conversation.clear_reasoning()
+            self.query_one("#logs-view", LogsView).finish_activity(
+                f"Team prompt {team_status}"
+            )
             self.request_refresh()
 
     @work(exclusive=True, group="mission")
@@ -1270,8 +1406,9 @@ class WorkspaceScreen(Screen[None]):
         self.active_status = "Thinking"
         self._set_activity("thinking", "answering question")
         self.request_refresh()
-        await conversation.begin_pending("thinking…")
+        await conversation.begin_pending("thinking…" if self.verbose else "working…")
         started = monotonic()
+        answer_status = "completed"
         try:
             await self.missions.ask(
                 question,
@@ -1280,9 +1417,11 @@ class WorkspaceScreen(Screen[None]):
             )
             self._set_activity("completed", "answer ready")
         except asyncio.CancelledError:
+            answer_status = "cancelled"
             await conversation.add_message("answer cancelled", kind="status")
             raise
         except Exception as exc:
+            answer_status = "failed"
             self._set_activity("failed", "answer stopped")
             await conversation.add_message(self._actionable_error(exc), kind="error")
         finally:
@@ -1291,6 +1430,9 @@ class WorkspaceScreen(Screen[None]):
             self.active_status = previous_status if self.active_mission_id else "Ready"
             if self.active_mission_id and previous_status in {"Running", "Verifying"}:
                 self._set_activity(*previous_activity)
+            self.query_one("#logs-view", LogsView).finish_activity(
+                f"Answer {answer_status}"
+            )
             self.request_refresh()
 
     @work(exclusive=True, group="verification")
@@ -1459,6 +1601,7 @@ class WorkspaceScreen(Screen[None]):
                 base_url=values["base_url"],
                 model=values["model"],
                 api_key_input=values.get("api_key_input", ""),
+                scope=view.scope,
             )
         except Exception as exc:
             reason = str(exc)
@@ -1471,9 +1614,16 @@ class WorkspaceScreen(Screen[None]):
         view.provider_saved(item)
         view.clear_secret()
         view.refresh_data()
-        view.set_save_state(f"Saved {item.name}. {item.detail}", busy=False)
+        view.set_save_state(
+            f"Saved {item.name} to {view.scope} settings. {item.detail}", busy=False
+        )
+        # Connecting a provider means "use it now". A previous /model choice is
+        # an explicit session pin and otherwise wins over newly saved routing,
+        # which made the UI claim Ollama was active while requests still went to
+        # OpenRouter.
+        self.providers.select_for_session(self.session_id, item.name)
         self.active_provider = item.name
-        self.active_model = item.model
+        self.active_model = item.name
         self.request_refresh()
         self._flush_refresh()
         self.notify(
@@ -1482,10 +1632,25 @@ class WorkspaceScreen(Screen[None]):
         )
         self.action_open_view("chat-view")
         await self.query_one("#chat-view", ConversationView).add_message(
-            f"Connected {item.name} using {item.model}.\n{item.detail}",
+            f"Connected and selected {item.name} using {item.model}.\n{item.detail}",
             kind="status",
             follow=True,
         )
+
+    def use_global_provider(self) -> None:
+        try:
+            profile = self.providers.use_global()
+            self.providers.select_for_session(self.session_id, profile)
+            item = self.context.settings.models[profile]
+            self.active_model = profile
+            self.active_provider = item.provider
+            view = self.query_one("#providers-view", ProvidersView)
+            view.refresh_data()
+            view.set_save_state(f"Using global model profile {profile}.", busy=False)
+            self.request_refresh()
+            self.notify(f"Using global provider settings ({profile}).")
+        except Exception as exc:
+            self.notify(str(exc), severity="error")
 
     @work(exclusive=True, group="checkpoint")
     async def create_checkpoint(self, description: str) -> None:
@@ -1612,6 +1777,8 @@ class WorkspaceScreen(Screen[None]):
             self._refresh_qa_history()
         elif view_id == "logs-view":
             self.query_one("#logs-view", LogsView).refresh_data()
+        elif view_id == "map-view":
+            self.query_one("#map-view", ExecutionMapView).refresh_data()
         elif view_id == "checkpoints-view":
             self.query_one("#checkpoints-view", CheckpointsView).refresh_data()
         elif view_id == "providers-view":
@@ -1692,7 +1859,9 @@ class WorkspaceScreen(Screen[None]):
             *self.app.workers.cancel_group(self, "deployment"),
             *self.app.workers.cancel_group(self, "index"),
         ]
-        self.query_one("#chat-view", ConversationView).finish_stream()
+        conversation = self.query_one("#chat-view", ConversationView)
+        conversation.finish_stream()
+        self.call_later(conversation.clear_pending)
         if self.active_mission_id:
             try:
                 details = self.missions.mission_details(self.active_mission_id)
@@ -1751,7 +1920,7 @@ class WorkspaceScreen(Screen[None]):
                 [
                     "Inspect the partial changes before retrying",
                     "Use execution_mode: standard for a capable remote model",
-                    "Increase the profile's max_agent_steps only for genuinely long tasks",
+                    "Increase or clear the profile's max_agent_steps for genuinely long tasks",
                 ]
             )
         if not actions:

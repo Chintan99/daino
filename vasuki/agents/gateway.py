@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from time import monotonic
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from vasuki.config.models import ProviderConfig, Settings
 from vasuki.context.profiles import ModelExecutionProfile
-from vasuki.events import AgentRoleChanged, EventBus, ModelSelected
+from vasuki.events import AgentRoleChanged, EventBus, ModelReasoningChunk, ModelSelected
 from vasuki.exceptions import ProviderError
 from vasuki.model_router import ModelRole, ModelRouter, RoutingContext
 from vasuki.model_router.router import ModelSelection
@@ -25,6 +26,12 @@ StructuredT = TypeVar("StructuredT", bound=BaseModel)
 
 _CONTEXT_SAFETY_TOKENS = 512
 _MIN_INPUT_TOKENS = 512
+#: Floor on the reply allowance, so a small window still leaves room to answer.
+_MIN_OUTPUT_TOKENS = 2_048
+#: Input budget to protect before honouring a profile's output ceiling. Matches
+#: the default project context budget: below it the agent cannot hold repository
+#: grounding and a working transcript at the same time.
+_MIN_WORKING_INPUT_TOKENS = 24_000
 
 
 class ModelGateway:
@@ -78,6 +85,40 @@ class ModelGateway:
                 role=role.value,
             )
         )
+
+    def _attach_reasoning_handler(
+        self,
+        provider: object,
+        mission_id: str,
+        role: ModelRole,
+        selection: ModelSelection,
+    ) -> None:
+        """Forward ephemeral provider reasoning onto the typed mission bus.
+
+        ``getattr`` keeps gateways compatible with legacy/custom provider
+        doubles which predate the optional handler method. The event deliberately
+        carries only the chunk and routing identity; provider response payloads
+        and other metadata must not enter the live reasoning channel.
+        """
+        setter = getattr(provider, "set_reasoning_handler", None)
+        if self.events is None or not callable(setter):
+            return
+
+        def publish(content: str) -> None:
+            if not isinstance(content, str) or not content:
+                return
+            self.events.publish(
+                ModelReasoningChunk(
+                    mission_id=mission_id,
+                    content=content,
+                    role=role.value,
+                    provider=selection.profile.provider,
+                    model=selection.profile.model,
+                    profile=selection.profile_name,
+                )
+            )
+
+        setter(publish)
 
     def context_budget(
         self,
@@ -152,6 +193,7 @@ class ModelGateway:
             provider = create_provider(
                 selection.profile.provider, _resolved_config(provider_config, selection)
             )
+            self._attach_reasoning_handler(provider, mission_id, role, selection)
             record = ModelCall(
                 id=new_id("model-call"),
                 mission_id=mission_id,
@@ -162,6 +204,7 @@ class ModelGateway:
                 included_files=included_files or [],
                 success=False,
             )
+            started = monotonic()
             try:
                 fitted = _fit_messages(messages, _input_budget(selection))
                 result = await provider.structured_complete(fitted, schema)
@@ -173,6 +216,7 @@ class ModelGateway:
                 record.input_tokens = usage.input_tokens
                 record.output_tokens = usage.output_tokens
                 record.estimated_cost = usage.cost
+                record.latency_ms = (monotonic() - started) * 1000
                 await provider.close()
                 with self.database.session() as session:
                     session.add(record)
@@ -230,6 +274,7 @@ class ModelGateway:
             provider = create_provider(
                 selection.profile.provider, _resolved_config(provider_config, selection)
             )
+            self._attach_reasoning_handler(provider, mission_id, role, selection)
             effective_tools = tools if provider.supports_tools() else None
             response: LLMResponse | None = None
             try:
@@ -302,8 +347,10 @@ class ModelGateway:
             provider = create_provider(
                 selection.profile.provider, _resolved_config(provider_config, selection)
             )
+            self._attach_reasoning_handler(provider, mission_id, role, selection)
             success = False
             emitted = False
+            started = monotonic()
             try:
                 fitted = _fit_messages(messages, _input_budget(selection))
                 async for chunk in provider.stream(fitted):
@@ -327,6 +374,7 @@ class ModelGateway:
                             included_files=included_files or [],
                             input_tokens=usage.input_tokens,
                             output_tokens=usage.output_tokens,
+                            latency_ms=(monotonic() - started) * 1000,
                             estimated_cost=usage.cost,
                             success=success,
                         )
@@ -355,6 +403,7 @@ def _resolved_config(provider_config: ProviderConfig, selection: ModelSelection)
             "model": selection.profile.model,
             "max_output_tokens": _output_limit(selection),
             "context_limit": selection.profile.context_window,
+            "reasoning_effort": selection.profile.reasoning_effort,
         }
     )
 
@@ -366,11 +415,18 @@ def _provider_usage(provider: object) -> ProviderUsage:
 
 
 def _output_limit(selection: ModelSelection) -> int:
-    """Leave at least half the model window available for instructions and observations."""
-    return min(
-        selection.profile.max_output_tokens,
-        max(_MIN_INPUT_TOKENS, selection.profile.context_window // 2),
-    )
+    """Reserve for the reply only what the window can spare.
+
+    The profile's ceiling is honoured whenever the window is big enough to afford
+    it, so an operator who raises it for a roomy model still gets it. What the
+    ceiling may not do is starve the input side: reserving half of a 32k window
+    for output left about 14k for instructions, repository grounding and
+    observations, so compaction fired on nearly every turn and the agent kept
+    re-doing work it had already completed.
+    """
+    window = selection.profile.context_window
+    affordable = max(_MIN_OUTPUT_TOKENS, window - _MIN_WORKING_INPUT_TOKENS)
+    return min(selection.profile.max_output_tokens, affordable)
 
 
 def _input_budget(selection: ModelSelection, tools: list[dict[str, Any]] | None = None) -> int:

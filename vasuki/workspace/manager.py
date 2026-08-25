@@ -33,8 +33,8 @@ class WorkspaceManager:
         return "-".join(filter(None, cleaned.split("-")))[:40] or "mission"
 
     def create(self, mission_id: str, description: str, *, use_worktree: bool = True) -> Workspace:
-        if not self.git.is_repository():
-            raise RuntimeError("Coding missions require a Git repository")
+        if not self.git.ensure_repository():
+            raise RuntimeError("Coding missions require Git, which is not usable here")
         initial = self.git.revision()
         status = self.git.status()
         branch = f"vasuki/{mission_id}/{self._slug(description)}"

@@ -24,6 +24,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         max_retries: int = 2,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         features: list[str] | None = None,
+        reasoning_effort: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         headers: dict[str, str] = {}
@@ -41,8 +42,13 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             max_retries=max_retries,
             max_output_tokens=max_output_tokens,
             features=features,
+            reasoning_effort=reasoning_effort,
             transport=transport,
         )
+
+    def _apply_reasoning_effort(self, payload: dict[str, Any]) -> None:
+        if self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
 
     @staticmethod
     def _error_reason(response: httpx.Response) -> str:

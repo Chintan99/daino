@@ -316,3 +316,24 @@ async def test_browser_verifier_reports_optional_dependency(tmp_path: Path) -> N
     report = await BrowserVerifier().verify("http://example.invalid", artifact_dir=tmp_path)
     assert not report.passed
     assert report.error is not None
+
+
+def test_a_check_whose_own_program_is_absent_is_named() -> None:
+    """The field case: ``git diff --check`` in an image that ships no Git.
+
+    Reported as a verification failure, it told the user their finished edit was
+    broken when in fact the check had never run.
+    """
+    from vasuki.verification import missing_executable
+
+    assert missing_executable("git diff --check", "sh: 1: git: not found") == "git"
+    assert missing_executable("node --check app.js", "bash: node: command not found") == "node"
+
+
+def test_a_failure_inside_a_check_is_not_a_missing_program() -> None:
+    """Otherwise a genuine failure would be excused as a runtime gap."""
+    from vasuki.verification import missing_executable
+
+    assert missing_executable("pytest -q", "ModuleNotFoundError: No module named 'app'") == ""
+    assert missing_executable("pytest -q", "FileNotFoundError: config.json: not found") == ""
+    assert missing_executable("pytest -q", "sh: 1: git: not found") == ""

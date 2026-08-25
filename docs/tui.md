@@ -28,10 +28,10 @@ vasuki --project /path/to/repository
 vasuki tui --project /path/to/repository
 ```
 
-Onboarding runs only when nothing is configured anywhere. Once a model exists in the global
-configuration, a new directory is initialized silently — database, index, runtime probe — and opens
-straight to the workspace. Provider configuration can still be deferred, so a local Ollama or vLLM
-workflow never requires cloud credentials.
+Onboarding runs when a directory has not been initialized. It offers global or project-specific
+model settings before the database, index, and runtime are initialized and the workspace opens.
+Provider configuration can still be deferred, so a local Ollama or vLLM workflow never requires
+cloud credentials.
 
 Every launch starts a fresh conversation rather than resending an old transcript. Earlier sessions
 remain browsable, while structured unfinished-task state is loaded separately. If work was
@@ -55,8 +55,8 @@ a tool, check, or mission fails; successful completion stops it cleanly at `TASK
 The two-line header keeps project identity and agent state above model, provider, runtime, usage,
 and spend. OpenRouter spend comes from its provider-reported charged `usage.cost`, including the
 final usage chunk of a streamed response; very small non-zero charges retain enough precision to
-stay visible. Beneath it, one tab row covers the seven working views — chat, missions, QA, files,
-changes, tests, logs — with live counts and a subtle active state. Tabs switch views on click and
+stay visible. Beneath it, one tab row covers the eight working views — chat, missions, QA, files,
+changes, tests, logs, map — with live counts and a subtle active state. Tabs switch views on click and
 can also be focused and opened with Enter or Space. The remaining views (repository, approvals,
 checkpoints, playbooks, deployments, providers, settings, help)
 open from the command palette or their slash commands, which is what `ctrl+p commands` advertises.
@@ -175,15 +175,46 @@ preference, and the custom binding map are validated under the `tui` section of
 | `/checkpoint [description]` | Create a recoverable checkpoint |
 | `/restore <checkpoint-id>` | Preview impact and request restore approval |
 | `/model [profile]` | Session-only model selection |
+| `/effort [auto\|none\|minimal\|low\|medium\|high\|xhigh\|max]` | Session reasoning effort |
+| `/verbose [on\|off]` | Show detailed safe progress or only `working…` |
 | `/provider [name]` | Provider view or connection test |
+| `/globalprovider` | Configure providers shared by every project |
 | `/runtime [local\|docker\|ssh]` | Session runtime switch |
 | `/index` | Rebuild repository intelligence |
 | `/playbooks` | Playbook browser |
 | `/deploy <action> <target>` | Inspect, plan, apply, verify, or roll back |
 | `/logs` | Filtered, redacted logs |
+| `/map` | Clickable prompt execution graphs with models, tools, timing, tokens, and cost |
 | `/settings` | Validated settings |
 | `/bye` | Exit safely |
 | `/quit` | Quit safely |
+
+Reasoning-effort levels are provider-specific. The current Ollama integration accepts
+`/effort auto|none|low|medium|high|max`; choosing a provider-specific level it cannot represent
+returns an explicit error instead of silently ignoring the setting.
+
+`/verbose on` expands the live indicator into operational phases such as planning, inspecting,
+building, tool execution, and verification. When the selected provider exports a reasoning stream,
+a dedicated **thinking · live recent** area also shows its bounded recent tail while that model call
+is active. The tail is redacted, control-character safe, markup-safe, never added to the answer or
+conversation history, and cleared before a tool, answer, next model call, or completed turn. It is
+not stored in the audit log or prompt map. Providers that do not export reasoning retain the normal
+phase indicator. `/verbose off` ignores reasoning chunks and collapses live events to `working…`
+while keeping final answers, failures, approvals, and results.
+
+The **Logs** tab starts with a live activity section that follows the current model, agent role,
+tool, file change, and verification phase with elapsed time. The recorded audit log remains below
+it with summary, detailed, and raw redacted modes. During exported model reasoning, Logs shows only
+a coalesced `Model reasoning…` state; it never receives the reasoning text itself.
+
+The adjacent **Map** tab lists every recorded project prompt. Selecting a prompt draws a
+chronological Unicode graph of the models, tools, files, tasks, and verification events involved.
+Each model node shows its own input/output tokens, latency, status, provider, model, and cost;
+tool nodes show duration but do not falsely claim independent model tokens. Historical parallel
+team relationships are displayed chronologically when no exact parent link was recorded. The map
+uses allowlisted structured audit fields and never renders model thoughts, file bodies, edit
+contents, raw command output, or secrets. Selecting an older prompt is read-only and does not
+replace the current chat session.
 
 Model and runtime selection in a session does not silently overwrite saved routing. Persist changes
 explicitly in configuration.

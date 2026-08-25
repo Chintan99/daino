@@ -40,7 +40,13 @@ def test_router_primary_and_escalation_reason() -> None:
 def test_execution_profile_auto_detects_small_local_model() -> None:
     compact = ModelExecutionProfile.resolve(
         "small",
-        ModelProfileConfig(provider="local", model="7b", local=True),
+        ModelProfileConfig(
+            provider="local",
+            model="7b",
+            local=True,
+            coding_score=3,
+            tool_reliability=3,
+        ),
         input_budget_tokens=20_000,
         project_budget_tokens=24_000,
         memory_items=8,
@@ -60,9 +66,10 @@ def test_execution_profile_auto_detects_small_local_model() -> None:
 
     assert compact.mode == ExecutionMode.COMPACT
     assert compact.initial_context_tokens == 8_192
-    assert compact.max_steps == 32
+    assert compact.max_steps is None
     assert standard.mode == ExecutionMode.STANDARD
     assert standard.initial_context_tokens == 24_000
+    assert standard.max_steps is None
 
 
 def test_router_exposes_operational_fallback_after_primary() -> None:
@@ -129,3 +136,36 @@ def test_task_repairs_argv_shaped_verification_commands() -> None:
 
     assert task.verification_commands == ["python -m pytest -q"]
     assert separate.verification_commands == ["pytest", "ruff"]
+
+
+def test_unrated_local_model_keeps_the_full_window() -> None:
+    """Neutral default scores are not evidence that a local model is small.
+
+    Treating them as such put every freshly configured local model on 8k of
+    context and one action per turn, which made long tasks loop.
+    """
+    profile = ModelExecutionProfile.resolve(
+        "local-ollama",
+        ModelProfileConfig(provider="local", model="qwen3-27b", local=True),
+        input_budget_tokens=22_000,
+        project_budget_tokens=24_000,
+        memory_items=8,
+        memory_tokens=2_000,
+    )
+
+    assert profile.mode == ExecutionMode.STANDARD
+    assert not profile.one_action_per_turn
+    assert profile.initial_context_tokens == 22_000
+
+
+def test_a_starved_input_budget_still_forces_compact_mode() -> None:
+    profile = ModelExecutionProfile.resolve(
+        "local-ollama",
+        ModelProfileConfig(provider="local", model="qwen3-27b", local=True),
+        input_budget_tokens=9_000,
+        project_budget_tokens=24_000,
+        memory_items=8,
+        memory_tokens=2_000,
+    )
+
+    assert profile.mode == ExecutionMode.COMPACT

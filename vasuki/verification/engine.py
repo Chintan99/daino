@@ -19,6 +19,32 @@ from vasuki.security.policy import SHELL_OPERATORS
 
 TRACE_LOCATION = re.compile(r'File "([^"]+)", line (\d+)')
 
+#: A shell reporting that the program it was asked to run does not exist.
+#: Covers dash ("sh: 1: git: not found") and bash ("bash: node: command not
+#: found"), with or without a leading shell name.
+MISSING_EXECUTABLE = re.compile(
+    r"(?:^|\n)\s*(?:[\w./-]*(?:sh|zsh|dash): )?(?:line )?(?:\d+: )?"
+    r"([\w.+-]+): (?:command )?not found",
+    re.IGNORECASE,
+)
+
+
+def missing_executable(command: str, output: str) -> str:
+    """Name the program a check needed and the runtime did not have.
+
+    A check that never ran because ``git`` or ``node`` is absent from the
+    runtime says nothing about the code it was meant to check. Distinguishing
+    that from a real failure keeps a sound edit from being reported as broken:
+    the field case was ``git diff --check`` inside a ``python:3.12-slim``
+    container, which has no Git, failing a finished mission.
+    """
+    for candidate in MISSING_EXECUTABLE.findall(output or ""):
+        # Only the program the check itself invokes counts. A test that fails
+        # because the code under test cannot find something is a real failure.
+        if command and candidate in shlex.split(command, posix=True)[:1]:
+            return candidate
+    return ""
+
 
 class VerificationEngine:
     def __init__(

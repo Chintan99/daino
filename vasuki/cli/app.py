@@ -128,7 +128,11 @@ def main(
     """Open the interactive workspace, or run an automation-friendly subcommand."""
     global _active_project
     _active_project = project.resolve() if project else None
-    _install_crash_handling(_active_project)
+    # run_tui installs crash handling after resolving the exact launch folder.
+    # Installing it here first would let parent-repository discovery pin the
+    # one-shot crash log to the wrong project for a bare `vasuki` invocation.
+    if ctx.invoked_subcommand not in {None, "tui"}:
+        _install_crash_handling(_active_project)
     if version:
         console.print(f"vasuki {__version__}")
         raise typer.Exit()

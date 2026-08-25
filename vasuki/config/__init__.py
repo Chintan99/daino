@@ -5,6 +5,7 @@ from vasuki.config.loader import (
     load_settings,
     save_settings,
     set_value,
+    use_global_provider_settings,
 )
 from vasuki.config.models import Settings
 
@@ -16,4 +17,5 @@ __all__ = [
     "load_settings",
     "save_settings",
     "set_value",
+    "use_global_provider_settings",
 ]

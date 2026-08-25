@@ -44,6 +44,26 @@ class GitClient:
             raise WorkspaceError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
         return result
 
+    def ensure_repository(self) -> bool:
+        """Initialize a repository here if there is not one, and report success.
+
+        A directory that was never ``git init``-ed is not a user error worth
+        refusing a mission over: checkpoints and diffs simply need a revision to
+        anchor to, and one can be created. Returns ``False`` only when Git
+        itself is unusable, which callers handle by working without it.
+        """
+        try:
+            if self.is_repository():
+                if not self.run("rev-parse", "--verify", "HEAD", check=False).succeeded:
+                    self.commit("Initialize project")
+                return True
+            if not self.run("init", "-b", "main", check=False).succeeded:
+                return False
+            self.commit("Initialize project")
+            return True
+        except (WorkspaceError, OSError):
+            return False
+
     def is_repository(self) -> bool:
         return self.run("rev-parse", "--is-inside-work-tree", check=False).stdout.strip() == "true"
 
@@ -82,20 +102,23 @@ class GitClient:
         self.run(*args)
 
     def commit(self, message: str, paths: list[str] | None = None) -> str:
+        has_head = self.run("rev-parse", "--verify", "HEAD", check=False).succeeded
         if paths:
             self.run("add", "--", *paths)
         else:
             self.run("add", "-A")
-        if not self.run("diff", "--cached", "--quiet", check=False).succeeded:
-            self.run(
+        staged_changes = not self.run("diff", "--cached", "--quiet", check=False).succeeded
+        if staged_changes or not has_head:
+            args = [
                 "-c",
                 "user.name=Vasuki",
                 "-c",
                 "user.email=vasuki@localhost",
                 "commit",
-                "-m",
-                message,
-            )
+            ]
+            if not has_head and not staged_changes:
+                args.append("--allow-empty")
+            self.run(*args, "-m", message)
         return self.revision()
 
     def restore(self, revision: str, paths: list[str] | None = None) -> None:

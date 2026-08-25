@@ -160,6 +160,18 @@ Screen {
     scrollbar-size: 1 1;
 }
 
+#live-reasoning {
+    width: 100%;
+    max-width: 96;
+    height: auto;
+    max-height: 16;
+    margin-bottom: 1;
+    padding-left: 2;
+    border-left: solid $rule;
+    color: $muted;
+    background: $background;
+}
+
 /* ── welcome ────────────────────────────────────────────────────────── */
 
 .welcome-card {
@@ -180,7 +192,7 @@ Screen {
     height: 3;
 }
 
-.very-narrow #tab-qa-view, .very-narrow #tab-logs-view {
+.very-narrow #tab-qa-view, .very-narrow #tab-logs-view, .very-narrow #tab-map-view {
     display: none;
 }
 
@@ -307,10 +319,89 @@ Screen {
 
 #missions-view, #qa-view, #repository-view, #files-view, #changes-view, #tests-view,
 #approvals-view, #checkpoints-view, #playbooks-view, #deployments-view,
-#providers-view, #settings-view, #logs-view, #help-view {
+#providers-view, #settings-view, #logs-view, #map-view, #help-view {
     width: 100%;
     height: 100%;
     padding: 1 2 0 2;
+}
+
+#log-live-state {
+    height: 2;
+    color: $accent;
+}
+
+#log-live-content {
+    height: 7;
+    min-height: 4;
+    border-bottom: solid $rule;
+    margin-bottom: 1;
+}
+
+#log-content {
+    height: 1fr;
+}
+
+#execution-map-layout {
+    width: 100%;
+    height: 1fr;
+}
+
+#map-prompt-panel {
+    width: 46;
+    min-width: 32;
+    height: 100%;
+    padding-right: 2;
+    border-right: solid $rule;
+}
+
+#map-trace-panel {
+    width: 1fr;
+    height: 100%;
+    padding-left: 2;
+}
+
+#map-trace-summary {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    padding-bottom: 1;
+    color: $text;
+    border-bottom: solid $rule;
+}
+
+#map-graph-scroll {
+    width: 100%;
+    height: 1fr;
+    scrollbar-size: 1 1;
+}
+
+#map-graph {
+    width: 100%;
+    height: auto;
+    padding-top: 1;
+}
+
+.narrow #map-prompt-panel {
+    width: 36;
+}
+
+.very-narrow #execution-map-layout {
+    layout: vertical;
+}
+
+.very-narrow #map-prompt-panel {
+    width: 100%;
+    min-width: 100%;
+    height: 10;
+    padding-right: 0;
+    border-right: none;
+    border-bottom: solid $rule;
+}
+
+.very-narrow #map-trace-panel {
+    width: 100%;
+    height: 1fr;
+    padding-left: 1;
 }
 
 .view-title {
@@ -613,10 +704,6 @@ Button.-primary, Button.-success, Button.-warning, Button.-error {
 }
 
 #settings-content {
-    height: 1fr;
-}
-
-#log-content {
     height: 1fr;
 }
 
