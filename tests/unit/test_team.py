@@ -8,22 +8,22 @@ from typing import Any
 
 import pytest
 
-from vasuki.agents.team import (
+from daino.agents.team import (
     MAX_TEAM_MEMBERS,
     TeamPlanError,
     TeamRunner,
     validate_team_plan,
 )
-from vasuki.model_router import ModelRole
-from vasuki.schemas import (
+from daino.model_router import ModelRole
+from daino.schemas import (
     AgentAction,
     ContextBundle,
     TeamMember,
     TeamMemberRole,
     TeamPlan,
 )
-from vasuki.tools import ActionExecutor, EditTools
-from vasuki.tools.editing import literal_prefix, patterns_overlap, scope_matches
+from daino.tools import ActionExecutor, EditTools
+from daino.tools.editing import literal_prefix, patterns_overlap, scope_matches
 
 
 def member(

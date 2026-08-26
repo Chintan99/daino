@@ -13,29 +13,29 @@ import pytest
 from sqlalchemy import func, select
 from textual.widgets import ContentSwitcher
 
-from tests.conftest import commit_all, painted_text
-from vasuki.application import (
+from daino.application import (
     ProviderApplicationService,
     initialize_project,
     open_project,
 )
-from vasuki.events import ModelStreamChunk
-from vasuki.git import GitClient
-from vasuki.model_router import ModelRole
-from vasuki.persistence.models import MissionEventRecord, ModelCall
-from vasuki.tui.app import VasukiApp
-from vasuki.tui.screens.workspace import WorkspaceScreen
-from vasuki.tui.widgets import (
+from daino.events import ModelStreamChunk
+from daino.git import GitClient
+from daino.model_router import ModelRole
+from daino.persistence.models import MissionEventRecord, ModelCall
+from daino.tui.app import DainoApp
+from daino.tui.screens.workspace import WorkspaceScreen
+from daino.tui.widgets import (
     ContextStrip,
     ConversationView,
     NavigationTab,
     NavigationTabs,
     PromptInput,
 )
-from vasuki.tui.widgets.message import MessageCard
-from vasuki.tui.widgets.prompt_input import PromptTextArea
+from daino.tui.widgets.message import MessageCard
+from daino.tui.widgets.prompt_input import PromptTextArea
+from tests.conftest import commit_all, painted_text
 
-ANSWER_WORDS = ("Vasuki ", "answers ", "the ", "question.")
+ANSWER_WORDS = ("Daino ", "answers ", "the ", "question.")
 CATALOG = {
     "data": [
         {
@@ -181,7 +181,7 @@ def model_server() -> Iterator[str]:
         server.server_close()
 
 
-def connected_app(root: Path, base_url: str = "", **add: str) -> VasukiApp:
+def connected_app(root: Path, base_url: str = "", **add: str) -> DainoApp:
     (root / "app.py").write_text("def value():\n    return 1\n", encoding="utf-8")
     commit_all(root)
     initialize_project(root)
@@ -193,7 +193,7 @@ def connected_app(root: Path, base_url: str = "", **add: str) -> VasukiApp:
             base_url=base_url,
             model=add.get("model", "vendor/small"),
         )
-    return VasukiApp(root, context=context)
+    return DainoApp(root, context=context)
 
 
 async def ask(pilot: Any, text: str) -> None:
@@ -286,7 +286,7 @@ async def test_conversation_is_actually_painted_in_the_chat_area(
     app_instance = connected_app(tmp_path, model_server)
     async with app_instance.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        assert "VASUKI" in painted_text(app_instance)
+        assert "DAINO" in painted_text(app_instance)
 
         await ask(pilot, "render this please")
         await wait_for_answer(pilot)
@@ -580,7 +580,7 @@ async def test_enter_sends_and_shift_enter_makes_a_newline(tmp_path: Path) -> No
     (tmp_path / "app.py").write_text("def value():\n    return 1\n", encoding="utf-8")
     initialize_project(tmp_path)
     context = open_project(tmp_path)
-    app_instance = VasukiApp(tmp_path, context=context)
+    app_instance = DainoApp(tmp_path, context=context)
     async with app_instance.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workspace = app_instance.screen
@@ -605,6 +605,6 @@ async def test_enter_sends_and_shift_enter_makes_a_newline(tmp_path: Path) -> No
 
 def test_the_submit_shortcut_is_no_longer_configurable() -> None:
     """Removed rather than defaulted, so it cannot drift back to ctrl+enter."""
-    from vasuki.config.models import TUIConfig
+    from daino.config.models import TUIConfig
 
     assert "submit_shortcut" not in TUIConfig.model_fields

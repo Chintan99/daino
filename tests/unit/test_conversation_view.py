@@ -8,11 +8,11 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.color import Color
 
-from vasuki.application.view_models import ConversationItem
-from vasuki.tui import palette
-from vasuki.tui.highlight import guess_language, highlight_body, highlight_unified_diff
-from vasuki.tui.widgets import ConversationView
-from vasuki.tui.widgets.message import MessageCard
+from daino.application.view_models import ConversationItem
+from daino.tui import palette
+from daino.tui.highlight import guess_language, highlight_body, highlight_unified_diff
+from daino.tui.widgets import ConversationView
+from daino.tui.widgets.message import MessageCard
 
 
 def item(identifier: str, kind: str = "agent", content: str = "hello") -> ConversationItem:

@@ -5,7 +5,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
+COPY daino ./daino
 COPY vasuki ./vasuki
 RUN pip install --no-cache-dir .
-ENTRYPOINT ["vasuki"]
+ENTRYPOINT ["daino"]
 CMD ["--help"]

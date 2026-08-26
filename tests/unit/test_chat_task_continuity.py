@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.application import MissionApplicationService, initialize_project, open_project
-from vasuki.memory import PersistentTaskStatus
-from vasuki.schemas import TodoItem
+from daino.application import MissionApplicationService, initialize_project, open_project
+from daino.memory import PersistentTaskStatus
+from daino.schemas import TodoItem
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def chat(tmp_path: Path) -> MissionApplicationService:
 
 def start_turn(chat: MissionApplicationService, session_id: str, instruction: str):
     """Do what ``chat()`` does before it calls the model, and nothing more."""
-    from vasuki.schemas import ProjectMode
+    from daino.schemas import ProjectMode
 
     mission = chat.core.create(instruction, ProjectMode.DIRECT, start_task=False)
     chat.attach_session_mission(session_id, mission.id)

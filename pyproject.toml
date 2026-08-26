@@ -3,16 +3,17 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "vasuki"
-version = "0.3.5"
-description = "A local-first, provider-independent autonomous software engineering agent"
+name = "daino"
+version = "0.4.0"
+description = "A local-first, provider-independent autonomous software engineering agent with a TUI and browser IDE"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
-authors = [{name = "Vasuki Contributors"}]
+authors = [{name = "Daino Contributors"}]
 dependencies = [
   "alembic>=1.14",
   "asyncssh>=2.20",
+  "fastapi>=0.115",
   "httpx>=0.28",
   "pip-audit>=2.10",
   "prompt-toolkit>=3.0",
@@ -27,6 +28,8 @@ dependencies = [
   "tree-sitter-language-pack>=0.7",
   "tree-sitter-typescript>=0.23",
   "typer>=0.15",
+  "uvicorn[standard]>=0.32",
+  "websockets>=13.1",
 ]
 
 [project.optional-dependencies]
@@ -50,10 +53,11 @@ dev = [
 ]
 
 [project.scripts]
-vasuki = "vasuki.cli.app:app"
+daino = "daino.cli.app:run_cli"
+vasuki = "daino.cli.app:legacy_main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["vasuki"]
+packages = ["daino", "vasuki"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
@@ -76,7 +80,7 @@ warn_unused_ignores = true
 plugins = ["pydantic.mypy"]
 
 [tool.coverage.run]
-source = ["vasuki"]
+source = ["daino"]
 branch = true
 
 [tool.bandit]

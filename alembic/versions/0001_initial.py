@@ -5,7 +5,7 @@ Revises:
 """
 
 from alembic import op
-from vasuki.persistence.models import Base
+from daino.persistence.models import Base
 
 revision = "0001"
 down_revision = None

@@ -6,10 +6,10 @@ from alembic.config import Config
 from sqlalchemy import inspect
 
 from alembic import command
-from vasuki.config import default_settings
-from vasuki.memory import MemoryStore
-from vasuki.persistence import Database
-from vasuki.playbooks import PlaybookLoader
+from daino.config import default_settings
+from daino.memory import MemoryStore
+from daino.persistence import Database
+from daino.playbooks import PlaybookLoader
 
 
 def test_database_initializes_complete_schema(tmp_path: Path) -> None:

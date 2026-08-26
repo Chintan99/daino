@@ -7,7 +7,7 @@ Revises: 0004
 from sqlalchemy import JSON, Column, DateTime, Float, Integer, String, Text, inspect
 
 from alembic import op
-from vasuki.persistence.models import MemoryEmbedding, MemoryEpisode, PersistentTaskState
+from daino.persistence.models import MemoryEmbedding, MemoryEpisode, PersistentTaskState
 
 revision = "0005"
 down_revision = "0004"

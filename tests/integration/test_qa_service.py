@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.application import QAApplicationService, initialize_project, open_project
-from vasuki.schemas import QAReport
+from daino.application import QAApplicationService, initialize_project, open_project
+from daino.schemas import QAReport
 
 
 @pytest.mark.asyncio
@@ -42,7 +42,7 @@ async def test_qa_service_runs_available_checks_skips_network_and_persists(
         assert service.history() == [report]
         assert service.load(report.id) == report
         assert service.load("../outside") is None
-        assert (tmp_path / ".vasuki" / "qa" / f"{report.id}.json").exists()
+        assert (tmp_path / ".daino" / "qa" / f"{report.id}.json").exists()
         details = service.missions.mission_details(report.mission_id)
         assert details["mission"]["status"] == "completed"
     finally:
@@ -74,7 +74,7 @@ def test_qa_history_is_repository_scoped_sorted_and_tolerates_bad_files(
     try:
         service._save(older)
         service._save(newer)
-        directory = tmp_path / ".vasuki" / "qa"
+        directory = tmp_path / ".daino" / "qa"
         (directory / "qa-broken.json").write_text("not json", encoding="utf-8")
         foreign = newer.model_copy(
             update={"id": "qa-foreign", "project_root": str(tmp_path.parent / "another")}

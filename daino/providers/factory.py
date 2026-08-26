@@ -1,0 +1,60 @@
+"""Create provider adapters from validated configuration."""
+
+from __future__ import annotations
+
+from daino.config.models import ProviderConfig
+from daino.providers.base import LLMProvider
+from daino.providers.ollama import OllamaProvider
+from daino.providers.openai_compatible import OpenAICompatibleProvider
+from daino.providers.openrouter import OpenRouterProvider
+from daino.providers.vllm import VLLMProvider
+from daino.security.secrets import resolve_secret
+
+
+def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
+    api_key = resolve_secret(config.api_key) if config.api_key else ""
+    if config.type == "openrouter":
+        return OpenRouterProvider(
+            base_url=config.base_url,
+            api_key=api_key,
+            model=config.model,
+            timeout=config.timeout,
+            max_retries=config.max_retries,
+            max_output_tokens=config.max_output_tokens,
+            features=config.features,
+            application_name=config.application_name,
+            referring_url=config.referring_url,
+            reasoning_effort=config.reasoning_effort,
+        )
+    if config.type == "ollama":
+        return OllamaProvider(
+            base_url=config.base_url,
+            api_key=api_key,
+            model=config.model,
+            timeout=config.timeout,
+            max_retries=config.max_retries,
+            max_output_tokens=config.max_output_tokens,
+            features=config.features,
+            reasoning_effort=config.reasoning_effort,
+        )
+    if config.type == "vllm":
+        return VLLMProvider(
+            base_url=config.base_url,
+            api_key=api_key,
+            model=config.model,
+            timeout=config.timeout,
+            max_retries=config.max_retries,
+            max_output_tokens=config.max_output_tokens,
+            features=config.features,
+        )
+    return OpenAICompatibleProvider(
+        name=name,
+        base_url=config.base_url,
+        api_key=api_key,
+        model=config.model,
+        timeout=config.timeout,
+        max_retries=config.max_retries,
+        max_output_tokens=config.max_output_tokens,
+        features=config.features,
+        reasoning_effort=config.reasoning_effort,
+    )

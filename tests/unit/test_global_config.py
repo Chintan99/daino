@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from vasuki.config import find_project_root, load_settings, save_settings
-from vasuki.config.globals import (
+from daino.config import find_project_root, load_settings, save_settings
+from daino.config.globals import (
     GLOBAL_SECTIONS,
     global_config_dir,
     global_config_path,
@@ -17,7 +17,7 @@ from vasuki.config.globals import (
     merge_layers,
     save_global,
 )
-from vasuki.config.models import ModelProfileConfig, ProviderConfig, Settings
+from daino.config.models import ModelProfileConfig, ProviderConfig, Settings
 
 
 def configured() -> Settings:
@@ -67,22 +67,30 @@ def test_global_config_honours_the_override_then_xdg(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     explicit = tmp_path / "explicit"
-    monkeypatch.setenv("VASUKI_CONFIG_HOME", str(explicit))
+    monkeypatch.setenv("DAINO_CONFIG_HOME", str(explicit))
     assert global_config_dir() == explicit
+
+    # The legacy ``VASUKI_CONFIG_HOME`` is still honoured when the new one is unset.
+    monkeypatch.delenv("DAINO_CONFIG_HOME")
+    legacy = tmp_path / "legacy"
+    monkeypatch.setenv("VASUKI_CONFIG_HOME", str(legacy))
+    assert global_config_dir() == legacy
 
     monkeypatch.delenv("VASUKI_CONFIG_HOME")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    assert global_config_dir() == tmp_path / "xdg" / "vasuki"
+    assert global_config_dir() == tmp_path / "xdg" / "daino"
 
 
 def test_globals_do_not_live_in_a_directory_that_looks_like_a_project(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``~/.vasuki`` is a project marker; user settings there make $HOME a repo."""
+    """``~/.daino`` is a project-style marker; user settings there make $HOME a repo."""
+    monkeypatch.delenv("DAINO_CONFIG_HOME", raising=False)
     monkeypatch.delenv("VASUKI_CONFIG_HOME", raising=False)
-    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    assert global_config_dir() != Path.home() / ".vasuki"
-    assert global_config_dir().name == "vasuki"
+    # Isolate XDG so neither a real ``daino`` nor legacy ``vasuki`` dir is picked up.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert global_config_dir() != Path.home() / ".daino"
+    assert global_config_dir().name == "daino"
 
 
 # --------------------------------------------------------------------------

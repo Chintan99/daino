@@ -3,7 +3,7 @@ project:
   default_mode: specification
   context_budget_tokens: 24000
 database:
-  url: sqlite:///.vasuki/vasuki.db
+  url: sqlite:///.daino/daino.db
 runtime:
   default: docker
   network_access: restricted

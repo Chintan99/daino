@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.config import default_settings, save_settings
-from vasuki.persistence import Database
+from daino.config import default_settings, save_settings
+from daino.persistence import Database
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +20,7 @@ def host_runtime_for_tests(monkeypatch: pytest.MonkeyPatch) -> None:
     one way on a machine running Docker and another way without it. The runtime
     probe itself is tested directly in ``test_agent_shell``.
     """
-    from vasuki.application import context as context_module
+    from daino.application import context as context_module
 
     monkeypatch.setattr(context_module, "preferred_runtime", lambda: "local")
 
@@ -56,7 +56,7 @@ def git_repo(tmp_path: Path) -> Path:
     git(tmp_path, "init", "-b", "main")
     git(tmp_path, "config", "user.name", "Test User")
     git(tmp_path, "config", "user.email", "test@example.invalid")
-    (tmp_path / ".gitignore").write_text(".vasuki/\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(".daino/\n", encoding="utf-8")
     (tmp_path / "README.md").write_text("# Fixture\n", encoding="utf-8")
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-m", "initial")
@@ -95,9 +95,9 @@ def isolated_global_config(
     """Point global configuration at a scratch directory for every test.
 
     Configuration is user-level, so without this a test that connects a provider
-    writes into the developer's real ~/.config/vasuki and every later test —
+    writes into the developer's real ~/.config/daino and every later test —
     and the developer's own installation — inherits a provider pointing at a
     dead port. Autouse because the risk applies to any test that touches
     settings, not only the ones that obviously do.
     """
-    monkeypatch.setenv("VASUKI_CONFIG_HOME", str(tmp_path_factory.mktemp("vasuki-global")))
+    monkeypatch.setenv("DAINO_CONFIG_HOME", str(tmp_path_factory.mktemp("daino-global")))

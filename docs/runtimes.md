@@ -24,7 +24,7 @@ tools.
 Set the coding runtime with:
 
 ```bash
-vasuki config set runtime.default docker
-vasuki config set runtime.docker_image your-project-test-image
-vasuki config set runtime.network_access restricted
+daino config set runtime.default docker
+daino config set runtime.docker_image your-project-test-image
+daino config set runtime.network_access restricted
 ```

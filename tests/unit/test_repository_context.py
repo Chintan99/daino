@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vasuki.context import ContextCompiler
-from vasuki.repository import RepositoryIndexer
-from vasuki.repository.syntax import extract_outline
-from vasuki.schemas import TaskSpec
+from daino.context import ContextCompiler
+from daino.repository import RepositoryIndexer
+from daino.repository.syntax import extract_outline
+from daino.schemas import TaskSpec
 
 
 def test_repository_index_queries_and_incremental_reuse(tmp_path: Path) -> None:
@@ -69,7 +69,7 @@ def test_crash_logging_captures_a_native_fault(tmp_path: Path) -> None:
 
     script = (
         "from pathlib import Path\n"
-        "from vasuki.utils import crashlog\n"
+        "from daino.utils import crashlog\n"
         f"crashlog.install(Path({str(tmp_path)!r}))\n"
         "import ctypes\n"
         "def boom():\n"
@@ -79,7 +79,7 @@ def test_crash_logging_captures_a_native_fault(tmp_path: Path) -> None:
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, timeout=60)
 
     assert result.returncode != 0
-    log = (tmp_path / ".vasuki" / "logs" / "crash.log").read_text(encoding="utf-8")
+    log = (tmp_path / ".daino" / "logs" / "crash.log").read_text(encoding="utf-8")
     assert "Fatal Python error: Segmentation fault" in log
     # The point of the log is that it names the line, not just the signal.
     assert "in boom" in log
@@ -89,7 +89,7 @@ def test_only_bundled_grammars_are_used(tmp_path: Path) -> None:
     """An unbundled grammar is downloaded and dlopen'd, which can crash the process."""
     from tree_sitter_language_pack import get_parser
 
-    from vasuki.repository.syntax import GRAMMARS
+    from daino.repository.syntax import GRAMMARS
 
     for extension, grammar in sorted(set(GRAMMARS.items())):
         get_parser(grammar), f"{extension} maps to unbundled grammar {grammar}"
@@ -97,7 +97,7 @@ def test_only_bundled_grammars_are_used(tmp_path: Path) -> None:
 
 def test_a_failing_grammar_is_only_attempted_once() -> None:
     """An index build touches thousands of files; a broken grammar must not retry."""
-    from vasuki.repository import syntax
+    from daino.repository import syntax
 
     syntax._PARSERS.clear()
     calls: list[str] = []
@@ -124,7 +124,7 @@ def test_terminal_restore_emits_the_sequences_a_crash_skips() -> None:
     import os
     from unittest.mock import patch
 
-    from vasuki.utils import crashlog
+    from daino.utils import crashlog
 
     read_fd, write_fd = os.pipe()
 
@@ -164,7 +164,7 @@ def test_restore_is_not_wired_to_a_signal_handler() -> None:
     """
     import signal
 
-    from vasuki.utils import crashlog
+    from daino.utils import crashlog
 
     assert not hasattr(crashlog, "_on_fatal_signal")
     for number in (signal.SIGSEGV, signal.SIGBUS):
@@ -181,7 +181,7 @@ def test_a_symlink_loop_does_not_take_down_the_process(tmp_path: Path) -> None:
     """
     import os
 
-    from vasuki.repository import RepositoryIndexer
+    from daino.repository import RepositoryIndexer
 
     (tmp_path / "real.py").write_text("x = 1\n", encoding="utf-8")
     nested = tmp_path / "a" / "b" / "c"
@@ -196,7 +196,7 @@ def test_a_symlink_loop_does_not_take_down_the_process(tmp_path: Path) -> None:
 
 def test_the_walk_prunes_ignored_directories_instead_of_entering_them(tmp_path: Path) -> None:
     """Descending into node_modules first and filtering after costs a full crawl."""
-    from vasuki.repository import RepositoryIndexer
+    from daino.repository import RepositoryIndexer
 
     (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
     heavy = tmp_path / "node_modules" / "pkg" / "deep"
@@ -209,8 +209,8 @@ def test_the_walk_prunes_ignored_directories_instead_of_entering_them(tmp_path: 
 
 
 def test_the_walk_is_depth_bounded(tmp_path: Path) -> None:
-    from vasuki.repository import RepositoryIndexer
-    from vasuki.repository import indexer as indexer_module
+    from daino.repository import RepositoryIndexer
+    from daino.repository import indexer as indexer_module
 
     deep = tmp_path
     for level in range(indexer_module.MAX_INDEX_DEPTH + 5):
@@ -231,7 +231,7 @@ def test_load_does_not_build_the_index(tmp_path: Path) -> None:
     ``load()`` building on a cache miss is how a startup view ended up indexing
     a whole home directory, which is what crashed.
     """
-    from vasuki.repository import RepositoryIndexer
+    from daino.repository import RepositoryIndexer
 
     (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
     indexer = RepositoryIndexer(tmp_path)

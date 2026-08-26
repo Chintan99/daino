@@ -11,7 +11,7 @@ checks.
 
 Configuration stores secret references, never values. `env://NAME`, `keyring://service/account`,
 and `file://path` are resolved immediately before use. The Providers screen may accept a pasted
-OpenRouter key, but validates it first and then writes it under `.vasuki/secrets` with user-only
+OpenRouter key, but validates it first and then writes it under `.daino/secrets` with user-only
 permissions; YAML receives only the resulting `file://` reference. Key paths are passed to
 AsyncSSH; key contents are not read into prompts. Likely credentials and private keys are redacted
 from tool results and JSON audit logs.
@@ -38,12 +38,12 @@ removed from HTML, and page text is labeled as untrusted data in the model obser
 
 QA sub-agents are read-only by construction. Their action schema exposes only repository reads,
 search, globbing, directory listing, and finish operations, while `EditTools` also enforces
-read-only mode underneath. Automated QA commands are selected by Vasuki rather than the model and
+read-only mode underneath. Automated QA commands are selected by Daino rather than the model and
 still pass through the configured runtime and command policy. Registry-backed dependency audits
 are grouped behind one explicit network approval; declining it records those checks as skipped and
 sends no audit request.
 
-Production deployment and rollback require `--approve`. Vasuki never pushes or merges a mission.
+Production deployment and rollback require `--approve`. Daino never pushes or merges a mission.
 Every mission begins with a worktree and archive checkpoint and records its initial commit as the
 rollback point. Task and final commits stage only paths changed by successful model edit actions,
 so test-generated caches, bytecode, coverage data, and other command side effects are not swept

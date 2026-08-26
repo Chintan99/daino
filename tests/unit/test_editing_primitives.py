@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.schemas import AgentAction, FileModification
-from vasuki.tools import ActionExecutor, EditTools
+from daino.schemas import AgentAction, FileModification
+from daino.tools import ActionExecutor, EditTools
 
 SOURCE = """def greet(name):
     return f"hello {name}"

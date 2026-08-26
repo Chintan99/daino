@@ -11,9 +11,9 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from vasuki.application import RepositoryApplicationService, initialize_project, open_project
-from vasuki.persistence.models import ToolCall
-from vasuki.utils.ids import new_id
+from daino.application import RepositoryApplicationService, initialize_project, open_project
+from daino.persistence.models import ToolCall
+from daino.utils.ids import new_id
 
 
 def service_for(root: Path) -> RepositoryApplicationService:
@@ -82,7 +82,7 @@ def test_a_mission_in_a_bare_directory_initializes_git_rather_than_refusing(
     tmp_path: Path,
 ) -> None:
     """Refusing the work outright made a missing ``git init`` look like a failure."""
-    from vasuki.git import GitClient
+    from daino.git import GitClient
 
     (tmp_path / "index.html").write_text("<h1>hi</h1>\n", encoding="utf-8")
     git = GitClient(tmp_path)

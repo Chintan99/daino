@@ -1,6 +1,6 @@
 # Memory architecture
 
-Vasuki memory is local-first and selective. It does not make the model remember every prior
+Daino memory is local-first and selective. It does not make the model remember every prior
 message; `ContextBuilder` decides which instructions, task state, memories, source files, and recent
 conversation are useful for the current call. The agent still works when embeddings are disabled.
 
@@ -10,16 +10,16 @@ conversation are useful for the current call. The agent still works when embeddi
 |---|---|---|---|
 | Working | Current process/task | `WorkingMemory`, checkpointed incrementally | Goal, plan, current/completed/pending steps, inspected/changed files, commands, important output, tests, errors, questions and hypotheses |
 | Persistent task | Restarts and disconnects | Project SQLite `persistent_task_states` | Crash-safe copy of working state, repository, branch, mission/session IDs and timestamps |
-| Procedural | Until the user edits it | `~/.vasuki/VASUKI.md` and repository `VASUKI.md` files | Explicit human instructions scoped by directory |
+| Procedural | Until the user edits it | `~/.daino/DAINO.md` and repository `DAINO.md` files | Explicit human instructions scoped by directory |
 | Project semantic | Across sessions in one repository | Project SQLite `memory_records` | Small atomic facts with source, confidence, importance and staleness metadata |
 | Decision | Across sessions in one repository | Typed `memory_records` | The decision, reason, alternatives, source and active/superseded state |
 | Failure/solution | Across relevant future errors | Typed `memory_records` | Normalized error/fingerprint, cause, successful fix and useful failed attempts |
 | Episodic | Task/milestone boundaries | `memory_episodes` plus a retrievable episode summary | Goal, major work, discoveries, decisions, changes, commands, tests, outcome and unresolved work |
-| User | Across repositories | Private `~/.vasuki/memory.db` | Conservative, explicit cross-project preferences |
+| User | Across repositories | Private `~/.daino/memory.db` | Conservative, explicit cross-project preferences |
 
-`VASUKI_HOME` overrides `~/.vasuki`. A configured `VASUKI_CONFIG_HOME` is also honored so portable
+`DAINO_HOME` overrides `~/.daino`. A configured `DAINO_CONFIG_HOME` is also honored so portable
 and test installations keep all user state together. User-memory directories and databases are
-created with private permissions. Project operational state remains under `<repo>/.vasuki/` and is
+created with private permissions. Project operational state remains under `<repo>/.daino/` and is
 ignored by Git.
 
 Project IDs use a normalized `origin` remote when one exists and a resolved path otherwise. They
@@ -48,22 +48,22 @@ step. New tables are still versioned by Alembic.
 All access goes through `MemoryManager`; agents never receive a database path or SQL tool. The
 legacy `MemoryStore` remains compatible for existing architecture-decision callers.
 
-## VASUKI.md hierarchy
+## DAINO.md hierarchy
 
-Vasuki resolves:
+Daino resolves:
 
-1. `~/.vasuki/VASUKI.md` (global),
-2. `<repository>/VASUKI.md` (repository),
-3. every `VASUKI.md` from the repository root down to the directory containing each target file.
+1. `~/.daino/DAINO.md` (global),
+2. `<repository>/DAINO.md` (repository),
+3. every `DAINO.md` from the repository root down to the directory containing each target file.
 
-For `backend/auth/service.py`, `backend/VASUKI.md` applies; `frontend/VASUKI.md` does not. Parent
+For `backend/auth/service.py`, `backend/DAINO.md` applies; `frontend/DAINO.md` does not. Parent
 layers are rendered before closer layers and every block is labeled with its scope. An explicit
 `key: value` or `key = value` directive in a closer file replaces the broader value rather than
 putting both conflicting values in the prompt. Other prose remains in its labeled layer, with the
 closest applicable file authoritative on conflict. Files outside the repository are never read as
 project instructions, and oversized or undecodable instruction files are ignored safely.
 
-Current explicit user instructions have higher procedural priority than every VASUKI.md. They are
+Current explicit user instructions have higher procedural priority than every DAINO.md. They are
 placed in a final, labeled layer so the resolution is inspectable.
 
 ## Authority and conflict handling
@@ -73,9 +73,9 @@ The effective authority order is:
 ```text
 current repository/source code
 > current explicit user instruction
-> closest scoped VASUKI.md
-> repository VASUKI.md
-> global VASUKI.md
+> closest scoped DAINO.md
+> repository DAINO.md
+> global DAINO.md
 > active explicit project decisions
 > verified project semantic memory
 > episodic/session memory
@@ -178,7 +178,7 @@ TUI commands:
 /resume mission-...
 ```
 
-Headless equivalents include `vasuki memory list`, `search`, `forget`, `verify`, and
+Headless equivalents include `daino memory list`, `search`, `forget`, `verify`, and
 `clear-project`. Listings show type, scope, lifecycle status, source and confidence, so users can
 understand what is remembered and why. The validated agent surface provides `memory_search`,
 `memory_save`, `memory_update`, `memory_forget`, `memory_list`, and `memory_verify`; global saves are

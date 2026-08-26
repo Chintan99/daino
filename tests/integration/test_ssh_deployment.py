@@ -5,11 +5,11 @@ from typing import Any
 
 import pytest
 
-from vasuki.config.models import DeploymentTargetConfig
-from vasuki.deployment import DeploymentManager
-from vasuki.exceptions import DeploymentError
-from vasuki.runtimes import RemoteSSHRuntime, Runtime
-from vasuki.schemas import CommandResult
+from daino.config.models import DeploymentTargetConfig
+from daino.deployment import DeploymentManager
+from daino.exceptions import DeploymentError
+from daino.runtimes import RemoteSSHRuntime, Runtime
+from daino.schemas import CommandResult
 
 
 class SSHResult:

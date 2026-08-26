@@ -7,7 +7,7 @@ Revises: 0001
 from sqlalchemy import inspect
 
 from alembic import op
-from vasuki.persistence.models import ConversationMessage, ConversationSession, MissionEventRecord
+from daino.persistence.models import ConversationMessage, ConversationSession, MissionEventRecord
 
 revision = "0002"
 down_revision = "0001"

@@ -5,18 +5,18 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from daino.application import open_project
+from daino.cli.app import app
+from daino.config import default_settings, save_settings
+from daino.workspace import WorkspaceManager
 from tests.conftest import git
-from vasuki.application import open_project
-from vasuki.cli.app import app
-from vasuki.config import default_settings, save_settings
-from vasuki.workspace import WorkspaceManager
 
 
 def test_git_worktree_and_checkpoint_round_trip(git_repo: Path) -> None:
     manager = WorkspaceManager(git_repo)
     workspace = manager.create("mission-test", "change readme")
     assert workspace.path.exists()
-    assert workspace.branch.startswith("vasuki/mission-test/")
+    assert workspace.branch.startswith("daino/mission-test/")
     changed = workspace.path / "README.md"
     changed.write_text("changed\n", encoding="utf-8")
     _, archive = manager.checkpoint(workspace, "changed state")
@@ -46,7 +46,7 @@ def test_cli_init_config_and_repository_commands(
     (tmp_path / "hello.py").write_text("def hello():\n    return 'hi'\n", encoding="utf-8")
     result = runner.invoke(app, ["init"])
     assert result.exit_code == 0, result.output
-    assert (tmp_path / ".vasuki" / "config.yaml").exists()
+    assert (tmp_path / ".daino" / "config.yaml").exists()
     assert runner.invoke(app, ["config", "validate"]).exit_code == 0
     symbols = runner.invoke(app, ["repo", "symbols"])
     assert symbols.exit_code == 0
@@ -77,7 +77,7 @@ def test_cli_init_isolates_a_directory_nested_in_a_parent_repository(tmp_path: P
     result = runner.invoke(app, ["init", str(child)])
 
     assert result.exit_code == 0, result.output
-    assert (child / ".vasuki" / "config.yaml").exists()
+    assert (child / ".daino" / "config.yaml").exists()
     assert (child / ".git").is_dir()
     assert Path(git(child, "rev-parse", "--show-toplevel")) == child.resolve()
     assert git(child, "rev-parse", "--verify", "HEAD")

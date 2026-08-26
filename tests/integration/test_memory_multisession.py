@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vasuki.config import default_settings
-from vasuki.memory import MemoryManager, MemoryStatus
-from vasuki.persistence import Database
+from daino.config import default_settings
+from daino.memory import MemoryManager, MemoryStatus
+from daino.persistence import Database
 
 
 def test_three_session_learning_resume_and_stale_correction(tmp_path: Path) -> None:

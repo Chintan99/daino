@@ -3,10 +3,10 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from vasuki.agents.loop import _detail
-from vasuki.agents.tool_schemas import CHAT_TOOL_SPECS, tool_call_to_action
-from vasuki.schemas import AgentAction, ToolCall
-from vasuki.tools import ActionExecutor, EditTools, WebResearchTool
+from daino.agents.loop import _detail
+from daino.agents.tool_schemas import CHAT_TOOL_SPECS, tool_call_to_action
+from daino.schemas import AgentAction, ToolCall
+from daino.tools import ActionExecutor, EditTools, WebResearchTool
 
 
 async def public_dns(_: str) -> list[str]:

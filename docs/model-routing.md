@@ -12,13 +12,13 @@ security-critical scope, repeated structured-output failures, or persistent test
 sensitivity can force a suitable local profile. Every selection and reason is persisted.
 
 Fallbacks also provide operational failover. If the selected local server is unavailable, rate
-limited, or returns an invalid provider response, Vasuki tries the configured fallbacks in order
+limited, or returns an invalid provider response, Daino tries the configured fallbacks in order
 and records both the failed call and the replacement selection. A model chosen explicitly for a
 session stays pinned and is never silently replaced. Fallback candidates that do not allow the
 task's data sensitivity are skipped; work forced local by sensitivity never falls through to a
 remote provider.
 
-The selected profile's context window is enforced on every request. Vasuki reserves room for the
+The selected profile's context window is enforced on every request. Daino reserves room for the
 model's reply and tool schema, budgets repository context against what remains, and retains the
 system prompt, current task, and newest complete tool exchanges as a conversation grows. Oversized
 observations are clipped head-and-tail rather than dropping the failure the model needs to repair.
@@ -56,9 +56,9 @@ Compact models receive one tool action per turn and a shorter recent-tool histor
 tests, lint, type checks, and builds remain authoritative. After `no_progress_limit` consecutive
 failed or repeated actions, the loop updates its routing context to the existing escalation path;
 the next call uses the configured stronger fallback. A model explicitly selected for the session
-stays pinned, so Vasuki reports the escalation signal but never silently violates that choice.
+stays pinned, so Daino reports the escalation signal but never silently violates that choice.
 
 ```bash
-vasuki models route builder local-coder --fallback strong-cloud
-vasuki models route debugger strong-cloud
+daino models route builder local-coder --fallback strong-cloud
+daino models route debugger strong-cloud
 ```

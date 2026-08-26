@@ -1,31 +1,31 @@
-# Vasuki interactive terminal UI
+# Daino interactive terminal UI
 
-The Textual UI is the primary Vasuki experience. It is a presentation layer over the existing
+The Textual UI is the primary Daino experience. It is a presentation layer over the existing
 mission engine—not a second implementation of providers, agents, Git, verification, persistence,
 or deployment.
 
 ## Install and launch
 
-Vasuki requires Python 3.12 or newer and Git. Docker is optional: a project records the runtime
+Daino requires Python 3.12 or newer and Git. Docker is optional: a project records the runtime
 this machine can actually use when it is initialized.
 
 ```bash
 ./scripts/install.sh
 
 cd /path/to/repository
-vasuki
+daino
 ```
 
 The installer creates a managed user application and command (normally
-`~/.local/bin/vasuki`). No virtual environment activation is needed. See the complete
+`~/.local/bin/daino`). No virtual environment activation is needed. See the complete
 [installation guide](installation.md) for PATH, upgrade, uninstall, and pipx instructions.
 
 Explicit and cross-project launch forms are equivalent:
 
 ```bash
-vasuki tui
-vasuki --project /path/to/repository
-vasuki tui --project /path/to/repository
+daino tui
+daino --project /path/to/repository
+daino tui --project /path/to/repository
 ```
 
 Onboarding runs when a directory has not been initialized. It offers global or project-specific
@@ -145,7 +145,7 @@ the context budget and project boundary still apply.
 Enter always submits and Shift+Enter always inserts a newline; neither is configurable, so the key
 that sends a prompt is the one every chat interface uses. Theme, display mode, hints, streaming
 preference, and the custom binding map are validated under the `tui` section of
-`.vasuki/config.yaml`. Themes are `dark`, `light`, and terminal-compatible `system`.
+`.daino/config.yaml`. Themes are `dark`, `light`, and terminal-compatible `system`.
 
 ## Slash commands
 
@@ -337,14 +337,14 @@ from a chat instruction cannot reach the deployment path.
 ## Quality assurance workspace
 
 The **QA** tab beside Missions runs a repository-wide, read-only audit. Select **Run QA**, or use
-`/qa run`. Vasuki first detects the project stacks and runs applicable deterministic evidence:
+`/qa run`. Daino first detects the project stacks and runs applicable deterministic evidence:
 
 - configured lint, type, test, and build commands;
 - Playwright end-to-end tests when a local Playwright configuration or script exists;
-- `npm`/`pnpm`/`yarn`/`bun` audits, Vasuki's bundled `pip-audit`, and installed `cargo-audit`
+- `npm`/`pnpm`/`yarn`/`bun` audits, Daino's bundled `pip-audit`, and installed `cargo-audit`
   or `govulncheck` scanners for dependency vulnerabilities.
 
-Unavailable optional scanners are shown as skipped with the missing prerequisite; Vasuki does not
+Unavailable optional scanners are shown as skipped with the missing prerequisite; Daino does not
 silently install a scanner during an audit. Dependency scans that can contact registries request
 one network approval in Ask mode, are skipped in Plan mode, and continue automatically in Session
 or Full mode.
@@ -357,28 +357,28 @@ severity-ordered consolidated report.
 
 QA agents receive only file read/search tools: they cannot edit the application or run arbitrary
 commands. The entire QA document scrolls vertically. Reports update live and are preserved under
-the current repository's `.vasuki/qa/` directory. The **Saved scans** table lists prior runs newest
+the current repository's `.daino/qa/` directory. The **Saved scans** table lists prior runs newest
 first; selecting a row reloads its specialists, automated evidence, and consolidated report in the
 same tab. **Refresh scans** discovers reports created since the tab was opened, while `latest.json`
-keeps reopening Vasuki fast.
+keeps reopening Daino fast.
 
 The Providers screen can add and test OpenRouter, local Ollama, local vLLM, and generic
 OpenAI-compatible endpoints. Selecting OpenRouter fills its official endpoint and fetches
-the current model catalog into a searchable model selector. On save, Vasuki validates the entered
+the current model catalog into a searchable model selector. On save, Daino validates the entered
 key with OpenRouter before writing any provider configuration. Rejected keys remain unsaved and
 the form shows OpenRouter's reason. A pasted valid key is stored privately under
-`.vasuki/secrets`; configuration contains only its `file://` reference. Environment and keyring
+`.daino/secrets`; configuration contains only its `file://` reference. Environment and keyring
 references remain supported:
 
 ```bash
 export OPENROUTER_API_KEY='...'
-vasuki providers add openrouter \
+daino providers add openrouter \
   --type openrouter \
   --base-url https://openrouter.ai/api/v1 \
   --model openai/gpt-oss-20b:free \
   --api-key-ref env://OPENROUTER_API_KEY
 
-vasuki providers add local-vllm \
+daino providers add local-vllm \
   --type vllm \
   --base-url http://127.0.0.1:8000/v1 \
   --model Qwen/Qwen2.5-Coder-7B-Instruct \
@@ -388,7 +388,7 @@ vasuki providers add local-vllm \
 Ollama is a first-class provider type. Pick **Local Ollama** in the TUI, or:
 
 ```bash
-vasuki providers add local-ollama \
+daino providers add local-ollama \
   --type ollama \
   --base-url http://127.0.0.1:11434/v1 \
   --model qwen2.5-coder:7b \
@@ -412,7 +412,7 @@ Providers / mission engine / Git / verification / deployment
              screens and reusable widgets
 ```
 
-`vasuki.events` contains UI-independent dataclass events. `MissionService` emits mission, task,
+`daino.events` contains UI-independent dataclass events. `MissionService` emits mission, task,
 agent, model, tool, file, verification, approval, checkpoint, and completion lifecycle events.
 `ProjectContext` persists every event to `mission_events` and the redacted audit log. Textual
 workers consume the same stream without blocking the UI thread.
@@ -430,12 +430,12 @@ per-mission Git worktrees, allowing independent work without changing the origin
 Explicit commands never open the TUI:
 
 ```bash
-vasuki run "Fix failing authentication test" --non-interactive
-vasuki plan "Add JWT authentication"
-vasuki repo index
-vasuki missions list --json
-vasuki test --json
-vasuki deploy inspect --target production --json
+daino run "Fix failing authentication test" --non-interactive
+daino plan "Add JWT authentication"
+daino repo index
+daino missions list --json
+daino test --json
+daino deploy inspect --target production --json
 ```
 
 ## Testing

@@ -6,12 +6,12 @@ from typing import Any
 
 import pytest
 
-from vasuki.application import open_project
-from vasuki.config import default_settings, save_settings
-from vasuki.config.models import ModelProfileConfig, ProviderConfig
-from vasuki.persistence import Database
-from vasuki.repository import RepositoryIndexer
-from vasuki.schemas import (
+from daino.application import open_project
+from daino.config import default_settings, save_settings
+from daino.config.models import ModelProfileConfig, ProviderConfig
+from daino.persistence import Database
+from daino.repository import RepositoryIndexer
+from daino.schemas import (
     AgentAction,
     ProjectMode,
     RequirementSpec,
@@ -19,10 +19,10 @@ from vasuki.schemas import (
     TaskPlan,
     TaskSpec,
 )
-from vasuki.tui.app import VasukiApp
-from vasuki.tui.screens.workspace import WorkspaceScreen
-from vasuki.tui.widgets import ApprovalModal
-from vasuki.tui.widgets.message import MessageCard
+from daino.tui.app import DainoApp
+from daino.tui.screens.workspace import WorkspaceScreen
+from daino.tui.widgets import ApprovalModal
+from daino.tui.widgets.message import MessageCard
 
 
 def _role_name(role: object) -> str:
@@ -139,7 +139,7 @@ async def test_complete_health_mission_through_tui_and_restore(
     command = f"{sys.executable} -c 'from health import health; assert health() == (200, \"ok\")'"
 
     context = open_project(git_repo)
-    app = VasukiApp(git_repo, context=context)
+    app = DainoApp(git_repo, context=context)
     async with app.run_test(size=(120, 42)) as pilot:
         await pilot.pause()
         workspace = app.screen
@@ -189,7 +189,7 @@ async def test_complete_health_mission_through_tui_and_restore(
         assert any("1 failed" in content for content in contents)
         assert any("1 passed" in content for content in contents)
         assert any("Mission completed" in content for content in contents)
-        assert list((git_repo / ".vasuki" / "artifacts" / mission_id).iterdir())
+        assert list((git_repo / ".daino" / "artifacts" / mission_id).iterdir())
 
     reopened = open_project(git_repo)
     try:

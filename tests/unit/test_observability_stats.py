@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.observability import collect_stats
-from vasuki.persistence import Database
-from vasuki.persistence.models import (
+from daino.observability import collect_stats
+from daino.persistence import Database
+from daino.persistence.models import (
     ConversationMessage,
     ConversationSession,
     Mission,

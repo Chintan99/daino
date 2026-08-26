@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.agents.tool_schemas import CHAT_TOOL_SPECS
-from vasuki.config.models import SecurityConfig
-from vasuki.schemas import AgentAction, CommandResult, EditSpec, TodoItem
-from vasuki.security.commands import CommandGate, Verdict
-from vasuki.tools import ActionExecutor, EditTools
-from vasuki.tools.commands import CommandRunner
+from daino.agents.tool_schemas import CHAT_TOOL_SPECS
+from daino.config.models import SecurityConfig
+from daino.schemas import AgentAction, CommandResult, EditSpec, TodoItem
+from daino.security.commands import CommandGate, Verdict
+from daino.tools import ActionExecutor, EditTools
+from daino.tools.commands import CommandRunner
 
 
 class FakeRuntime:
@@ -523,8 +523,8 @@ def test_a_new_project_sandboxes_in_docker_when_the_daemon_answers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Docker is the default so agent commands run isolated from the machine."""
-    from vasuki.config.models import RuntimeConfig
-    from vasuki.runtimes import detect
+    from daino.config.models import RuntimeConfig
+    from daino.runtimes import detect
 
     assert RuntimeConfig().default == "docker"
     monkeypatch.setattr(detect, "docker_status", lambda: (True, ""))
@@ -533,7 +533,7 @@ def test_a_new_project_sandboxes_in_docker_when_the_daemon_answers(
 
 def test_an_unreachable_docker_falls_back_to_the_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """A container runtime the user cannot reach fails every command."""
-    from vasuki.runtimes import detect
+    from daino.runtimes import detect
 
     monkeypatch.setattr(detect, "docker_status", lambda: (False, "daemon is not running"))
     assert detect.preferred_runtime() == "local"
@@ -543,7 +543,7 @@ def test_docker_permission_trouble_names_the_remedy(monkeypatch: pytest.MonkeyPa
     """'permission denied' alone leaves the user with nowhere to go."""
     import subprocess
 
-    from vasuki.runtimes import detect
+    from daino.runtimes import detect
 
     monkeypatch.setattr(detect.shutil, "which", lambda name: "/usr/bin/docker")
 
@@ -562,7 +562,7 @@ def test_docker_permission_trouble_names_the_remedy(monkeypatch: pytest.MonkeyPa
 
 
 def test_a_missing_docker_binary_is_reported_plainly(monkeypatch: pytest.MonkeyPatch) -> None:
-    from vasuki.runtimes import detect
+    from daino.runtimes import detect
 
     monkeypatch.setattr(detect.shutil, "which", lambda name: None)
     usable, reason = detect.docker_status()

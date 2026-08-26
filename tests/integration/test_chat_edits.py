@@ -16,11 +16,11 @@ from typing import Any
 
 import pytest
 
+from daino.application import ProviderApplicationService, initialize_project, open_project
+from daino.tui.app import DainoApp
+from daino.tui.screens.workspace import WorkspaceScreen
+from daino.tui.widgets.message import MessageCard, _diff_marker
 from tests.conftest import commit_all
-from vasuki.application import ProviderApplicationService, initialize_project, open_project
-from vasuki.tui.app import VasukiApp
-from vasuki.tui.screens.workspace import WorkspaceScreen
-from vasuki.tui.widgets.message import MessageCard, _diff_marker
 
 
 def _is_change(line: str) -> bool:
@@ -122,7 +122,7 @@ def agent_server() -> Iterator[str]:
         server.server_close()
 
 
-def connected_app(root: Path, base_url: str) -> VasukiApp:
+def connected_app(root: Path, base_url: str) -> DainoApp:
     (root / "landing.html").write_text(ORIGINAL, encoding="utf-8")
     commit_all(root)
     initialize_project(root)
@@ -133,7 +133,7 @@ def connected_app(root: Path, base_url: str) -> VasukiApp:
         base_url=base_url,
         model="vendor/small",
     )
-    return VasukiApp(root, context=context)
+    return DainoApp(root, context=context)
 
 
 async def settle(pilot: Any, workspace: WorkspaceScreen, attempts: int = 200) -> None:
@@ -340,7 +340,7 @@ async def test_each_edit_posts_its_own_diff_as_it_lands(agent_server: str, tmp_p
 @pytest.mark.asyncio
 async def test_a_created_file_is_summarized_not_pasted_back(tmp_path: Path) -> None:
     """Every line of a new file is an addition; rendering them all is just the file."""
-    from vasuki.tools.diffing import MAX_CREATED_LINES, build_file_diff, render
+    from daino.tools.diffing import MAX_CREATED_LINES, build_file_diff, render
 
     body = "\n".join(f"<div>line {index}</div>" for index in range(200)) + "\n"
     diff = build_file_diff("cars.html", None, body)
@@ -370,9 +370,9 @@ async def test_a_fresh_session_sends_no_history_from_last_time(
         await settle(pilot, workspace)
 
     # A second launch against the same project.
-    from vasuki.application import open_project
+    from daino.application import open_project
 
-    second = VasukiApp(tmp_path, context=open_project(tmp_path))
+    second = DainoApp(tmp_path, context=open_project(tmp_path))
     async with second.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workspace = second.screen

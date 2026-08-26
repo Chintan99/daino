@@ -6,18 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.application.context import ProjectContext
-from vasuki.application.verification_service import VerificationApplicationService
-from vasuki.events import EventBus
-from vasuki.events import TestsCompleted as VerificationCompletedEvent
-from vasuki.events import TestsStarted as VerificationStartedEvent
-from vasuki.exceptions import PolicyDenied
-from vasuki.missions import MissionService
-from vasuki.runtimes import DockerRuntime, LocalRuntime
-from vasuki.schemas import CommandResult
-from vasuki.security import PolicyEngine
-from vasuki.tools import EditTools, FileTools
-from vasuki.verification import RepairLoop, VerificationEngine
+from daino.application.context import ProjectContext
+from daino.application.verification_service import VerificationApplicationService
+from daino.events import EventBus
+from daino.events import TestsCompleted as VerificationCompletedEvent
+from daino.events import TestsStarted as VerificationStartedEvent
+from daino.exceptions import PolicyDenied
+from daino.missions import MissionService
+from daino.runtimes import DockerRuntime, LocalRuntime
+from daino.schemas import CommandResult
+from daino.security import PolicyEngine
+from daino.tools import EditTools, FileTools
+from daino.verification import RepairLoop, VerificationEngine
 
 
 def test_file_tools_confine_workspace(tmp_path: Path) -> None:
@@ -65,9 +65,9 @@ async def test_local_runtime_policy_and_timeout(tmp_path: Path) -> None:
 async def test_missing_executable_is_a_structured_verification_failure(tmp_path: Path) -> None:
     runtime = LocalRuntime(tmp_path)
 
-    result = await runtime.execute("vasuki-command-that-does-not-exist --check")
+    result = await runtime.execute("daino-command-that-does-not-exist --check")
     report = await VerificationEngine(tmp_path, runtime).run(
-        ["vasuki-command-that-does-not-exist --check"]
+        ["daino-command-that-does-not-exist --check"]
     )
 
     assert result.exit_code == 127
@@ -132,7 +132,7 @@ async def test_docker_runtime_builds_isolated_command(
             duration_seconds=0,
         )
 
-    monkeypatch.setattr("vasuki.runtimes.docker.shutil.which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr("daino.runtimes.docker.shutil.which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr(LocalRuntime, "execute", fake_local_execute)
     runtime = DockerRuntime(
         tmp_path,
@@ -161,7 +161,7 @@ async def test_docker_runtime_builds_isolated_command(
 async def test_docker_runtime_requires_approval_for_host_mutations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from vasuki.exceptions import PolicyDenied
+    from daino.exceptions import PolicyDenied
 
     commands: list[str] = []
 
@@ -311,7 +311,7 @@ async def test_application_verification_closes_test_state_when_cleanup_fails(
 
 @pytest.mark.asyncio
 async def test_browser_verifier_reports_optional_dependency(tmp_path: Path) -> None:
-    from vasuki.verification import BrowserVerifier
+    from daino.verification import BrowserVerifier
 
     report = await BrowserVerifier().verify("http://example.invalid", artifact_dir=tmp_path)
     assert not report.passed
@@ -324,7 +324,7 @@ def test_a_check_whose_own_program_is_absent_is_named() -> None:
     Reported as a verification failure, it told the user their finished edit was
     broken when in fact the check had never run.
     """
-    from vasuki.verification import missing_executable
+    from daino.verification import missing_executable
 
     assert missing_executable("git diff --check", "sh: 1: git: not found") == "git"
     assert missing_executable("node --check app.js", "bash: node: command not found") == "node"
@@ -332,7 +332,7 @@ def test_a_check_whose_own_program_is_absent_is_named() -> None:
 
 def test_a_failure_inside_a_check_is_not_a_missing_program() -> None:
     """Otherwise a genuine failure would be excused as a runtime gap."""
-    from vasuki.verification import missing_executable
+    from daino.verification import missing_executable
 
     assert missing_executable("pytest -q", "ModuleNotFoundError: No module named 'app'") == ""
     assert missing_executable("pytest -q", "FileNotFoundError: config.json: not found") == ""

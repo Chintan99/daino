@@ -9,8 +9,8 @@ python -m pip install -e '.[dev,indexing]'
 pytest
 ruff check .
 ruff format --check .
-mypy vasuki
-bandit -r vasuki
+mypy daino
+bandit -r daino
 ```
 
 Public interfaces require type hints and docstrings. Keep model/provider/runtime behavior behind

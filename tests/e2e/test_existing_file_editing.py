@@ -13,14 +13,14 @@ from typing import Any
 
 import pytest
 
-from vasuki.application import initialize_project, open_project
-from vasuki.config.models import ModelProfileConfig, ProviderConfig
-from vasuki.context import ContextCompiler
-from vasuki.missions import MissionService
-from vasuki.model_router import ModelRole
-from vasuki.repository import RepositoryIndexer
-from vasuki.runtimes import LocalRuntime
-from vasuki.schemas import (
+from daino.application import initialize_project, open_project
+from daino.config.models import ModelProfileConfig, ProviderConfig
+from daino.context import ContextCompiler
+from daino.missions import MissionService
+from daino.model_router import ModelRole
+from daino.repository import RepositoryIndexer
+from daino.runtimes import LocalRuntime
+from daino.schemas import (
     AgentAction,
     FileModification,
     ProjectMode,
@@ -28,9 +28,9 @@ from vasuki.schemas import (
     TaskPlan,
     TaskSpec,
 )
-from vasuki.security import PolicyEngine
-from vasuki.tools import EditTools
-from vasuki.verification import VerificationEngine
+from daino.security import PolicyEngine
+from daino.tools import EditTools
+from daino.verification import VerificationEngine
 
 ORIGINAL = """<!DOCTYPE html>
 <html>

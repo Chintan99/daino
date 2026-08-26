@@ -6,15 +6,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from vasuki.agents.team import validate_team_plan
-from vasuki.agents.tool_schemas import QA_TOOL_SPECS
-from vasuki.application.qa_service import (
+from daino.agents.team import validate_team_plan
+from daino.agents.tool_schemas import QA_TOOL_SPECS
+from daino.application.qa_service import (
     _dependency_summary,
     discover_checks,
     inspect_project,
     specialist_plan,
 )
-from vasuki.schemas import QAAgentAction
+from daino.schemas import QAAgentAction
 
 
 def _tool_names() -> set[str]:
@@ -66,7 +66,7 @@ def test_project_detection_and_checks_cover_full_stack_playwright_and_audits(
     (tmp_path / "uv.lock").write_text("", encoding="utf-8")
     (tmp_path / "tests").mkdir()
     monkeypatch.setattr(
-        "vasuki.application.qa_service.shutil.which",
+        "daino.application.qa_service.shutil.which",
         lambda name: f"/usr/bin/{name}",
     )
 

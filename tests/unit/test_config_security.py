@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from vasuki.config import load_settings, save_settings, set_value
-from vasuki.config.models import ProviderConfig, Settings
-from vasuki.security import PolicyEngine, redact, resolve_secret, store_project_secret
+from daino.config import load_settings, save_settings, set_value
+from daino.config.models import ProviderConfig, Settings
+from daino.security import PolicyEngine, redact, resolve_secret, store_project_secret
 
 
 def test_config_round_trip_and_dotted_update(tmp_path: Path) -> None:

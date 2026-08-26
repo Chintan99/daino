@@ -7,15 +7,15 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from vasuki.config.models import ProviderConfig
-from vasuki.exceptions import ProviderError, ToolCallingUnsupported
-from vasuki.providers.base import DEFAULT_MAX_OUTPUT_TOKENS
-from vasuki.providers.factory import create_provider
-from vasuki.providers.ollama import OllamaProvider
-from vasuki.providers.openai_compatible import OpenAICompatibleProvider
-from vasuki.providers.openrouter import OpenRouterProvider
-from vasuki.providers.vllm import VLLMProvider
-from vasuki.schemas import Message, ToolCall
+from daino.config.models import ProviderConfig
+from daino.exceptions import ProviderError, ToolCallingUnsupported
+from daino.providers.base import DEFAULT_MAX_OUTPUT_TOKENS
+from daino.providers.factory import create_provider
+from daino.providers.ollama import OllamaProvider
+from daino.providers.openai_compatible import OpenAICompatibleProvider
+from daino.providers.openrouter import OpenRouterProvider
+from daino.providers.vllm import VLLMProvider
+from daino.schemas import Message, ToolCall
 
 
 class Answer(BaseModel):
@@ -98,7 +98,7 @@ async def test_openrouter_headers_and_vllm_empty_key() -> None:
     openrouter = OpenRouterProvider(
         api_key="secret",
         model="mock",
-        application_name="Vasuki",
+        application_name="Daino",
         referring_url="https://example.invalid",
         transport=transport,
     )
@@ -107,7 +107,7 @@ async def test_openrouter_headers_and_vllm_empty_key() -> None:
     vllm = VLLMProvider(model="mock", api_key="", transport=transport)
     await vllm.complete([Message(role="user", content="test")])
     await vllm.close()
-    assert seen[0].headers["x-title"] == "Vasuki"
+    assert seen[0].headers["x-title"] == "Daino"
     assert seen[0].headers["http-referer"] == "https://example.invalid"
     assert "authorization" not in seen[1].headers
 
@@ -849,7 +849,7 @@ async def test_an_ollama_with_no_models_says_how_to_pull_one() -> None:
 
 def test_installed_ollama_models_are_shaped_for_the_picker() -> None:
     """A bare tag is unreadable; size and capabilities make it a choice."""
-    from vasuki.application.provider_service import ProviderApplicationService
+    from daino.application.provider_service import ProviderApplicationService
 
     models = ProviderApplicationService._ollama_models(
         [

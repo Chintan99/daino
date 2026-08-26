@@ -1,6 +1,6 @@
-# Vasuki (D[AI]NO.AI)
+# Daino (D[AI]NO.AI)
 
-Vasuki is a local-first AI coding agent that lives in your terminal. Type an instruction and it
+Daino is a local-first AI coding agent that lives in your terminal. Type an instruction and it
 reads the repository, edits files, runs your tests, and shows you the diff — in your working tree,
 with a checkpoint taken first.
 
@@ -14,12 +14,12 @@ configured; and dependency vulnerability scans. Results are consolidated and pre
 It is not a code-snippet chatbot. When you ask for a change, you get the change: the agent writes
 into the files and reports what it did, rather than printing a block of code for you to paste.
 
-Vasuki also has selective local memory: unfinished work survives restarts, scoped `VASUKI.md`
+Daino also has selective local memory: unfinished work survives restarts, scoped `DAINO.md`
 instructions follow the files being edited, useful project facts and decisions can be retrieved in
 future sessions, and source-derived facts become stale when their files change. User memory stays
-under `~/.vasuki`; no external vector database is required. See [memory](docs/memory.md).
+under `~/.daino`; no external vector database is required. See [memory](docs/memory.md).
 
-![Vasuki interactive terminal workspace](docs/assets/vasuki-tui.png)
+![Daino interactive terminal workspace](docs/assets/daino-tui.png)
 
 ## Install
 
@@ -28,43 +28,43 @@ Python 3.12 or newer and Git. Docker is optional.
 ```bash
 ./scripts/install.sh
 cd /path/to/your/repository
-vasuki
+daino
 ```
 
-This installs `vasuki` as a managed user application (normally `~/.local/bin/vasuki`). It works
+This installs `daino` as a managed user application (normally `~/.local/bin/daino`). It works
 from any directory and needs no virtualenv activation. Rerun the installer to upgrade, or
-`uv tool uninstall vasuki` to remove it.
+`uv tool uninstall daino` to remove it.
 
 See [installation](docs/installation.md) for uv, pipx, and PATH details, or
 [contributing](docs/contributing.md) for a development setup.
 
 ## Configure once
 
-Connect a model the first time you run Vasuki and it is available to every project afterwards.
+Connect a model the first time you run Daino and it is available to every project afterwards.
 When a new directory is initialized, onboarding lets you inherit that global configuration or
 choose a project-specific provider and model:
 
 ```bash
-vasuki providers add openrouter \
+daino providers add openrouter \
   --type openrouter \
   --base-url https://openrouter.ai/api/v1 \
   --model openai/gpt-5.6 \
   --api-key-ref env://OPENROUTER_API_KEY
 ```
 
-Providers, model profiles, and routing live in `~/.config/vasuki/config.yaml`. Project-local
-settings — verification commands, security policy, runtime — live in `.vasuki/config.yaml` and
+Providers, model profiles, and routing live in `~/.config/daino/config.yaml`. Project-local
+settings — verification commands, security policy, runtime — live in `.daino/config.yaml` and
 override the global layer where they disagree, so one repository can still pin a different model.
-API keys for a global provider are stored under `~/.config/vasuki/secrets/`, never inside a
+API keys for a global provider are stored under `~/.config/daino/secrets/`, never inside a
 checkout. See [configuration](docs/configuration.md).
 
 Local models work the same way and need no cloud credentials:
 
 ```bash
-vasuki providers add local-ollama --type ollama \
+daino providers add local-ollama --type ollama \
   --base-url http://127.0.0.1:11434/v1 --model qwen2.5-coder:7b --local
 
-vasuki providers add local-vllm --type vllm \
+daino providers add local-vllm --type vllm \
   --base-url http://127.0.0.1:8000/v1 --model Qwen/Qwen2.5-Coder-7B-Instruct --local
 ```
 
@@ -77,7 +77,7 @@ Type an instruction. The agent decides whether you asked a question or asked for
 
 ```text
 › what does landing.html do?
-  vasuki  It renders a single welcome heading and loads styles.css.
+  daino  It renders a single welcome heading and loads styles.css.
 
 › make the heading glassmorphism, raw CSS only
   edit  landing.html
@@ -85,12 +85,38 @@ Type an instruction. The agent decides whether you asked a question or asked for
           3   <body>
           4 - <h1>Welcome</h1>
           4 + <h1 class="glass">Welcome</h1>
-  vasuki  Applied the glass heading style.
+  daino  Applied the glass heading style.
   test    1 check(s) passed
 ```
 
 Edits land in your working tree. A checkpoint is taken before the first one, so `/restore` always
 has a way back, and `/diff` shows the full change.
+
+## Browser IDE (`daino . --gui`)
+
+Daino also ships a local, VS Code-style browser IDE driven by the **same** agent runtime as the
+terminal. Nothing runs in the cloud; the server binds to `127.0.0.1` only.
+
+```bash
+daino .          # terminal UI (the default)
+daino . --tui    # terminal UI, explicit
+daino . --gui    # browser IDE at http://127.0.0.1:4173
+daino . --gui --port 5000
+```
+
+The GUI opens your default browser to a local URL and gives you three workspaces that share one
+Daino agent and one session:
+
+- **Code** — file explorer, Monaco editor with tabs and dirty-state, an integrated terminal,
+  Git status/diff, and a persistent Daino agent panel with streamed responses, tool cards, and
+  command approvals (the same security model as the TUI — nothing is auto-committed).
+- **Design** — structured, AI-editable diagrams (architecture, flowchart, database, API flow) on a
+  React Flow canvas you can also edit by hand, plus HTML/React prototypes. Design never writes
+  production code directly; use **Implement Design** to generate a plan first.
+- **Preview** — runs your project's dev server (through the normal approval flow) and embeds the
+  running app.
+
+See [the GUI guide](docs/gui.md) for the full feature tour.
 
 ### The agent has a shell
 
@@ -142,11 +168,11 @@ task plan, an isolated Git worktree, bounded repair attempts, independent review
 commits. Missions never touch your original checkout and never push.
 
 ```bash
-vasuki run "Add a paginated GET /documents endpoint with unit tests"
-vasuki run "Fix the authentication test" --non-interactive
-vasuki missions list
-vasuki missions show <mission-id> --diff
-vasuki missions export <mission-id> --format markdown
+daino run "Add a paginated GET /documents endpoint with unit tests"
+daino run "Fix the authentication test" --non-interactive
+daino missions list
+daino missions show <mission-id> --diff
+daino missions export <mission-id> --format markdown
 ```
 
 ## Keys and commands
@@ -181,8 +207,8 @@ daemon is actually reachable; otherwise the local subprocess runtime is used, so
 of the box rather than failing on a container that was never available.
 
 ```bash
-vasuki config set runtime.default local   # or docker, ssh
-vasuki doctor                             # what works here, and why not
+daino config set runtime.default local   # or docker, ssh
+daino doctor                             # what works here, and why not
 ```
 
 Local commands are still checked by the policy engine and run without a shell. See
@@ -191,11 +217,11 @@ Local commands are still checked by the policy engine and run without a shell. S
 ## Repository intelligence
 
 ```bash
-vasuki repo index
-vasuki repo symbols
-vasuki repo references DocumentService
-vasuki repo routes
-vasuki repo tests
+daino repo index
+daino repo symbols
+daino repo references DocumentService
+daino repo routes
+daino repo tests
 ```
 
 The index is incremental. Python symbols come from the standard AST; other supported languages use
@@ -204,7 +230,7 @@ tree-sitter declaration extraction. Only relevant exact files enter model contex
 
 ## Deploy to a remote Compose server
 
-Add a target to `.vasuki/config.yaml`:
+Add a target to `.daino/config.yaml`:
 
 ```yaml
 deployment:
@@ -223,10 +249,10 @@ deployment:
 ```
 
 ```bash
-vasuki deploy inspect --target production
-vasuki deploy plan --target production
-vasuki deploy apply --target production --approve
-vasuki deploy rollback --target production --approve
+daino deploy inspect --target production
+daino deploy plan --target production
+daino deploy apply --target production --approve
+daino deploy rollback --target production --approve
 ```
 
 Inspection is read-only. Releases upload under `releases/<release-id>` and are promoted only after
@@ -250,9 +276,9 @@ See [security](docs/security.md) for the trust boundaries.
 ## Docker development
 
 ```bash
-docker build -t vasuki .
+docker build -t daino .
 docker compose up -d postgres mock-llm
-docker compose run --rm vasuki vasuki --help
+docker compose run --rm daino daino --help
 ```
 
 ## Current limitations
@@ -271,10 +297,29 @@ docker compose run --rm vasuki vasuki --help
   and externally managed environment files, TLS, and reverse proxy.
 - Kubernetes and cloud architecture generation are outside this release.
 
+## Migrating from Vasuki
+
+Vasuki has been renamed to **Daino**. The command is now `daino`; the old `vasuki` command still
+works as a deprecated alias and prints a one-time notice.
+
+Existing projects and sessions are detected automatically from legacy locations and never deleted:
+
+- Project state: a new project uses `.daino/`, but a checkout that already has `.vasuki/` keeps
+  using it in place, so its database, sessions, and config stay together.
+- Global config/memory: `~/.config/daino` and `~/.daino` are preferred, falling back to
+  `~/.config/vasuki` and `~/.vasuki` when only those exist.
+- Environment variables: `DAINO_CONFIG_HOME` / `DAINO_HOME` / `DAINO_RUNTIME` are read first, with
+  the `VASUKI_*` equivalents still honoured.
+- Instruction files: `DAINO.md` is discovered first, and legacy `VASUKI.md` is still read where no
+  `DAINO.md` exists at the same level.
+- Python imports: `import daino` is canonical; `import vasuki` still resolves via a deprecation
+  shim.
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)
 - [Interactive TUI](docs/tui.md)
+- [Browser IDE (GUI)](docs/gui.md)
 - [Configuration](docs/configuration.md)
 - [Providers](docs/providers.md)
 - [Model routing](docs/model-routing.md)

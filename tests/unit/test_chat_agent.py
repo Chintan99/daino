@@ -9,16 +9,16 @@ from typing import Any
 import pytest
 from textual.content import Content
 
-from vasuki.agents.loop import ToolLoop
-from vasuki.agents.tool_schemas import AGENT_TOOL_SPECS, CHAT_TOOL_SPECS, tool_call_to_action
-from vasuki.application.mission_service import MissionApplicationService
-from vasuki.model_router import ModelRole
-from vasuki.prompts import CHAT_AGENT_SYSTEM
-from vasuki.schemas import AgentAction, ContextBundle, LLMResponse, Message, ToolCall
-from vasuki.tools import EditTools, RecordingActionExecutor
-from vasuki.tools.diffing import build_file_diff, render, summarize
-from vasuki.tui import palette
-from vasuki.tui.widgets.message import DIFF_MAX_WIDTH, MessageCard, _diff_marker
+from daino.agents.loop import ToolLoop
+from daino.agents.tool_schemas import AGENT_TOOL_SPECS, CHAT_TOOL_SPECS, tool_call_to_action
+from daino.application.mission_service import MissionApplicationService
+from daino.model_router import ModelRole
+from daino.prompts import CHAT_AGENT_SYSTEM
+from daino.schemas import AgentAction, ContextBundle, LLMResponse, Message, ToolCall
+from daino.tools import EditTools, RecordingActionExecutor
+from daino.tools.diffing import build_file_diff, render, summarize
+from daino.tui import palette
+from daino.tui.widgets.message import DIFF_MAX_WIDTH, MessageCard, _diff_marker
 
 
 @pytest.fixture()
@@ -379,7 +379,7 @@ async def test_an_unavailable_runtime_does_not_report_the_edit_as_failed(
     tmp_path: Path,
 ) -> None:
     """Docker missing means the checks never ran; the edit itself was fine."""
-    from vasuki.schemas import ChatOutcome
+    from daino.schemas import ChatOutcome
 
     service = MissionApplicationService.__new__(MissionApplicationService)
     recorded: list[tuple[str, str]] = []
@@ -395,7 +395,7 @@ async def test_an_unavailable_runtime_does_not_report_the_edit_as_failed(
         async def run(self, commands: list[str], **kwargs: object) -> object:
             raise RuntimeError("Docker is not installed or not on PATH")
 
-    import vasuki.application.verification_service as verification
+    import daino.application.verification_service as verification
 
     original = verification.VerificationApplicationService
     verification.VerificationApplicationService = Boom  # type: ignore[misc]

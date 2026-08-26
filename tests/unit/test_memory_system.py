@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from vasuki.config import default_settings
-from vasuki.config.models import MemoryConfig, ModelProfileConfig
-from vasuki.context import ContextBuilder, ContextCompiler, ModelExecutionProfile
-from vasuki.memory import (
+from daino.config import default_settings
+from daino.config.models import MemoryConfig, ModelProfileConfig
+from daino.context import ContextBuilder, ContextCompiler, ModelExecutionProfile
+from daino.memory import (
     DisabledEmbeddingProvider,
     InstructionResolver,
     MemoryManager,
@@ -18,10 +18,10 @@ from vasuki.memory import (
     PersistentTaskStatus,
     error_fingerprint,
 )
-from vasuki.persistence import Database
-from vasuki.repository import RepositoryIndexer
-from vasuki.schemas import AgentAction, TaskSpec
-from vasuki.tools import ActionExecutor, EditTools
+from daino.persistence import Database
+from daino.repository import RepositoryIndexer
+from daino.schemas import AgentAction, TaskSpec
+from daino.tools import ActionExecutor, EditTools
 
 
 def manager_for(root: Path, global_path: Path) -> tuple[MemoryManager, Database]:

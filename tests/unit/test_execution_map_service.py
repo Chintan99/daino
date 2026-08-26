@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.application import ExecutionMapApplicationService
-from vasuki.application.context import ProjectContext
-from vasuki.events import EventBus
-from vasuki.persistence import Database
-from vasuki.persistence.models import Mission, MissionEventRecord, ModelCall, Project, ToolCall
+from daino.application import ExecutionMapApplicationService
+from daino.application.context import ProjectContext
+from daino.events import EventBus
+from daino.persistence import Database
+from daino.persistence.models import Mission, MissionEventRecord, ModelCall, Project, ToolCall
 
 
 def _service(

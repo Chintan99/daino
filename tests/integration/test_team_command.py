@@ -17,11 +17,11 @@ from typing import Any
 
 import pytest
 
+from daino.application import ProviderApplicationService, initialize_project, open_project
+from daino.tui.app import DainoApp
+from daino.tui.keybindings import SLASH_COMMANDS
+from daino.tui.screens.workspace import WorkspaceScreen
 from tests.conftest import commit_all
-from vasuki.application import ProviderApplicationService, initialize_project, open_project
-from vasuki.tui.app import VasukiApp
-from vasuki.tui.keybindings import SLASH_COMMANDS
-from vasuki.tui.screens.workspace import WorkspaceScreen
 
 #: Two members with disjoint scopes, so validation lets them run in one wave.
 TEAM_PLAN = {
@@ -135,7 +135,7 @@ def team_server() -> Iterator[str]:
         server.server_close()
 
 
-def connected_app(root: Path, base_url: str) -> VasukiApp:
+def connected_app(root: Path, base_url: str) -> DainoApp:
     (root / "app.py").write_text("def value():\n    return 1\n", encoding="utf-8")
     commit_all(root)
     initialize_project(root)
@@ -146,7 +146,7 @@ def connected_app(root: Path, base_url: str) -> VasukiApp:
         base_url=base_url,
         model="vendor/small",
     )
-    return VasukiApp(root, context=context)
+    return DainoApp(root, context=context)
 
 
 def test_team_is_a_registered_slash_command() -> None:
@@ -199,7 +199,7 @@ async def test_team_command_runs_members_and_writes_their_files(
 async def test_team_without_an_instruction_explains_the_usage(tmp_path: Path) -> None:
     initialize_project(tmp_path)
     context = open_project(tmp_path)
-    app_instance = VasukiApp(tmp_path, context=context)
+    app_instance = DainoApp(tmp_path, context=context)
     async with app_instance.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         workspace = app_instance.screen

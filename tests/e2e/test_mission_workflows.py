@@ -6,12 +6,11 @@ from typing import Any
 
 import pytest
 
-from tests.conftest import git
-from vasuki.config import default_settings, save_settings
-from vasuki.config.models import ModelProfileConfig, ProviderConfig
-from vasuki.missions import MissionService
-from vasuki.persistence import Database
-from vasuki.schemas import (
+from daino.config import default_settings, save_settings
+from daino.config.models import ModelProfileConfig, ProviderConfig
+from daino.missions import MissionService
+from daino.persistence import Database
+from daino.schemas import (
     AgentAction,
     ProjectMode,
     RequirementSpec,
@@ -20,6 +19,7 @@ from vasuki.schemas import (
     TaskPlan,
     TaskSpec,
 )
+from tests.conftest import git
 
 
 def _role_name(role: object) -> str:
@@ -52,7 +52,7 @@ class DeterministicGateway:
             {
                 "action": "finish",
                 "summary": "Implement answer",
-                "verification_commands": ["vasuki-builder-check-does-not-exist"],
+                "verification_commands": ["daino-builder-check-does-not-exist"],
                 "thought": "The file is written.",
             },
         ]
@@ -72,7 +72,7 @@ class DeterministicGateway:
             {
                 "action": "finish",
                 "summary": "Repair answer",
-                "verification_commands": ["vasuki-builder-check-does-not-exist"],
+                "verification_commands": ["daino-builder-check-does-not-exist"],
                 "thought": "The value is corrected.",
             },
         ]

@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.application import (
+from daino.application import (
     MissionApplicationService,
     ProviderApplicationService,
     open_project,
 )
-from vasuki.events import EventBus, MissionCreated, ModelReasoningChunk, ModelStreamChunk
-from vasuki.exceptions import ProviderError
-from vasuki.persistence.models import ConversationMessage, ConversationSession, MissionEventRecord
-from vasuki.security import resolve_secret
+from daino.events import EventBus, MissionCreated, ModelReasoningChunk, ModelStreamChunk
+from daino.exceptions import ProviderError
+from daino.persistence.models import ConversationMessage, ConversationSession, MissionEventRecord
+from daino.security import resolve_secret
 
 
 def test_event_bus_delivers_typed_events() -> None:
@@ -278,7 +278,7 @@ def test_project_provider_override_can_return_to_global_settings(
     assert service.use_global() == "shared"
     assert service.routable_profile() == "shared"
     assert "project-only" not in context.settings.providers
-    project_config = (root / ".vasuki" / "config.yaml").read_text(encoding="utf-8")
+    project_config = (root / ".daino" / "config.yaml").read_text(encoding="utf-8")
     assert "project-only" not in project_config
     context.close()
 
@@ -327,7 +327,7 @@ async def test_openrouter_configuration_validates_then_stores_secret_reference(
             return None
 
     monkeypatch.setattr(
-        "vasuki.application.provider_service.OpenRouterProvider",
+        "daino.application.provider_service.OpenRouterProvider",
         FakeOpenRouter,
     )
     service = ProviderApplicationService(context)
@@ -346,7 +346,7 @@ async def test_openrouter_configuration_validates_then_stores_secret_reference(
     assert seen_keys == ["sk-or-valid-test-key"]
     assert reference.startswith("file://")
     assert resolve_secret(reference) == "sk-or-valid-test-key"
-    assert "sk-or-valid-test-key" not in (root / ".vasuki" / "config.yaml").read_text(
+    assert "sk-or-valid-test-key" not in (root / ".daino" / "config.yaml").read_text(
         encoding="utf-8"
     )
     context.close()
@@ -374,7 +374,7 @@ async def test_invalid_openrouter_key_is_not_saved(
             return None
 
     monkeypatch.setattr(
-        "vasuki.application.provider_service.OpenRouterProvider",
+        "daino.application.provider_service.OpenRouterProvider",
         InvalidOpenRouter,
     )
     service = ProviderApplicationService(context)
@@ -389,5 +389,5 @@ async def test_invalid_openrouter_key_is_not_saved(
         )
 
     assert "openrouter" not in context.settings.providers
-    assert not (root / ".vasuki" / "secrets").exists()
+    assert not (root / ".daino" / "secrets").exists()
     context.close()

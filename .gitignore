@@ -9,8 +9,11 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+.daino/
 .vasuki/
 .env
+node_modules/
+daino/gui/dist/
 *.pem
 *.key
 playwright-report/

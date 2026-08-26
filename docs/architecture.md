@@ -2,7 +2,7 @@
 
 ## Interactive presentation boundary
 
-The Textual application under `vasuki/tui` depends only on `vasuki/application` facades and typed
+The Textual application under `daino/tui` depends only on `daino/application` facades and typed
 events. It never applies patches, chooses provider credentials, creates worktrees, executes test
 commands, or deploys services directly.
 
@@ -11,11 +11,11 @@ provide mission, repository, verification, provider, settings, checkpoint, and d
 cases. The existing `MissionService`, model gateway, repository indexer, runtime, verification
 engine, workspace manager, and deployment manager remain the authoritative implementations.
 
-Core lifecycle events are serializable dataclasses in `vasuki/events/events.py`. They are persisted
+Core lifecycle events are serializable dataclasses in `daino/events/events.py`. They are persisted
 to `mission_events`, mirrored to the redacted audit log, and consumed live by Textual workers.
 This boundary is intentionally reusable by a future web or remote Mission Control client.
 
-Vasuki separates orchestration from every environment-specific boundary:
+Daino separates orchestration from every environment-specific boundary:
 
 ```text
 Typer CLI
@@ -62,7 +62,7 @@ recently succeeded in the same tool loop. A failed agent command also remains an
 the exact command must later pass, or a rejected `a && b` chain must be rerun as two successful
 standalone commands. An environment-specific failure can be cleared by an explicitly linked,
 already-successful equivalent command (for example a Docker build replacing unavailable host
-`npm`); Vasuki rejects the link unless that evidence really passed. This prevents an unrelated
+`npm`); Daino rejects the link unless that evidence really passed. This prevents an unrelated
 green check from silently hiding earlier red evidence. The independent verifier then repeats the
 declared checks; a failure records a failed mission and the UI says the changes are incomplete
 instead of rendering the builder's optimistic summary as success.
@@ -81,7 +81,7 @@ blocks if review still fails.
 
 ## Teams of sub-agents
 
-`vasuki/agents/team.py` is the concurrent path, reached from `/team`. A team lead turns one
+`daino/agents/team.py` is the concurrent path, reached from `/team`. A team lead turns one
 instruction into a `TeamPlan`, and `validate_team_plan` topologically orders the roster into waves
 of members that may run at the same time. Each member is an ordinary `ToolLoop` bound to its own
 `ModelRole` and its own scoped `EditTools`, so routing, tool calling, structured fallback, the
@@ -102,7 +102,7 @@ architecture, security, code-quality, frontend/backend, and UI specialists form 
 summarizer depending on all applicable specialists forms the second. Deterministic checks run
 through the configured runtime and command policy before the model wave, and their bounded output
 is supplied as untrusted evidence. Each resulting `QAReport` carries its project root, is stored in
-that repository's `.vasuki/qa/` directory, and is rendered live by `QAView`. The application service
+that repository's `.daino/qa/` directory, and is rendered live by `QAView`. The application service
 also validates, sorts, and reloads the repository-local report history for the QA tab.
 
 The current repository adapter uses Python AST and lightweight syntax extraction. `Runtime` and
@@ -112,7 +112,7 @@ added without changing mission orchestration.
 ## Multi-layer memory
 
 `MemoryManager` is the service boundary over project SQLite and the private user memory database.
-`ContextBuilder` centralizes hierarchical `VASUKI.md`, persistent working state, relevant project
+`ContextBuilder` centralizes hierarchical `DAINO.md`, persistent working state, relevant project
 facts/decisions/episodes/failures, source context, compaction, authority rules, and token budgets.
 Mission and chat actions checkpoint working state immediately, so provider failure or process exit
 does not erase the active plan. Source-derived facts carry digests and become stale when the

@@ -1,5 +1,5 @@
 services:
-  vasuki:
+  daino:
     build: .
     working_dir: /workspace
     volumes:
@@ -8,13 +8,13 @@ services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_DB: vasuki
-      POSTGRES_USER: vasuki
+      POSTGRES_DB: daino
+      POSTGRES_USER: daino
       POSTGRES_PASSWORD: development-only
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vasuki"]
+      test: ["CMD-SHELL", "pg_isready -U daino"]
       interval: 3s
       timeout: 3s
       retries: 10

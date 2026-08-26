@@ -1,8 +1,8 @@
-# Install Vasuki as an application
+# Install Daino as an application
 
-Vasuki should be installed as a command-line application, not into a repository's development
+Daino should be installed as a command-line application, not into a repository's development
 virtual environment. The application install creates a private, managed Python environment and
-places a `vasuki` launcher in the user's command path. It never needs to be activated.
+places a `daino` launcher in the user's command path. It never needs to be activated.
 
 Python 3.12 or newer and Git are required. Docker is recommended for isolated mission execution.
 
@@ -11,8 +11,8 @@ Python 3.12 or newer and Git are required. Docker is recommended for isolated mi
 The included installer uses `uv tool` when available and falls back to `pipx`:
 
 ```bash
-git clone <vasuki-repository-url>
-cd vasuki
+git clone <daino-repository-url>
+cd daino
 ./scripts/install.sh
 ```
 
@@ -22,40 +22,40 @@ The equivalent direct command is:
 uv tool install .
 ```
 
-By default, uv places the launcher in `~/.local/bin/vasuki`. If that directory is not already in
+By default, uv places the launcher in `~/.local/bin/daino`. If that directory is not already in
 the shell's `PATH`, run `uv tool update-shell` once and open a new terminal.
 
 Verify the installation from outside the source checkout:
 
 ```bash
 cd /tmp
-vasuki --version
+daino --version
 ```
 
 Then open any project:
 
 ```bash
 cd /path/to/project
-vasuki
+daino
 ```
 
-Vasuki keeps project state in that project's `.vasuki` directory. Provider credentials remain in
+Daino keeps project state in that project's `.daino` directory. Provider credentials remain in
 environment variables; saved configuration contains only secret references such as
 `env://OPENROUTER_API_KEY`.
 
-Running `vasuki init` in a greenfield directory also initializes Git and creates the first baseline
+Running `daino init` in a greenfield directory also initializes Git and creates the first baseline
 commit. Existing repositories and their history are left intact. This gives direct edits an
 immediate pre-change checkpoint and gives worktree missions a valid starting revision.
 
 ## Upgrade
 
-Pull or download the newer Vasuki source and run the installer again:
+Pull or download the newer Daino source and run the installer again:
 
 ```bash
 ./scripts/install.sh
 ```
 
-The managed application and launcher are replaced without affecting any project's `.vasuki`
+The managed application and launcher are replaced without affecting any project's `.daino`
 configuration or history.
 
 ## Confirm which installation is running
@@ -65,30 +65,30 @@ appears to run an older release, clear its command cache and inspect every match
 
 ```bash
 hash -r
-which -a vasuki
-vasuki --version
+which -a daino
+daino --version
 ```
 
-For a uv installation, `~/.local/bin/vasuki` should resolve into
-`~/.local/share/uv/tools/vasuki`, not the source checkout's `.venv`.
+For a uv installation, `~/.local/bin/daino` should resolve into
+`~/.local/share/uv/tools/daino`, not the source checkout's `.venv`.
 
 ## Uninstall
 
 Use the manager that installed the application:
 
 ```bash
-uv tool uninstall vasuki
+uv tool uninstall daino
 ```
 
 or:
 
 ```bash
-pipx uninstall vasuki
+pipx uninstall daino
 ```
 
-Uninstalling the command does not remove `.vasuki` directories from projects.
+Uninstalling the command does not remove `.daino` directories from projects.
 
 ## Development setup
 
-Only contributors working on Vasuki itself need an editable virtual environment. See
+Only contributors working on Daino itself need an editable virtual environment. See
 [Contributing](contributing.md) for that workflow.

@@ -7,11 +7,11 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from vasuki.agents.gateway import ModelGateway
-from vasuki.config.models import ModelProfileConfig, ProviderConfig, Settings
-from vasuki.events import EventBus, MissionEvent, ModelReasoningChunk
-from vasuki.model_router import ModelRole
-from vasuki.schemas import LLMResponse, Message
+from daino.agents.gateway import ModelGateway
+from daino.config.models import ModelProfileConfig, ProviderConfig, Settings
+from daino.events import EventBus, MissionEvent, ModelReasoningChunk
+from daino.model_router import ModelRole
+from daino.schemas import LLMResponse, Message
 
 
 class Answer(BaseModel):
@@ -103,7 +103,7 @@ def gateway_with_provider(
 
     bus.subscribe(record)
     monkeypatch.setattr(
-        "vasuki.agents.gateway.create_provider",
+        "daino.agents.gateway.create_provider",
         lambda _name, _config: provider,
     )
     gateway = ModelGateway(  # type: ignore[arg-type]

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from vasuki.config.models import ModelProfileConfig, ProviderConfig, Settings
-from vasuki.context import ExecutionMode, ModelExecutionProfile
-from vasuki.exceptions import ConfigurationError
-from vasuki.model_router import ModelRole, ModelRouter, RoutingContext
-from vasuki.planning import validate_task_graph, validate_transition
-from vasuki.schemas import ProjectMode, TaskPlan, TaskSpec, TaskStatus
+from daino.config.models import ModelProfileConfig, ProviderConfig, Settings
+from daino.context import ExecutionMode, ModelExecutionProfile
+from daino.exceptions import ConfigurationError
+from daino.model_router import ModelRole, ModelRouter, RoutingContext
+from daino.planning import validate_task_graph, validate_transition
+from daino.schemas import ProjectMode, TaskPlan, TaskSpec, TaskStatus
 
 
 def configured_settings() -> Settings:

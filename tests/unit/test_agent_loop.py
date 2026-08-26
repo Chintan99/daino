@@ -9,15 +9,15 @@ from typing import Any
 
 import pytest
 
-from vasuki.agents.gateway import ModelGateway, _fit_messages, _message_tokens, _resolved_config
-from vasuki.agents.loop import ToolLoop
-from vasuki.config.models import ModelProfileConfig, ProviderConfig, Settings
-from vasuki.context import ModelExecutionProfile
-from vasuki.exceptions import ProviderError, ToolCallingUnsupported
-from vasuki.model_router import ModelRole
-from vasuki.persistence import Database
-from vasuki.schemas import AgentAction, ContextBundle, LLMResponse, Message, ToolCall, ToolResult
-from vasuki.tools import ActionExecutor, EditTools
+from daino.agents.gateway import ModelGateway, _fit_messages, _message_tokens, _resolved_config
+from daino.agents.loop import ToolLoop
+from daino.config.models import ModelProfileConfig, ProviderConfig, Settings
+from daino.context import ModelExecutionProfile
+from daino.exceptions import ProviderError, ToolCallingUnsupported
+from daino.model_router import ModelRole
+from daino.persistence import Database
+from daino.schemas import AgentAction, ContextBundle, LLMResponse, Message, ToolCall, ToolResult
+from daino.tools import ActionExecutor, EditTools
 
 
 @pytest.fixture()
@@ -818,7 +818,7 @@ async def test_gateway_uses_configured_fallback_after_provider_failure(
             return None
 
     monkeypatch.setattr(
-        "vasuki.agents.gateway.create_provider", lambda name, config: Provider(name)
+        "daino.agents.gateway.create_provider", lambda name, config: Provider(name)
     )
     response = await ModelGateway(settings, database).complete(  # type: ignore[arg-type]
         "mission-1", ModelRole.BUILDER, [Message(role="user", content="work")]
@@ -882,7 +882,7 @@ async def test_rewriting_identical_content_counts_as_no_progress(tmp_path: Path)
     Observed in the field as an agent writing books-data.js over and over while
     every diff read "No textual change."
     """
-    from vasuki.tools import RecordingActionExecutor
+    from daino.tools import RecordingActionExecutor
 
     content = "const books = [];\n"
     executor = RecordingActionExecutor(EditTools(tmp_path, require_read_before_write=False))
@@ -905,7 +905,7 @@ async def test_rewriting_identical_content_counts_as_no_progress(tmp_path: Path)
 @pytest.mark.asyncio
 async def test_a_no_op_write_tells_the_agent_nothing_changed(tmp_path: Path) -> None:
     """Reporting bare success invites the agent to write the same file again."""
-    from vasuki.tools import RecordingActionExecutor
+    from daino.tools import RecordingActionExecutor
 
     content = "const books = [];\n"
     (tmp_path / "books-data.js").write_text(content, encoding="utf-8")

@@ -4,7 +4,7 @@ The incremental index records file digest, language, size, summary, imports, sym
 and entrypoints. Queries derive references, API routes, tests, database candidates, environment
 variables, Compose services, and dependency maps.
 
-Ignored directories include Git/Vasuki state, virtual environments, dependency caches, and build
+Ignored directories include Git/Daino state, virtual environments, dependency caches, and build
 artifacts. Binary and oversized files are skipped. Exact source remains on disk; the index contains
 compact summaries.
 

@@ -9,17 +9,16 @@ from textual.containers import VerticalScroll
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, ListView, Select, Static
 from typer.testing import CliRunner
 
-from tests.conftest import commit_all, painted_text
-from vasuki.application import (
+from daino.application import (
     MissionApplicationService,
     ProviderApplicationService,
     initialize_project,
     open_project,
 )
-from vasuki.application.view_models import OpenRouterModel, ProviderStatus
-from vasuki.cli.app import app
-from vasuki.config import config_path
-from vasuki.events import (
+from daino.application.view_models import OpenRouterModel, ProviderStatus
+from daino.cli.app import app
+from daino.config import config_path
+from daino.events import (
     ApprovalRequested,
     DeploymentProgress,
     FileChanged,
@@ -31,38 +30,39 @@ from vasuki.events import (
     ToolFailed,
     ToolStarted,
 )
-from vasuki.events import (
+from daino.events import (
     TestsCompleted as VerificationCompletedEvent,
 )
-from vasuki.events import (
+from daino.events import (
     TestsStarted as VerificationStartedEvent,
 )
-from vasuki.persistence.models import ModelCall, ToolCall
-from vasuki.schemas import InteractionMode, QAReport
-from vasuki.tui.app import VasukiApp
-from vasuki.tui.keybindings import SLASH_COMMANDS
-from vasuki.tui.screens.onboarding import OnboardingScreen
-from vasuki.tui.screens.views import ProvidersView, QAView
-from vasuki.tui.screens.workspace import WorkspaceScreen
-from vasuki.tui.widgets import (
+from daino.persistence.models import ModelCall, ToolCall
+from daino.schemas import InteractionMode, QAReport
+from daino.tui.app import DainoApp
+from daino.tui.keybindings import SLASH_COMMANDS
+from daino.tui.screens.onboarding import OnboardingScreen
+from daino.tui.screens.views import ProvidersView, QAView
+from daino.tui.screens.workspace import WorkspaceScreen
+from daino.tui.widgets import (
     ApprovalModal,
     CommandPalette,
     ConversationView,
+    DainoHintBar,
     NavigationTab,
     NavigationTabs,
     PromptInput,
     TaskChecklist,
-    VasukiHintBar,
 )
-from vasuki.tui.widgets.message import MessageCard
-from vasuki.tui.widgets.prompt_input import PromptTextArea
+from daino.tui.widgets.message import MessageCard
+from daino.tui.widgets.prompt_input import PromptTextArea
+from tests.conftest import commit_all, painted_text
 
 
-def initialized_app(root: Path) -> VasukiApp:
+def initialized_app(root: Path) -> DainoApp:
     (root / "app.py").write_text("def value():\n    return 1\n", encoding="utf-8")
     commit_all(root)
     initialize_project(root)
-    return VasukiApp(root, context=open_project(root))
+    return DainoApp(root, context=open_project(root))
 
 
 def test_tui_uses_launch_directory_even_beneath_another_project(
@@ -75,10 +75,10 @@ def test_tui_uses_launch_directory_even_beneath_another_project(
     child.mkdir()
     monkeypatch.chdir(child)
 
-    app_instance = VasukiApp()
+    app_instance = DainoApp()
 
     assert app_instance.project == child.resolve()
-    assert config_path(app_instance.project) == child.resolve() / ".vasuki" / "config.yaml"
+    assert config_path(app_instance.project) == child.resolve() / ".daino" / "config.yaml"
 
 
 @pytest.mark.asyncio
@@ -128,7 +128,7 @@ async def test_workspace_chrome_is_compact_and_quiet(tmp_path: Path) -> None:
         assert header.region.height == 4
         assert tabs.region.height == 2
         assert context.region.height == 2
-        assert "VASUKI" in painted
+        assert "DAINO" in painted
         assert "not configured" in painted
         assert "chat" in painted
         assert "missions" in painted
@@ -220,7 +220,7 @@ async def test_prompt_map_lists_runs_and_draws_safe_token_graph(tmp_path: Path) 
                 ),
             ]
         )
-    app_instance = VasukiApp(tmp_path, context=context)
+    app_instance = DainoApp(tmp_path, context=context)
 
     async with app_instance.run_test(size=(140, 44)) as pilot:
         await pilot.pause()
@@ -319,7 +319,7 @@ async def test_shift_tab_cycles_persists_and_highlights_the_session_mode(tmp_pat
 
         assert workspace.interaction_mode == InteractionMode.SESSION
         assert workspace.missions.interaction_mode(workspace.session_id) == InteractionMode.SESSION
-        hint = workspace.query_one("#hint-bar", VasukiHintBar).render()
+        hint = workspace.query_one("#hint-bar", DainoHintBar).render()
         assert "SESSION" in hint.plain
         mode_span = next(
             span for span in hint.spans if "SESSION" in hint.plain[span.start : span.end]
@@ -393,11 +393,66 @@ async def test_full_mode_resolves_mission_gates_without_a_modal(
 
 @pytest.mark.asyncio
 async def test_onboarding_appears_when_project_is_uninitialized(tmp_path: Path) -> None:
-    app_instance = VasukiApp(tmp_path)
+    app_instance = DainoApp(tmp_path)
     async with app_instance.run_test(size=(90, 30)) as pilot:
         await pilot.pause()
         assert isinstance(app_instance.screen, OnboardingScreen)
         assert app_instance.screen.query_one("#initialize")
+
+
+@pytest.mark.asyncio
+async def test_choosing_ollama_offers_the_models_it_has_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bare text field made the user recall an exact tag like "qwen3.8:27b-mlx"."""
+    from daino.application.view_models import CatalogModel
+    from daino.tui.screens import onboarding as onboarding_module
+
+    async def installed(base_url: str = "") -> list[CatalogModel]:
+        return [CatalogModel(id="qwen3.8:27b-mlx", name="qwen3.8:27b-mlx", detail="16.9 GB")]
+
+    monkeypatch.setattr(onboarding_module, "list_ollama_models", installed)
+    app_instance = DainoApp(tmp_path)
+    async with app_instance.run_test(size=(90, 40)) as pilot:
+        await pilot.pause()
+        screen = app_instance.screen
+        assert isinstance(screen, OnboardingScreen)
+        screen.query_one("#provider-choice", Select).value = "ollama"
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if screen.query_one("#provider-model-select", Select).value is not Select.BLANK:
+                break
+
+        selector = screen.query_one("#provider-model-select", Select)
+        assert not selector.has_class("hidden"), "the model picker never appeared"
+        assert screen.query_one("#provider-model", Input).has_class("hidden")
+        assert selector.value == "qwen3.8:27b-mlx"
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_ollama_leaves_the_model_field_usable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ollama may not be running yet; onboarding must stay completable."""
+    from daino.tui.screens import onboarding as onboarding_module
+
+    async def unreachable(base_url: str = "") -> list[object]:
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(onboarding_module, "list_ollama_models", unreachable)
+    app_instance = DainoApp(tmp_path)
+    async with app_instance.run_test(size=(90, 40)) as pilot:
+        await pilot.pause()
+        screen = app_instance.screen
+        assert isinstance(screen, OnboardingScreen)
+        screen.query_one("#provider-choice", Select).value = "ollama"
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if not screen.query_one("#provider-model", Input).has_class("hidden"):
+                break
+
+        assert not screen.query_one("#provider-model", Input).has_class("hidden")
+        assert screen.query_one("#provider-model-select", Select).has_class("hidden")
 
 
 @pytest.mark.asyncio
@@ -455,7 +510,7 @@ async def test_prompt_is_a_compact_multiline_paste_surface(tmp_path: Path) -> No
         composer = workspace.query_one(PromptInput)
         prompt = composer.query_one("#prompt", PromptTextArea)
         caret = composer.query_one("#prompt-caret")
-        hint = workspace.query_one("#hint-bar", VasukiHintBar)
+        hint = workspace.query_one("#hint-bar", DainoHintBar)
 
         assert composer.region.height >= 4
         assert prompt.region.height >= 2
@@ -779,7 +834,7 @@ async def test_reasoning_is_ignored_when_verbose_is_off_and_logs_stay_safe(
         logs = workspace.query_one("#logs-view")
         assert logs._live_label == "Working…"  # noqa: SLF001 - coalesced safe state
         assert len(logs.query_one("#log-live-content").lines) == 0
-        audit_path = tmp_path / ".vasuki" / "logs" / "events.jsonl"
+        audit_path = tmp_path / ".daino" / "logs" / "events.jsonl"
         if audit_path.exists():
             assert raw_reasoning not in audit_path.read_text(encoding="utf-8")
 
@@ -1096,7 +1151,7 @@ async def test_saved_openrouter_provider_and_model_are_restored(
         models,
     )
     monkeypatch.setattr(WorkspaceScreen, "provider_health", lambda self: None)
-    app_instance = VasukiApp(tmp_path, context=context)
+    app_instance = DainoApp(tmp_path, context=context)
     async with app_instance.run_test(size=(120, 42)) as pilot:
         await pilot.pause()
         workspace = app_instance.screen
@@ -1361,7 +1416,7 @@ async def test_each_launch_starts_a_fresh_session(tmp_path: Path) -> None:
         session_id = first.session_id
 
     second_context = open_project(tmp_path)
-    second_app = VasukiApp(tmp_path, context=second_context)
+    second_app = DainoApp(tmp_path, context=second_context)
     async with second_app.run_test(size=(110, 36)) as pilot:
         await pilot.pause()
         second = second_app.screen
@@ -1382,7 +1437,7 @@ def test_bare_cli_and_explicit_tui_launch_use_tui(
     tmp_path: Path,
 ) -> None:
     calls: list[Path | None] = []
-    monkeypatch.setattr("vasuki.tui.run_tui", calls.append)
+    monkeypatch.setattr("daino.tui.run_tui", calls.append)
     runner = CliRunner()
 
     result = runner.invoke(app, ["--project", str(tmp_path)])
@@ -1398,8 +1453,8 @@ async def test_a_new_directory_offers_global_or_project_specific_settings(
     tmp_path: Path,
 ) -> None:
     """New projects make configuration inheritance an explicit choice."""
-    from vasuki.config.globals import save_global
-    from vasuki.config.models import ModelProfileConfig, ProviderConfig, Settings
+    from daino.config.globals import save_global
+    from daino.config.models import ModelProfileConfig, ProviderConfig, Settings
 
     configured = Settings(project={"name": "any"})
     configured.providers = {
@@ -1413,7 +1468,7 @@ async def test_a_new_directory_offers_global_or_project_specific_settings(
 
     fresh = tmp_path / "brand-new"
     fresh.mkdir()
-    app_instance = VasukiApp(fresh)
+    app_instance = DainoApp(fresh)
     async with app_instance.run_test(size=(110, 36)) as pilot:
         await pilot.pause()
         assert isinstance(app_instance.screen, OnboardingScreen)
@@ -1428,7 +1483,7 @@ async def test_a_new_directory_still_asks_when_nothing_is_configured(
     """Onboarding is skipped because the answer is known, not because it was removed."""
     fresh = tmp_path / "unconfigured"
     fresh.mkdir()
-    app_instance = VasukiApp(fresh)
+    app_instance = DainoApp(fresh)
     async with app_instance.run_test(size=(110, 36)) as pilot:
         await pilot.pause()
         assert isinstance(app_instance.screen, OnboardingScreen)

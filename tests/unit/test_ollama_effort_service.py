@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from vasuki.application import (
+from daino.application import (
     MissionApplicationService,
     ProviderApplicationService,
     open_project,

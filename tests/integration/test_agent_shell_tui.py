@@ -16,13 +16,13 @@ from typing import Any
 
 import pytest
 
+from daino.application import ProviderApplicationService, initialize_project, open_project
+from daino.schemas import InteractionMode
+from daino.tools.web import WebResearchTool
+from daino.tui.app import DainoApp
+from daino.tui.screens.workspace import WorkspaceScreen
+from daino.tui.widgets import ApprovalModal, ContextStrip, TaskChecklist
 from tests.conftest import commit_all, painted_text
-from vasuki.application import ProviderApplicationService, initialize_project, open_project
-from vasuki.schemas import InteractionMode
-from vasuki.tools.web import WebResearchTool
-from vasuki.tui.app import VasukiApp
-from vasuki.tui.screens.workspace import WorkspaceScreen
-from vasuki.tui.widgets import ApprovalModal, ContextStrip, TaskChecklist
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -82,7 +82,7 @@ def agent_server() -> Iterator[str]:
         server.server_close()
 
 
-def connected_app(root: Path, base_url: str) -> VasukiApp:
+def connected_app(root: Path, base_url: str) -> DainoApp:
     (root / "a.py").write_text("x = 1\n", encoding="utf-8")
     commit_all(root)
     initialize_project(root)
@@ -95,7 +95,7 @@ def connected_app(root: Path, base_url: str) -> VasukiApp:
         base_url=base_url,
         model="vendor/small",
     )
-    return VasukiApp(root, context=context)
+    return DainoApp(root, context=context)
 
 
 async def settle(pilot: Any, workspace: WorkspaceScreen, attempts: int = 300) -> None:

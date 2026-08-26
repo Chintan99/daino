@@ -10,29 +10,29 @@ complete, structured, and streaming calls. The TUI header sums those durable usa
 than estimating spend from a static price table.
 
 ```bash
-vasuki providers add private \
+daino providers add private \
   --type openai-compatible \
   --base-url https://llm.internal.example/v1 \
   --model company-coder \
   --api-key-ref env://PRIVATE_LLM_KEY
-vasuki providers test private
+daino providers test private
 ```
 
 ## Offline providers
 
-Vasuki runs entirely on locally hosted models when every role routes to an Ollama or vLLM
+Daino runs entirely on locally hosted models when every role routes to an Ollama or vLLM
 provider. Tool-capable instruct models (for example `qwen2.5-coder`, `llama3.1`) give the agent
 loop native tool calling plus grammar-constrained structured output, so no cloud provider is
 required for planning, building, repairing, or review.
 
 ```bash
-vasuki providers add local-ollama \
+daino providers add local-ollama \
   --type ollama \
   --base-url http://127.0.0.1:11434/v1 \
   --model qwen2.5-coder:7b
-vasuki providers test local-ollama
+daino providers test local-ollama
 
-vasuki providers add local-vllm \
+daino providers add local-vllm \
   --type vllm \
   --base-url http://127.0.0.1:8000/v1 \
   --model Qwen/Qwen2.5-Coder-7B-Instruct \

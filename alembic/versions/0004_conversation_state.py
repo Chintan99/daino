@@ -7,7 +7,7 @@ Revises: 0003
 from sqlalchemy import inspect
 
 from alembic import op
-from vasuki.persistence.models import ConversationState
+from daino.persistence.models import ConversationState
 
 revision = "0004"
 down_revision = "0003"
