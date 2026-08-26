@@ -254,3 +254,217 @@ export type ServerTerminalMessage =
 export type ClientTerminalMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number };
+
+// ---- Git (VSCode-style whole-file diff) ----
+
+export interface GitFileDiff {
+  repository: boolean;
+  path: string;
+  staged: boolean;
+  original: string;
+  modified: string;
+  language: string;
+  binary: boolean;
+}
+
+// ---- Execution map ----
+
+export interface ModelUsage {
+  provider: string;
+  model: string;
+  role: string;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_cost: number;
+  latency_ms: number;
+  success: boolean;
+}
+
+export interface TraceStep {
+  id: string;
+  kind: string;
+  title: string;
+  detail: string;
+  status: string;
+  timestamp: string;
+  target: string;
+  duration_seconds: number;
+  model_usage: ModelUsage | null;
+}
+
+export interface ExecutionPrompt {
+  mission_id: string;
+  request: string;
+  title: string;
+  status: string;
+  created_at: string;
+  total_tokens: number;
+  estimated_cost: number;
+  step_count: number;
+  tool_count: number;
+  model_call_count: number;
+}
+
+export interface ExecutionTrace {
+  mission_id: string;
+  request: string;
+  status: string;
+  created_at: string;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  estimated_cost: number;
+  total_model_latency_ms: number;
+  total_tool_duration_seconds: number;
+  model_call_count: number;
+  tool_count: number;
+  steps: TraceStep[];
+}
+
+// ---- Audit log ----
+
+export interface AuditEvent {
+  timestamp?: string;
+  event?: string;
+  mission_id?: string;
+  [key: string]: unknown;
+}
+
+export interface AuditLogPage {
+  total: number;
+  matched: number;
+  events: AuditEvent[];
+}
+
+// ---- QA ----
+
+export type QAStatus =
+  | "pending"
+  | "running"
+  | "passed"
+  | "failed"
+  | "skipped"
+  | "completed"
+  | "cancelled";
+
+export interface QACheck {
+  id: string;
+  label: string;
+  category: "quality" | "tests" | "browser" | "dependencies";
+  command: string;
+  status: QAStatus;
+  summary: string;
+  output: string;
+  duration_seconds: number;
+  network_required: boolean;
+}
+
+export interface QASpecialist {
+  id: string;
+  label: string;
+  role: string;
+  objective: string;
+  status: QAStatus;
+  summary: string;
+  steps: number;
+  error: string;
+}
+
+export interface QAReport {
+  id: string;
+  status: QAStatus;
+  started_at: string;
+  finished_at: string | null;
+  project_root: string;
+  project_profile: string[];
+  checks: QACheck[];
+  specialists: QASpecialist[];
+  summary: string;
+  mission_id: string;
+}
+
+export interface QALatest {
+  running: boolean;
+  report: QAReport | null;
+}
+
+export interface QAHistory {
+  running: boolean;
+  reports: QAReport[];
+}
+
+// ---- Missions, checkpoints, approvals, repository ----
+
+export interface MissionSummary {
+  id: string;
+  title: string;
+  status: string;
+  mode: string;
+  updated_at: string;
+  branch: string;
+  workspace: string;
+  task_counts: Record<string, number>;
+}
+
+export interface MissionDetails {
+  mission: Record<string, unknown>;
+  requirements: Record<string, unknown>;
+  tasks: { id: string; title: string; status: string; risk_level: string }[];
+  tools: { tool: string; summary: string; success: boolean; duration: number }[];
+  tests: unknown[];
+  reviews: unknown[];
+  approvals: { category: string; subject: string; approved: boolean }[];
+  checkpoints: { id: string; description: string; revision: string }[];
+}
+
+export interface CheckpointEntry {
+  id: string;
+  mission_id: string;
+  revision: string;
+  description: string;
+  created_at: string | null;
+}
+
+export interface ApprovalEntry {
+  id: string;
+  mission_id: string;
+  category: string;
+  subject: string;
+  approved: boolean;
+  approver: string;
+  created_at: string | null;
+}
+
+export interface RepositoryInfo {
+  summary: string;
+  file_count: number;
+  languages: Record<string, number>;
+  frameworks: string[];
+  entrypoints: string[];
+  routes: unknown[];
+  database_models: unknown[];
+  tests: string[];
+  dependencies: Record<string, unknown>;
+  generated_at: string;
+}
+
+// ---- Documentation ----
+
+export interface DocsPageSummary {
+  slug: string;
+  title: string;
+  section: string;
+}
+
+export interface DocsIndex {
+  available: boolean;
+  project: string;
+  pages: DocsPageSummary[];
+}
+
+export interface DocsPage {
+  slug: string;
+  title: string;
+  markdown: string;
+}

@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.tree import Tree
 from sqlalchemy import select
 
-from daino import __version__
+from daino import __version__, branding
 from daino.agents import ReviewerAgent
 from daino.application import initialize_project
 from daino.config import (
@@ -247,7 +247,7 @@ def tui_command(
 def init(
     path: Annotated[Path, typer.Argument(help="Repository directory.")] = Path("."),
     force: Annotated[
-        bool, typer.Option("--force", help="Replace an existing Daino configuration.")
+        bool, typer.Option("--force", help=f"Replace an existing {branding.NAME} configuration.")
     ] = False,
 ) -> None:
     """Initialize a repository, database, runtime inventory, and repository index."""
@@ -270,7 +270,7 @@ def init(
             f"Frameworks: {', '.join(frameworks) or 'none'}\n"
             f"Runtimes: "
             f"{', '.join(name for name, present in runtimes.items() if present)}",
-            title="Daino initialized",
+            title=f"{branding.NAME} initialized",
             border_style="green",
         )
     )
@@ -701,7 +701,7 @@ def run(
 async def _run_mission(request: str, mode: ProjectMode | None) -> None:
     root, settings, database = _context()
     service = MissionService(root, settings, database)
-    with console.status("Running Daino mission…", spinner="dots"):
+    with console.status(f"Running {branding.NAME} mission…", spinner="dots"):
         mission, evidence = await service.run(request, mode)
     with database.session() as session:
         tasks = session.scalars(select(Task).where(Task.mission_id == mission.id)).all()

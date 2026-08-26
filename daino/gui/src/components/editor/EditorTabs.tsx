@@ -1,31 +1,43 @@
 import { useEditorStore } from "../../store/editorStore";
 
 export function EditorTabs() {
-  const order = useEditorStore((s) => s.order);
+  const tabs = useEditorStore((s) => s.tabs);
   const buffers = useEditorStore((s) => s.buffers);
-  const activePath = useEditorStore((s) => s.activePath);
-  const setActive = useEditorStore((s) => s.setActive);
-  const closeBuffer = useEditorStore((s) => s.closeBuffer);
+  const activeTabId = useEditorStore((s) => s.activeTabId);
+  const setActiveTab = useEditorStore((s) => s.setActiveTab);
+  const closeTab = useEditorStore((s) => s.closeTab);
 
-  if (order.length === 0) return null;
+  if (tabs.length === 0) return null;
 
   return (
     <div className="editor-tabs">
-      {order.map((path) => {
-        const buf = buffers[path];
-        if (!buf) return null;
+      {tabs.map((tab) => {
+        const buf = tab.kind === "file" ? buffers[tab.path] : undefined;
+        const dirty = !!buf?.dirty;
         return (
           <div
-            key={path}
-            className={`editor-tab ${activePath === path ? "active" : ""}`}
-            onClick={() => setActive(path)}
-            title={path}
+            key={tab.id}
+            className={`editor-tab ${activeTabId === tab.id ? "active" : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+            onAuxClick={(e) => {
+              if (e.button === 1) closeTab(tab.id);
+            }}
+            title={
+              tab.kind === "diff"
+                ? `${tab.path} — ${tab.staged ? "staged changes" : "working tree"}`
+                : tab.path
+            }
           >
-            <span>{buf.name}</span>
-            {buf.dirty ? (
+            <span>{tab.name}</span>
+            {tab.kind === "diff" && (
+              <span className="kind">
+                {tab.staged ? "STAGED ⇄" : "DIFF ⇄"}
+              </span>
+            )}
+            {dirty ? (
               <span className="dirty" title="Unsaved changes" />
             ) : (
-              <span style={{ width: 8 }} />
+              <span style={{ width: 7 }} />
             )}
             <span
               className="close"
@@ -33,10 +45,10 @@ export function EditorTabs() {
               onClick={(e) => {
                 e.stopPropagation();
                 if (
-                  !buf.dirty ||
-                  window.confirm(`Discard unsaved changes to ${buf.name}?`)
+                  !dirty ||
+                  window.confirm(`Discard unsaved changes to ${tab.name}?`)
                 )
-                  closeBuffer(path);
+                  closeTab(tab.id);
               }}
             >
               ✕

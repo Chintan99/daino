@@ -3,6 +3,7 @@ import { useWorkspace } from "../api/hooks";
 import { useUIStore } from "../store/uiStore";
 import { useAgentStore } from "../store/agentStore";
 import { WORKSPACE_TABS } from "../tabs/registry";
+import { BRAND } from "../lib/branding";
 
 export function TopBar() {
   const { data: workspace } = useWorkspace();
@@ -25,9 +26,13 @@ export function TopBar() {
     <div className="topbar">
       <div className="wordmark">
         <span className="dot" />
-        Daino
+        {BRAND}
       </div>
-      {workspace && <div className="project-name">{workspace.name}</div>}
+      {workspace && (
+        <div className="project-name" title={workspace.root}>
+          {workspace.name}
+        </div>
+      )}
 
       <div className="tabs">
         {WORKSPACE_TABS.map((t) => (
@@ -35,6 +40,7 @@ export function TopBar() {
             key={t.id}
             className={`tab ${activeTab === t.id ? "active" : ""}`}
             onClick={() => setActiveTab(t.id)}
+            title={t.hint}
           >
             {t.label}
           </button>
@@ -55,12 +61,22 @@ export function TopBar() {
         ))}
       </select>
 
-      <button
-        className={`btn subtle ${agentVisible ? "" : ""}`}
-        onClick={toggleAgent}
-        title="Toggle Daino agent panel"
+      <a
+        className="btn icon"
+        href="/docs"
+        target="_blank"
+        rel="noreferrer noopener"
+        title={`${BRAND} documentation — how to configure, route models, and run it`}
       >
-        {agentVisible ? "Hide Agent" : "Show Agent"}
+        ?
+      </a>
+
+      <button
+        className="btn subtle"
+        onClick={toggleAgent}
+        title={agentVisible ? "Collapse the agent panel" : "Expand the agent panel"}
+      >
+        {agentVisible ? "Agent ›" : "‹ Agent"}
       </button>
     </div>
   );

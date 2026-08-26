@@ -59,6 +59,10 @@ vasuki = "daino.cli.app:legacy_main"
 [tool.hatch.build.targets.wheel]
 packages = ["daino", "vasuki"]
 
+# The GUI serves this markdown at /docs, so it has to travel with the package.
+[tool.hatch.build.targets.wheel.force-include]
+"docs" = "daino/_docs"
+
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]

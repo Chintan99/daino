@@ -2,7 +2,7 @@
 
 ## Interactive presentation boundary
 
-Daino has two front-ends — the terminal UI (`daino/tui`) and the browser IDE (`daino/server` +
+D[Ai]NO has two front-ends — the terminal UI (`daino/tui`) and the browser IDE (`daino/server` +
 `daino/gui`) — over **one** agent runtime. Both depend only on `daino/application` facades and typed
 events; neither applies patches, chooses provider credentials, creates worktrees, executes test
 commands, or deploys services directly. There is a single agent implementation; the GUI is a
@@ -17,7 +17,7 @@ Core lifecycle events are serializable dataclasses in `daino/events/events.py`. 
 to `mission_events`, mirrored to the redacted audit log, and consumed live by both the Textual
 workers and the browser IDE over WebSockets — the same stream, two consumers.
 
-Daino separates orchestration from every environment-specific boundary:
+D[Ai]NO separates orchestration from every environment-specific boundary:
 
 ```text
 Typer CLI
@@ -40,10 +40,10 @@ the same without moving orchestration logic.
 ## Browser IDE server
 
 ```text
-DAINO CORE (agent · LLM · tools · fs · shell · git · MCP · memory · sessions)
+D[Ai]NO CORE (agent · LLM · tools · fs · shell · git · MCP · memory · sessions)
    -> EventBus (structured, serializable events)
-      -> Daino TUI  (Textual)
-      -> Local API  (FastAPI, 127.0.0.1)  -> WebSocket -> React GUI (daino/gui)
+      -> D[Ai]NO TUI  (Textual)
+      -> Local API    (FastAPI, 127.0.0.1)  -> WebSocket -> React GUI (daino/gui)
 ```
 
 `daino/server` is a thin FastAPI + WebSocket transport built by `create_app(context)` from a
@@ -99,7 +99,7 @@ recently succeeded in the same tool loop. A failed agent command also remains an
 the exact command must later pass, or a rejected `a && b` chain must be rerun as two successful
 standalone commands. An environment-specific failure can be cleared by an explicitly linked,
 already-successful equivalent command (for example a Docker build replacing unavailable host
-`npm`); Daino rejects the link unless that evidence really passed. This prevents an unrelated
+`npm`); D[Ai]NO rejects the link unless that evidence really passed. This prevents an unrelated
 green check from silently hiding earlier red evidence. The independent verifier then repeats the
 declared checks; a failure records a failed mission and the UI says the changes are incomplete
 instead of rendering the builder's optimistic summary as success.

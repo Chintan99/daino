@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSessionMessages } from "../../api/hooks";
 import { useAgentStore } from "../../store/agentStore";
+import { useUIStore } from "../../store/uiStore";
 import { sendChatMessage } from "../../lib/agent";
 import { AgentMessage } from "./AgentMessage";
 import { ToolEventCard } from "./ToolEventCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { ContextBar } from "./ContextBar";
+import { BRAND } from "../../lib/branding";
 
 // Cap rendered transcript items so very long sessions stay responsive.
 const MESSAGE_CAP = 200;
@@ -20,6 +22,8 @@ export function AgentPanel() {
   const events = useAgentStore((s) => s.events);
   const liveStart = useAgentStore((s) => s.liveStart);
   const approvals = useAgentStore((s) => s.approvals);
+
+  const toggleAgent = useUIStore((s) => s.toggleAgent);
 
   const { data } = useSessionMessages(sessionId);
   const [input, setInput] = useState("");
@@ -46,18 +50,31 @@ export function AgentPanel() {
   return (
     <div className="agent-panel">
       <div className="panel-header">
-        Daino Agent
-        <span className="spacer" />
         <span className={`dot-status dot-${wsStatus}`} />
-        <span className="muted" style={{ fontSize: 10 }}>
-          {wsStatus}
-        </span>
+        {BRAND} Agent
+        <span className="spacer" />
+        {turnRunning && (
+          <button
+            className="btn subtle sm"
+            onClick={() => useAgentStore.getState().send?.({ type: "cancel" })}
+            title="Stop the running turn"
+          >
+            Stop
+          </button>
+        )}
+        <button
+          className="btn icon"
+          title="Collapse the agent panel"
+          onClick={toggleAgent}
+        >
+          ›
+        </button>
       </div>
 
       <div className="agent-stream" ref={streamRef}>
         {messages.length === 0 && !pendingUser && (
           <div className="empty">
-            Ask Daino to build, refactor, explain, or run your project.
+            Ask {BRAND} to build, refactor, explain, or run your project.
           </div>
         )}
 
@@ -88,7 +105,7 @@ export function AgentPanel() {
           <div className="streaming">{streaming}</div>
         )}
         {turnRunning && !thinking && !streaming && liveEvents.length === 0 && (
-          <div className="thinking">Daino is working…</div>
+          <div className="thinking">{BRAND} is working…</div>
         )}
 
         {/* approvals always shown */}
@@ -103,7 +120,9 @@ export function AgentPanel() {
           <textarea
             className="composer-input"
             placeholder={
-              turnRunning ? "Daino is working…" : "Message Daino…  (Enter to send)"
+              turnRunning
+                ? `${BRAND} is working…`
+                : `Message ${BRAND}…  (Enter to send)`
             }
             value={input}
             disabled={wsStatus !== "open"}

@@ -8,12 +8,40 @@ function basename(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-export async function openFileInEditor(path: string): Promise<void> {
+/** Open a Git diff for `path` as an editor tab, VSCode-style. */
+export function openDiffInEditor(path: string, staged: boolean): void {
+  useUIStore.getState().setActiveWorkspaceTab("code");
+  useUIStore.getState().setLastDiffPath(path);
+  useEditorStore.getState().openDiff(path, staged);
+}
+
+/** Where in a file to land, when opening from search or a problem list. */
+export interface FileLocation {
+  line: number;
+  column?: number;
+  /** Length of the match, so it can be selected rather than merely scrolled to. */
+  length?: number;
+}
+
+export async function openFileInEditor(
+  path: string,
+  at?: FileLocation,
+): Promise<void> {
   // switch to CODE workspace so the editor is visible
   useUIStore.getState().setActiveWorkspaceTab("code");
+  const reveal = () => {
+    if (!at) return;
+    useEditorStore.getState().revealLocation({
+      path,
+      line: at.line,
+      column: at.column ?? 1,
+      length: at.length ?? 0,
+    });
+  };
   const already = useEditorStore.getState().buffers[path];
   if (already) {
     useEditorStore.getState().setActive(path);
+    reveal();
     return;
   }
   try {
@@ -26,6 +54,7 @@ export async function openFileInEditor(path: string): Promise<void> {
       savedContent: file.content,
       content: file.content,
     });
+    reveal();
   } catch (err) {
     const msg =
       err instanceof ApiError

@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from daino import branding
 from daino.config import paths
 from daino.git import GitClient
 from daino.persistence import Database
@@ -126,7 +127,7 @@ class EvidenceExporter:
             path = directory / "evidence.md"
             mission = evidence["mission"]
             content = (
-                f"# Daino evidence: {mission_id}\n\n"
+                f"# {branding.NAME} evidence: {mission_id}\n\n"
                 f"- Status: {mission['status']}\n"
                 f"- Mode: {mission['mode']}\n"
                 f"- Branch: `{mission['branch']}`\n"

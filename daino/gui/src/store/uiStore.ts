@@ -1,8 +1,16 @@
-// UI layout + navigation state (workspace tab, activity view, bottom panel).
+// UI layout + navigation state (workspace tab, activity view, panels).
 import { create } from "zustand";
 
 export type ActivityView = "explorer" | "search" | "scm";
-export type BottomTab = "terminal" | "output" | "problems" | "tests" | "gitdiff";
+export type BottomTab = "terminal" | "output" | "problems" | "tests";
+export type InsightsView =
+  | "map"
+  | "logs"
+  | "qa"
+  | "missions"
+  | "checkpoints"
+  | "approvals"
+  | "repository";
 
 interface UIState {
   activeWorkspaceTab: string; // id from the tab registry
@@ -18,12 +26,17 @@ interface UIState {
   bottomTab: BottomTab;
   setBottomTab: (t: BottomTab) => void;
 
+  /** The agent column collapses to a labelled rail rather than vanishing. */
   agentVisible: boolean;
   toggleAgent: () => void;
+  setAgentVisible: (v: boolean) => void;
 
-  gitDiffPath: string | null;
-  gitDiffStaged: boolean;
-  openGitDiff: (path: string, staged: boolean) => void;
+  insightsView: InsightsView;
+  setInsightsView: (v: InsightsView) => void;
+
+  /** Path of the diff most recently opened, for the agent's context chips. */
+  lastDiffPath: string | null;
+  setLastDiffPath: (path: string | null) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -33,8 +46,7 @@ export const useUIStore = create<UIState>((set) => ({
   activityView: "explorer",
   setActivityView: (v) => set({ activityView: v }),
   sidebarCollapsed: false,
-  toggleSidebar: () =>
-    set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+  toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
   bottomVisible: true,
   setBottomVisible: (v) => set({ bottomVisible: v }),
@@ -43,14 +55,11 @@ export const useUIStore = create<UIState>((set) => ({
 
   agentVisible: true,
   toggleAgent: () => set((s) => ({ agentVisible: !s.agentVisible })),
+  setAgentVisible: (agentVisible) => set({ agentVisible }),
 
-  gitDiffPath: null,
-  gitDiffStaged: false,
-  openGitDiff: (path, staged) =>
-    set({
-      gitDiffPath: path,
-      gitDiffStaged: staged,
-      bottomTab: "gitdiff",
-      bottomVisible: true,
-    }),
+  insightsView: "map",
+  setInsightsView: (insightsView) => set({ insightsView }),
+
+  lastDiffPath: null,
+  setLastDiffPath: (lastDiffPath) => set({ lastDiffPath }),
 }));

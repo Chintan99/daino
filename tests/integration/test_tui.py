@@ -9,6 +9,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, ListView, Select, Static
 from typer.testing import CliRunner
 
+from daino import branding
 from daino.application import (
     MissionApplicationService,
     ProviderApplicationService,
@@ -194,7 +195,7 @@ async def test_workspace_chrome_is_compact_and_quiet(tmp_path: Path) -> None:
         assert header.region.height == 4
         assert tabs.region.height == 2
         assert context.region.height == 2
-        assert "DAINO" in painted
+        assert branding.NAME in painted
         assert "not configured" in painted
         assert "chat" in painted
         assert "missions" in painted

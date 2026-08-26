@@ -62,7 +62,7 @@ suppresses auto-opening a browser. Remote access requires deliberate configurati
 
 ## Migrating from Vasuki
 
-Daino was renamed from Vasuki. Configuration and state are resolved **read-legacy / write-new**, and
+D[Ai]NO was renamed from Vasuki. Configuration and state are resolved **read-legacy / write-new**, and
 legacy data is never moved or deleted:
 
 - Project state uses `.daino/`, but a checkout that already has `.vasuki/` keeps using it in place

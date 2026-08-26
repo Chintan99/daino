@@ -8,6 +8,7 @@ from typing import Any
 from textual.app import App
 from textual.theme import Theme
 
+from daino import branding
 from daino.application import ProjectContext, open_project
 from daino.config import config_path, find_project_root
 from daino.tui import palette
@@ -51,7 +52,7 @@ VASUKI_DARK_THEME = Theme(
 class DainoApp(App[None]):
     """Persistent interactive workspace over Daino application services."""
 
-    TITLE = "Daino"
+    TITLE = branding.NAME
     SUB_TITLE = "AI engineering workspace"
     CSS_PATH = "styles/daino.tcss"
     ENABLE_COMMAND_PALETTE = False

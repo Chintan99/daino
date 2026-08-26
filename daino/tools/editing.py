@@ -9,6 +9,7 @@ import re
 import subprocess  # nosec B404
 import tempfile
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from daino.design import DesignError, DesignService
 from daino.memory import InstructionResolver, MemoryManager, MemoryScope, MemoryType
@@ -702,6 +703,7 @@ class ActionExecutor:
         if name.startswith("memory_"):
             return self._memory_action(action), []
         if name.startswith(("create_design", "read_design", "update_design")) or name in {
+            "read_design_artifact",
             "add_design_node",
             "update_design_node",
             "delete_design_node",
@@ -876,6 +878,54 @@ class ActionExecutor:
             return ToolResult(tool=action.action, success=False, error=str(exc))
         return ToolResult(tool=action.action, success=False, error="Unknown memory operation")
 
+    #: Default card geometry per artifact kind, matching the canvas importer so
+    #: an agent-authored page lands the same size as a dropped one.
+    _ARTIFACT_SIZE = {
+        "html": (460, 320),
+        "svg": (340, 260),
+        "markdown": (320, 220),
+        "text": (320, 200),
+    }
+    #: Artifact source can be a whole web page; summarise it in tool results so
+    #: reading a design never floods the context with markup.
+    _ARTIFACT_PREVIEW_CHARS = 160
+
+    def _artifact_data(self, action: AgentAction) -> dict[str, Any] | None:
+        """Build the node payload for an artifact, or ``None`` for a plain box."""
+        if not action.node_kind and not action.node_content:
+            return None
+        kind = action.node_kind or "html"
+        extension = {"html": ".html", "svg": ".svg", "markdown": ".md", "text": ".txt"}[kind]
+        stem = (action.node_id or action.node_label or "artifact").strip() or "artifact"
+        width, height = self._ARTIFACT_SIZE[kind]
+        return {
+            "kind": kind,
+            "content": action.node_content,
+            "filename": stem if stem.endswith(extension) else f"{stem}{extension}",
+            "width": width,
+            "height": height,
+        }
+
+    @classmethod
+    def _summarize_nodes(cls, design: Any) -> list[dict[str, Any]]:
+        """Dump nodes with artifact source replaced by a short description."""
+        summarized = []
+        for node in design.nodes:
+            payload = node.model_dump(mode="json")
+            data = payload.get("data") or {}
+            content = data.get("content")
+            if isinstance(content, str) and content:
+                data = dict(data)
+                data["content"] = (
+                    content[: cls._ARTIFACT_PREVIEW_CHARS] + "…"
+                    if len(content) > cls._ARTIFACT_PREVIEW_CHARS
+                    else content
+                )
+                data["content_chars"] = len(content)
+                payload["data"] = data
+            summarized.append(payload)
+        return summarized
+
     def _design_action(self, action: AgentAction) -> ToolResult:
         """Create and granularly edit structured design artifacts.
 
@@ -895,21 +945,49 @@ class ActionExecutor:
                 design = self.design.create(action.design_name, action.design_type)
             elif name == "read_design":
                 design = self.design.get(action.design_id)
+            elif name == "read_design_artifact":
+                design = self.design.get(action.design_id)
+                node = design.node(action.node_id)
+                if node is None:
+                    return ToolResult(
+                        tool=name,
+                        success=False,
+                        error=f"Unknown node {action.node_id!r} in design {design.id!r}",
+                    )
+                content = str(node.data.get("content", ""))
+                return ToolResult(
+                    tool=name,
+                    success=True,
+                    data={
+                        "design_id": design.id,
+                        "node_id": node.id,
+                        "label": node.label,
+                        "kind": str(node.data.get("kind", "")),
+                        "filename": str(node.data.get("filename", "")),
+                        "content": content,
+                        "content_chars": len(content),
+                    },
+                )
             elif name == "update_design":
                 design = self.design.get(action.design_id)
                 if action.design_name:
                     design.name = action.design_name
                     design = self.design.replace(design)
             elif name == "add_design_node":
+                artifact = self._artifact_data(action)
                 design = self.design.add_node(
                     action.design_id,
                     label=action.node_label,
-                    node_type=action.node_type,
+                    node_type="artifact" if artifact else action.node_type,
                     node_id=action.node_id or None,
                     x=action.x,
                     y=action.y,
+                    data=artifact,
                 )
             elif name == "update_design_node":
+                # Only the source is replaced; the card's kind, filename, and
+                # geometry are the user's and must survive an agent rewrite.
+                content = {"content": action.node_content} if action.node_content else None
                 design = self.design.update_node(
                     action.design_id,
                     action.node_id,
@@ -917,6 +995,7 @@ class ActionExecutor:
                     node_type=action.node_type if action.node_type != "default" else None,
                     x=action.x or None,
                     y=action.y or None,
+                    data=content,
                 )
             elif name == "delete_design_node":
                 design = self.design.delete_node(action.design_id, action.node_id)
@@ -946,7 +1025,7 @@ class ActionExecutor:
                 "name": design.name,
                 "type": design.type,
                 "version": design.version,
-                "nodes": [node.model_dump(mode="json") for node in design.nodes],
+                "nodes": self._summarize_nodes(design),
                 "edges": [edge.model_dump(mode="json") for edge in design.edges],
             },
         )

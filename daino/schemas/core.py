@@ -240,6 +240,7 @@ class AgentAction(StrictModel):
         "memory_verify",
         "create_design",
         "read_design",
+        "read_design_artifact",
         "update_design",
         "add_design_node",
         "update_design_node",
@@ -298,6 +299,11 @@ class AgentAction(StrictModel):
     node_id: str = ""
     node_label: str = ""
     node_type: str = "default"
+    #: Canvas artifacts (a dropped or authored HTML page, SVG, or note) carry
+    #: their own source. Kept separate from the diagram fields so a node can be
+    #: either a box in a diagram or a real file the user previews full screen.
+    node_kind: str = ""
+    node_content: str = ""
     source_node: str = ""
     target_node: str = ""
     edge_id: str = ""

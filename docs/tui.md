@@ -1,6 +1,6 @@
-# Daino interactive terminal UI
+# D[Ai]NO interactive terminal UI
 
-The Textual UI is the primary Daino experience. It is a presentation layer over the existing
+The Textual UI is the primary D[Ai]NO experience. It is a presentation layer over the existing
 mission engine—not a second implementation of providers, agents, Git, verification, persistence,
 or deployment.
 
@@ -10,7 +10,7 @@ or deployment.
 
 ## Install and launch
 
-Daino requires Python 3.12 or newer and Git. Docker is optional: a project records the runtime
+D[Ai]NO requires Python 3.12 or newer and Git. Docker is optional: a project records the runtime
 this machine can actually use when it is initialized.
 
 ```bash
@@ -341,14 +341,14 @@ from a chat instruction cannot reach the deployment path.
 ## Quality assurance workspace
 
 The **QA** tab beside Missions runs a repository-wide, read-only audit. Select **Run QA**, or use
-`/qa run`. Daino first detects the project stacks and runs applicable deterministic evidence:
+`/qa run`. D[Ai]NO first detects the project stacks and runs applicable deterministic evidence:
 
 - configured lint, type, test, and build commands;
 - Playwright end-to-end tests when a local Playwright configuration or script exists;
-- `npm`/`pnpm`/`yarn`/`bun` audits, Daino's bundled `pip-audit`, and installed `cargo-audit`
+- `npm`/`pnpm`/`yarn`/`bun` audits, D[Ai]NO's bundled `pip-audit`, and installed `cargo-audit`
   or `govulncheck` scanners for dependency vulnerabilities.
 
-Unavailable optional scanners are shown as skipped with the missing prerequisite; Daino does not
+Unavailable optional scanners are shown as skipped with the missing prerequisite; D[Ai]NO does not
 silently install a scanner during an audit. Dependency scans that can contact registries request
 one network approval in Ask mode, are skipped in Plan mode, and continue automatically in Session
 or Full mode.
@@ -364,11 +364,11 @@ commands. The entire QA document scrolls vertically. Reports update live and are
 the current repository's `.daino/qa/` directory. The **Saved scans** table lists prior runs newest
 first; selecting a row reloads its specialists, automated evidence, and consolidated report in the
 same tab. **Refresh scans** discovers reports created since the tab was opened, while `latest.json`
-keeps reopening Daino fast.
+keeps reopening D[Ai]NO fast.
 
 The Providers screen can add and test OpenRouter, local Ollama, local vLLM, and generic
 OpenAI-compatible endpoints. Selecting OpenRouter fills its official endpoint and fetches
-the current model catalog into a searchable model selector. On save, Daino validates the entered
+the current model catalog into a searchable model selector. On save, D[Ai]NO validates the entered
 key with OpenRouter before writing any provider configuration. Rejected keys remain unsaved and
 the form shows OpenRouter's reason. A pasted valid key is stored privately under
 `.daino/secrets`; configuration contains only its `file://` reference. Environment and keyring

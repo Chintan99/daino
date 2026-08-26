@@ -10,6 +10,8 @@ import time
 import webbrowser
 from pathlib import Path
 
+from daino import branding
+
 
 def _ensure_frontend_built() -> bool:
     """Build the React GUI on first launch so ``--gui`` shows the IDE, not JSON.
@@ -38,7 +40,7 @@ def _ensure_frontend_built() -> bool:
         )
         return False
 
-    print("\n  Building the Daino GUI (one-time; this can take a minute)…\n")
+    print(f"\n  Building the {branding.NAME} GUI (one-time; this can take a minute)…\n")
     try:
         if not (gui_dir / "node_modules").is_dir():
             subprocess.run([npm, "install"], cwd=str(gui_dir), check=True)  # noqa: S603
@@ -109,7 +111,7 @@ def run_gui(
     url = f"http://{host}:{resolved_port}"
     app = create_app(context)
 
-    print(f"\n  Daino GUI → {url}")
+    print(f"\n  {branding.NAME} GUI → {url}")
     print(f"  Project:  {root}")
     print("  Press Ctrl+C to stop.\n")
 

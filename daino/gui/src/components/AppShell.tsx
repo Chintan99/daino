@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useUIStore } from "../store/uiStore";
 import { getTab } from "../tabs/registry";
@@ -6,6 +7,7 @@ import { TopBar } from "./TopBar";
 import { StatusBar } from "./StatusBar";
 import { ActivityBar } from "./ActivityBar";
 import { AgentPanel } from "./agent/AgentPanel";
+import { AgentRail } from "./agent/AgentRail";
 import { BottomPanel } from "./bottom/BottomPanel";
 import { ExplorerPanel } from "./explorer/ExplorerPanel";
 import { SearchPanel } from "./search/SearchPanel";
@@ -18,9 +20,33 @@ function ActivitySidebar() {
   return <ExplorerPanel />;
 }
 
+/** Layout shortcuts, kept close to the TUI's: ⌘B sidebar, ⌘J panel, ⌘I agent. */
+function useLayoutShortcuts() {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const ui = useUIStore.getState();
+      const key = e.key.toLowerCase();
+      if (key === "b") {
+        e.preventDefault();
+        ui.toggleSidebar();
+      } else if (key === "j") {
+        e.preventDefault();
+        ui.setBottomVisible(!ui.bottomVisible);
+      } else if (key === "i") {
+        e.preventDefault();
+        ui.toggleAgent();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+}
+
 export function AppShell() {
   // one shared session websocket for the whole app
   useSessionSocket("latest");
+  useLayoutShortcuts();
 
   const activeTabId = useUIStore((s) => s.activeWorkspaceTab);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
@@ -63,13 +89,13 @@ export function AppShell() {
                 key={showBottom ? "with-bottom" : "no-bottom"}
                 direction="vertical"
               >
-                <Panel defaultSize={showBottom ? 65 : 100} minSize={20}>
+                <Panel defaultSize={showBottom ? 66 : 100} minSize={20}>
                   <Workspace />
                 </Panel>
                 {showBottom && (
                   <>
                     <PanelResizeHandle className="rp-handle" />
-                    <Panel defaultSize={35} minSize={12}>
+                    <Panel defaultSize={34} minSize={12}>
                       <BottomPanel />
                     </Panel>
                   </>
@@ -83,12 +109,13 @@ export function AppShell() {
           {agentVisible && (
             <>
               <PanelResizeHandle className="rp-handle" />
-              <Panel defaultSize={28} minSize={18} maxSize={45}>
+              <Panel defaultSize={28} minSize={18} maxSize={48}>
                 <AgentPanel />
               </Panel>
             </>
           )}
         </PanelGroup>
+        {!agentVisible && <AgentRail />}
       </div>
       <StatusBar />
     </div>

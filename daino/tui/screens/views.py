@@ -26,6 +26,7 @@ from textual.widgets import (
     Tree,
 )
 
+from daino import branding
 from daino.application import (
     CheckpointApplicationService,
     DeploymentApplicationService,
@@ -1330,8 +1331,11 @@ class HelpView(ViewPanel):
     def compose(self) -> ComposeResult:
         yield from super().compose()
         shortcut_text = "\n".join(f"[b]{key:<12}[/b] {text}" for key, text in SHORTCUTS)
+        # Descriptions and usage strings are data, not markup: escape them so a
+        # bracketed product name and a usage like "[title]" both survive intact.
         command_text = "\n".join(
-            f"[b]{item.name:<14}[/b] {item.description} [dim]{item.usage}[/dim]"
+            f"[b]{item.name:<14}[/b] {branding.escape_markup(item.description)} "
+            f"[dim]{branding.escape_markup(item.usage)}[/dim]"
             for item in SLASH_COMMANDS
         )
         yield VerticalScroll(

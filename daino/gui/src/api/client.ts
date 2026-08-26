@@ -3,17 +3,30 @@
 // and through the Vite dev proxy in development.
 
 import type {
+  ApprovalEntry,
+  AuditLogPage,
+  DocsIndex,
+  DocsPage,
+  CheckpointEntry,
   Design,
   DesignList,
   FileRead,
   FileTree,
   FileWriteResult,
+  ExecutionPrompt,
+  ExecutionTrace,
   GitDiff,
+  GitFileDiff,
   GitStatus,
   Health,
+  MissionDetails,
+  MissionSummary,
   PreviewCommand,
   PreviewDetect,
   PreviewStatus,
+  QAHistory,
+  QALatest,
+  RepositoryInfo,
   SearchResult,
   SessionList,
   SessionMessages,
@@ -209,6 +222,63 @@ export const api = {
     request<Design>(
       "DELETE",
       `/api/designs/${encodeURIComponent(id)}/edges/${encodeURIComponent(edgeId)}`,
+    ),
+
+  gitFile: (path: string, staged = false) =>
+    request<GitFileDiff>("GET", `/api/git/file${qs({ path, staged })}`),
+  gitStage: (paths: string[]) =>
+    request<{ staged: string[] }>("POST", "/api/git/stage", { paths }),
+  gitUnstage: (paths: string[]) =>
+    request<{ unstaged: string[] }>("POST", "/api/git/unstage", { paths }),
+  gitDiscard: (paths: string[]) =>
+    request<{ discarded: string[] }>("POST", "/api/git/discard", { paths }),
+
+  // Engineering evidence (the browser side of the TUI workspace views)
+  logs: (q: string, limit = 500) =>
+    request<AuditLogPage>("GET", `/api/logs${qs({ q, limit })}`),
+  mapPrompts: (limit = 100) =>
+    request<{ prompts: ExecutionPrompt[] }>(
+      "GET",
+      `/api/map/prompts${qs({ limit })}`,
+    ),
+  mapTrace: (missionId: string) =>
+    request<ExecutionTrace>(
+      "GET",
+      `/api/map/prompts/${encodeURIComponent(missionId)}`,
+    ),
+  qaLatest: () => request<QALatest>("GET", "/api/qa/latest"),
+  qaHistory: (limit = 50) =>
+    request<QAHistory>("GET", `/api/qa/history${qs({ limit })}`),
+  qaReport: (id: string) =>
+    request<QALatest>("GET", `/api/qa/reports/${encodeURIComponent(id)}`),
+  qaRun: () => request<{ running: boolean }>("POST", "/api/qa/run", {}),
+  qaCancel: () =>
+    request<{ cancelled: boolean }>("POST", "/api/qa/cancel", {}),
+  missions: (limit = 100) =>
+    request<{ missions: MissionSummary[] }>("GET", `/api/missions${qs({ limit })}`),
+  missionDetails: (id: string) =>
+    request<MissionDetails>("GET", `/api/missions/${encodeURIComponent(id)}`),
+  checkpoints: (missionId = "") =>
+    request<{ checkpoints: CheckpointEntry[] }>(
+      "GET",
+      `/api/checkpoints${qs({ mission_id: missionId })}`,
+    ),
+  approvals: (limit = 100) =>
+    request<{ approvals: ApprovalEntry[] }>(
+      "GET",
+      `/api/approvals${qs({ limit })}`,
+    ),
+  repository: () => request<RepositoryInfo>("GET", "/api/repository"),
+
+  // Documentation (served at /docs, separate from the /api-docs reference)
+  docsIndex: () => request<DocsIndex>("GET", "/api/docs"),
+  docsPage: (slug: string) =>
+    request<DocsPage>("GET", `/api/docs/${encodeURIComponent(slug)}`),
+  reindex: () =>
+    request<{ file_count: number; frameworks: string[] }>(
+      "POST",
+      "/api/repository/index",
+      {},
     ),
 
   // Preview

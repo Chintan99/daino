@@ -3,14 +3,12 @@ import { TerminalPanel } from "./TerminalPanel";
 import { OutputPanel } from "./OutputPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
 import { TestsPanel } from "./TestsPanel";
-import { GitDiffPanel } from "./GitDiffPanel";
 
 const TABS: { id: BottomTab; label: string }[] = [
   { id: "terminal", label: "TERMINAL" },
   { id: "output", label: "OUTPUT" },
   { id: "problems", label: "PROBLEMS" },
   { id: "tests", label: "TESTS" },
-  { id: "gitdiff", label: "GIT DIFF" },
 ];
 
 export function BottomPanel() {
@@ -53,7 +51,6 @@ export function BottomPanel() {
         {tab === "output" && <OutputPanel />}
         {tab === "problems" && <ProblemsPanel />}
         {tab === "tests" && <TestsPanel />}
-        {tab === "gitdiff" && <GitDiffPanel />}
       </div>
     </div>
   );

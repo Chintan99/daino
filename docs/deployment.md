@@ -1,7 +1,7 @@
 # Deployment
 
 The supported MVP strategy deploys an existing Docker Compose application to an existing Linux
-host. Daino does not provision the host.
+host. D[Ai]NO does not provision the host.
 
 The sequence is read-only inspection, structured plan and risk, explicit approval, immutable bundle
 upload, versioned extraction, Compose startup, container/health verification, promotion, and

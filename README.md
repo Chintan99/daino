@@ -1,6 +1,6 @@
-# Daino (D[AI]NO.AI)
+# D[Ai]NO (D[AI]NO.AI)
 
-Daino is a local-first AI coding agent that lives in your terminal. Type an instruction and it
+D[Ai]NO is a local-first AI coding agent that lives in your terminal. Type an instruction and it
 reads the repository, edits files, runs your tests, and shows you the diff — in your working tree,
 with a checkpoint taken first.
 
@@ -14,12 +14,12 @@ configured; and dependency vulnerability scans. Results are consolidated and pre
 It is not a code-snippet chatbot. When you ask for a change, you get the change: the agent writes
 into the files and reports what it did, rather than printing a block of code for you to paste.
 
-Daino also has selective local memory: unfinished work survives restarts, scoped `DAINO.md`
+D[Ai]NO also has selective local memory: unfinished work survives restarts, scoped `DAINO.md`
 instructions follow the files being edited, useful project facts and decisions can be retrieved in
 future sessions, and source-derived facts become stale when their files change. User memory stays
 under `~/.daino`; no external vector database is required. See [memory](docs/memory.md).
 
-![Daino interactive terminal workspace](docs/assets/daino-tui.png)
+![D[Ai]NO interactive terminal workspace](docs/assets/daino-tui.png)
 
 ## Install
 
@@ -40,7 +40,7 @@ See [installation](docs/installation.md) for uv, pipx, and PATH details, or
 
 ## Configure once
 
-Connect a model the first time you run Daino and it is available to every project afterwards.
+Connect a model the first time you run D[Ai]NO and it is available to every project afterwards.
 When a new directory is initialized, onboarding lets you inherit that global configuration or
 choose a project-specific provider and model:
 
@@ -94,7 +94,7 @@ has a way back, and `/diff` shows the full change.
 
 ## Browser IDE (`daino . --gui`)
 
-Daino also ships a local, VS Code-style browser IDE driven by the **same** agent runtime as the
+D[Ai]NO also ships a local, VS Code-style browser IDE driven by the **same** agent runtime as the
 terminal. Nothing runs in the cloud; the server binds to `127.0.0.1` only.
 
 ```bash
@@ -105,10 +105,10 @@ daino . --gui --port 5000
 ```
 
 The GUI opens your default browser to a local URL and gives you three workspaces that share one
-Daino agent and one session:
+D[Ai]NO agent and one session:
 
 - **Code** — file explorer, Monaco editor with tabs and dirty-state, an integrated terminal,
-  Git status/diff, and a persistent Daino agent panel with streamed responses, tool cards, and
+  Git status/diff, and a persistent D[Ai]NO agent panel with streamed responses, tool cards, and
   command approvals (the same security model as the TUI — nothing is auto-committed).
 - **Design** — structured, AI-editable diagrams (architecture, flowchart, database, API flow) on a
   React Flow canvas you can also edit by hand, plus HTML/React prototypes. Design never writes
@@ -299,7 +299,7 @@ docker compose run --rm daino daino --help
 
 ## Migrating from Vasuki
 
-Vasuki has been renamed to **Daino**. The command is now `daino`; the old `vasuki` command still
+Vasuki has been renamed to **D[Ai]NO**. The command is now `daino`; the old `vasuki` command still
 works as a deprecated alias and prints a one-time notice.
 
 Existing projects and sessions are detected automatically from legacy locations and never deleted:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
+from daino import branding
 from daino.runtimes.base import Runtime
 from daino.schemas import ToolResult
 from daino.security.commands import CommandGate, Verdict
@@ -108,8 +109,8 @@ class CommandRunner:
             error = (
                 f"{error}\nThis command ran inside the configured Docker sandbox image. "
                 "That image may not contain this executable. For a Compose project, run a "
-                "docker compose command so Daino can use the host Docker daemon, or switch "
-                "to /runtime local."
+                f"docker compose command so {branding.NAME} can use the host Docker "
+                "daemon, or switch to /runtime local."
             )
         return ToolResult(
             tool="run_command",

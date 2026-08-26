@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import func, select
 from textual.widgets import ContentSwitcher
 
+from daino import branding
 from daino.application import (
     ProviderApplicationService,
     initialize_project,
@@ -286,7 +287,7 @@ async def test_conversation_is_actually_painted_in_the_chat_area(
     app_instance = connected_app(tmp_path, model_server)
     async with app_instance.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        assert "DAINO" in painted_text(app_instance)
+        assert branding.NAME in painted_text(app_instance)
 
         await ask(pilot, "render this please")
         await wait_for_answer(pilot)

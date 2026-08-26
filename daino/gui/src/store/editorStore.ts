@@ -1,5 +1,19 @@
 // Open editor tabs + buffers + current selection.
+//
+// A tab is either a file buffer or a Git diff view of a path, so a review opens
+// beside the code the way it does in an editor rather than in a drawer under it.
 import { create } from "zustand";
+
+export type TabKind = "file" | "diff";
+
+export interface EditorTab {
+  id: string;
+  kind: TabKind;
+  path: string;
+  name: string;
+  /** diff tabs only: comparing the index against HEAD rather than the worktree */
+  staged: boolean;
+}
 
 export interface EditorBuffer {
   path: string;
@@ -18,61 +32,142 @@ export interface EditorSelection {
   endLine: number;
 }
 
+/** A location the editor should scroll to and highlight. */
+export interface EditorReveal {
+  path: string;
+  line: number;
+  column: number;
+  /** Length of the match to select, or 0 to just place the cursor. */
+  length: number;
+  /** Bumped per request so revealing the same spot twice still scrolls. */
+  nonce: number;
+}
+
+export const fileTabId = (path: string) => `file:${path}`;
+export const diffTabId = (path: string, staged: boolean) =>
+  `diff:${staged ? "index" : "work"}:${path}`;
+
+function basename(path: string): string {
+  const parts = path.split("/");
+  return parts[parts.length - 1] || path;
+}
+
 interface EditorState {
-  order: string[]; // open file paths, tab order
+  tabs: EditorTab[];
+  activeTabId: string | null;
   buffers: Record<string, EditorBuffer>;
-  activePath: string | null;
   selection: EditorSelection | null;
+  /** Path of the active *file* tab; null while a diff tab has focus. */
+  activePath: string | null;
+  /** Set by search and other "go to" affordances; consumed by the editor. */
+  reveal: EditorReveal | null;
 
   openBuffer: (b: Omit<EditorBuffer, "dirty" | "conflict">) => void;
+  openDiff: (path: string, staged: boolean) => void;
   setActive: (path: string) => void;
+  setActiveTab: (id: string) => void;
+  closeTab: (id: string) => void;
   closeBuffer: (path: string) => void;
   setContent: (path: string, content: string) => void;
   markSaved: (path: string, hash: string, content: string) => void;
   markConflict: (path: string, value: boolean) => void;
   setSelection: (sel: EditorSelection | null) => void;
+  revealLocation: (at: Omit<EditorReveal, "nonce">) => void;
+}
+
+/** Recompute the focused-file path from whichever tab is active. */
+function focusedPath(tabs: EditorTab[], activeTabId: string | null): string | null {
+  const tab = tabs.find((t) => t.id === activeTabId);
+  return tab && tab.kind === "file" ? tab.path : null;
 }
 
 export const useEditorStore = create<EditorState>((set) => ({
-  order: [],
+  tabs: [],
+  activeTabId: null,
   buffers: {},
-  activePath: null,
   selection: null,
+  activePath: null,
+  reveal: null,
 
   openBuffer: (b) =>
     set((s) => {
+      const id = fileTabId(b.path);
       const exists = s.buffers[b.path];
       const buffers = { ...s.buffers };
-      if (exists) {
-        // refresh from disk read, keep it non-dirty
-        buffers[b.path] = {
-          ...exists,
-          ...b,
-          savedContent: b.content,
-          dirty: false,
-          conflict: false,
-        };
-      } else {
-        buffers[b.path] = { ...b, dirty: false, conflict: false };
-      }
-      const order = s.order.includes(b.path) ? s.order : [...s.order, b.path];
-      return { buffers, order, activePath: b.path };
+      buffers[b.path] = exists
+        ? // refresh from a disk read, keeping it non-dirty
+          { ...exists, ...b, savedContent: b.content, dirty: false, conflict: false }
+        : { ...b, dirty: false, conflict: false };
+      const tabs = s.tabs.some((t) => t.id === id)
+        ? s.tabs
+        : [...s.tabs, { id, kind: "file" as const, path: b.path, name: b.name, staged: false }];
+      return { buffers, tabs, activeTabId: id, activePath: b.path };
     }),
 
-  setActive: (path) => set({ activePath: path }),
+  openDiff: (path, staged) =>
+    set((s) => {
+      const id = diffTabId(path, staged);
+      const tabs = s.tabs.some((t) => t.id === id)
+        ? s.tabs
+        : [
+            ...s.tabs,
+            { id, kind: "diff" as const, path, name: basename(path), staged },
+          ];
+      return { tabs, activeTabId: id, activePath: null };
+    }),
+
+  setActive: (path) =>
+    set((s) => {
+      const id = fileTabId(path);
+      if (!s.tabs.some((t) => t.id === id)) return {};
+      return { activeTabId: id, activePath: path };
+    }),
+
+  setActiveTab: (id) =>
+    set((s) => ({ activeTabId: id, activePath: focusedPath(s.tabs, id) })),
+
+  closeTab: (id) =>
+    set((s) => {
+      const closing = s.tabs.find((t) => t.id === id);
+      if (!closing) return {};
+      const tabs = s.tabs.filter((t) => t.id !== id);
+      const buffers = { ...s.buffers };
+      // A file's buffer outlives its tab only if some other tab still shows it.
+      if (
+        closing.kind === "file" &&
+        !tabs.some((t) => t.kind === "file" && t.path === closing.path)
+      ) {
+        delete buffers[closing.path];
+      }
+      let activeTabId = s.activeTabId;
+      if (activeTabId === id) activeTabId = tabs.length ? tabs[tabs.length - 1].id : null;
+      const selection =
+        s.selection && !buffers[s.selection.path] ? null : s.selection;
+      return {
+        tabs,
+        buffers,
+        activeTabId,
+        activePath: focusedPath(tabs, activeTabId),
+        selection,
+      };
+    }),
 
   closeBuffer: (path) =>
     set((s) => {
-      const order = s.order.filter((p) => p !== path);
+      const tabs = s.tabs.filter((t) => !(t.kind === "file" && t.path === path));
       const buffers = { ...s.buffers };
       delete buffers[path];
-      let activePath = s.activePath;
-      if (activePath === path) {
-        activePath = order.length ? order[order.length - 1] : null;
-      }
-      const selection =
-        s.selection && s.selection.path === path ? null : s.selection;
-      return { order, buffers, activePath, selection };
+      let activeTabId = s.activeTabId;
+      if (!tabs.some((t) => t.id === activeTabId))
+        activeTabId = tabs.length ? tabs[tabs.length - 1].id : null;
+      const selection = s.selection?.path === path ? null : s.selection;
+      return {
+        tabs,
+        buffers,
+        activeTabId,
+        activePath: focusedPath(tabs, activeTabId),
+        selection,
+      };
     }),
 
   setContent: (path, content) =>
@@ -110,10 +205,11 @@ export const useEditorStore = create<EditorState>((set) => ({
     set((s) => {
       const buf = s.buffers[path];
       if (!buf) return {};
-      return {
-        buffers: { ...s.buffers, [path]: { ...buf, conflict: value } },
-      };
+      return { buffers: { ...s.buffers, [path]: { ...buf, conflict: value } } };
     }),
 
   setSelection: (selection) => set({ selection }),
+
+  revealLocation: (at) =>
+    set((s) => ({ reveal: { ...at, nonce: (s.reveal?.nonce ?? 0) + 1 } })),
 }));

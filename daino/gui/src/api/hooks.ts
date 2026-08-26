@@ -19,6 +19,18 @@ export const qk = {
   gitStatus: ["git", "status"] as const,
   gitDiff: (path: string, staged: boolean) =>
     ["git", "diff", path, staged] as const,
+  gitFile: (path: string, staged: boolean) =>
+    ["git", "file", path, staged] as const,
+  logs: (q: string) => ["logs", q] as const,
+  mapPrompts: ["map", "prompts"] as const,
+  mapTrace: (id: string) => ["map", "trace", id] as const,
+  qaLatest: ["qa", "latest"] as const,
+  qaHistory: ["qa", "history"] as const,
+  missions: ["missions"] as const,
+  missionDetails: (id: string) => ["missions", id] as const,
+  checkpoints: ["checkpoints"] as const,
+  approvals: ["approvals"] as const,
+  repository: ["repository"] as const,
   designs: ["designs"] as const,
   design: (id: string) => ["design", id] as const,
   previewDetect: ["preview", "detect"] as const,
@@ -68,6 +80,73 @@ export function useGitDiff(path: string | null, staged = false) {
     queryFn: () => api.gitDiff(path as string, staged),
     enabled: !!path,
   });
+}
+
+export function useGitFile(path: string | null, staged = false) {
+  return useQuery({
+    queryKey: qk.gitFile(path ?? "", staged),
+    queryFn: () => api.gitFile(path as string, staged),
+    enabled: !!path,
+  });
+}
+
+// ---- Engineering evidence ----
+
+export function useLogs(q: string, refetchMs = 4000) {
+  return useQuery({
+    queryKey: qk.logs(q),
+    queryFn: () => api.logs(q),
+    refetchInterval: refetchMs,
+  });
+}
+
+export function useMapPrompts() {
+  return useQuery({ queryKey: qk.mapPrompts, queryFn: () => api.mapPrompts() });
+}
+
+export function useMapTrace(missionId: string | null) {
+  return useQuery({
+    queryKey: qk.mapTrace(missionId ?? ""),
+    queryFn: () => api.mapTrace(missionId as string),
+    enabled: !!missionId,
+  });
+}
+
+/** Poll only while a scan is in flight; a finished report never changes. */
+export function useQALatest() {
+  return useQuery({
+    queryKey: qk.qaLatest,
+    queryFn: api.qaLatest,
+    refetchInterval: (query) => (query.state.data?.running ? 1500 : false),
+  });
+}
+
+export function useQAHistory() {
+  return useQuery({ queryKey: qk.qaHistory, queryFn: () => api.qaHistory() });
+}
+
+export function useMissions() {
+  return useQuery({ queryKey: qk.missions, queryFn: () => api.missions() });
+}
+
+export function useMissionDetails(id: string | null) {
+  return useQuery({
+    queryKey: qk.missionDetails(id ?? ""),
+    queryFn: () => api.missionDetails(id as string),
+    enabled: !!id,
+  });
+}
+
+export function useCheckpoints() {
+  return useQuery({ queryKey: qk.checkpoints, queryFn: () => api.checkpoints() });
+}
+
+export function useApprovals() {
+  return useQuery({ queryKey: qk.approvals, queryFn: () => api.approvals() });
+}
+
+export function useRepository() {
+  return useQuery({ queryKey: qk.repository, queryFn: api.repository });
 }
 
 export function useDesigns() {
@@ -141,7 +220,13 @@ export function useDesignMutations(designId: string | null) {
   const patchNode = useMutation({
     mutationFn: (v: {
       nodeId: string;
-      body: { label?: string; node_type?: string; x?: number; y?: number };
+      body: {
+        label?: string;
+        node_type?: string;
+        x?: number;
+        y?: number;
+        data?: Record<string, unknown>;
+      };
     }) => api.patchNode(designId as string, v.nodeId, v.body),
     onSuccess: setDesign,
   });

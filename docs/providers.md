@@ -20,7 +20,7 @@ daino providers test private
 
 ## Offline providers
 
-Daino runs entirely on locally hosted models when every role routes to an Ollama or vLLM
+D[Ai]NO runs entirely on locally hosted models when every role routes to an Ollama or vLLM
 provider. Tool-capable instruct models (for example `qwen2.5-coder`, `llama3.1`) give the agent
 loop native tool calling plus grammar-constrained structured output, so no cloud provider is
 required for planning, building, repairing, or review.

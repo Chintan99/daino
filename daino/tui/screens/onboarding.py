@@ -13,6 +13,7 @@ from textual.content import Content, Span
 from textual.screen import Screen
 from textual.widgets import Button, Input, Label, LoadingIndicator, Select, Static
 
+from daino import branding
 from daino.application import initialize_project, open_project
 from daino.application.provider_service import list_ollama_models
 from daino.config import load_settings, save_settings
@@ -106,7 +107,11 @@ class OnboardingScreen(Screen[None]):
             )
             yield LoadingIndicator(id="onboarding-loading", classes="hidden")
             with Horizontal(classes="onboarding-actions"):
-                yield Button("Initialize Daino", id="initialize", variant="primary")
+                yield Button(
+                    f"Initialize {branding.NAME_MARKUP}",
+                    id="initialize",
+                    variant="primary",
+                )
                 yield Button("Quit", id="quit")
 
     def on_select_changed(self, event: Select.Changed) -> None:

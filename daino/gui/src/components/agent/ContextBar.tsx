@@ -10,7 +10,7 @@ export function ContextBar() {
 
   const activePath = useEditorStore((s) => s.activePath);
   const selection = useEditorStore((s) => s.selection);
-  const gitDiffPath = useUIStore((s) => s.gitDiffPath);
+  const gitDiffPath = useUIStore((s) => s.lastDiffPath);
   const activeTerminal = useTerminalStore((s) => s.activeId);
 
   const addActiveFile = () => {

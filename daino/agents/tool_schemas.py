@@ -361,6 +361,7 @@ _MEMORY_TOOLS = [
 #: ``respond``, so one loop can answer a question or carry out an edit and the
 #: model chooses which the request called for.
 _DESIGN_TYPES = ["architecture", "flowchart", "database", "api_flow", "ui", "prototype"]
+_ARTIFACT_KINDS = ["html", "svg", "markdown", "text"]
 _DESIGN_TOOLS = [
     _tool(
         "create_design",
@@ -374,9 +375,18 @@ _DESIGN_TOOLS = [
     ),
     _tool(
         "read_design",
-        "Read a design's current nodes and edges before editing it.",
+        "Read a design's current nodes and edges before editing it. Artifact "
+        "source is summarised, not included; use read_design_artifact for it.",
         {"design_id": {"type": "string"}},
         ["design_id"],
+    ),
+    _tool(
+        "read_design_artifact",
+        "Read one canvas artifact's full source (the HTML, SVG, or note the "
+        "user is previewing). Always read before editing so the rewrite keeps "
+        "what the user already has.",
+        {"design_id": {"type": "string"}, "node_id": {"type": "string"}},
+        ["design_id", "node_id"],
     ),
     _tool(
         "update_design",
@@ -392,6 +402,18 @@ _DESIGN_TOOLS = [
             "node_label": {"type": "string", "description": "Visible node label."},
             "node_type": {"type": "string", "description": "e.g. service, database, queue."},
             "node_id": {"type": "string", "description": "Optional stable id; derived if omitted."},
+            "node_kind": {
+                "type": "string",
+                "enum": _ARTIFACT_KINDS,
+                "description": (
+                    "Set to place a real file on the canvas instead of a diagram box. "
+                    "An html artifact opens full screen and is previewed live."
+                ),
+            },
+            "node_content": {
+                "type": "string",
+                "description": "Artifact source (required when node_kind is set).",
+            },
             "x": {"type": "number"},
             "y": {"type": "number"},
         },
@@ -399,12 +421,18 @@ _DESIGN_TOOLS = [
     ),
     _tool(
         "update_design_node",
-        "Update one node's label, type, or position.",
+        "Update one node's label, type, position, or artifact source. Writing "
+        "node_content replaces the artifact's whole source, and the user's open "
+        "preview updates the moment it lands, so send a complete document.",
         {
             "design_id": {"type": "string"},
             "node_id": {"type": "string"},
             "node_label": {"type": "string"},
             "node_type": {"type": "string"},
+            "node_content": {
+                "type": "string",
+                "description": "Complete replacement source for an artifact node.",
+            },
             "x": {"type": "number"},
             "y": {"type": "number"},
         },

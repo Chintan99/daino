@@ -1,6 +1,6 @@
 # Memory architecture
 
-Daino memory is local-first and selective. It does not make the model remember every prior
+D[Ai]NO memory is local-first and selective. It does not make the model remember every prior
 message; `ContextBuilder` decides which instructions, task state, memories, source files, and recent
 conversation are useful for the current call. The agent still works when embeddings are disabled.
 
@@ -50,7 +50,7 @@ legacy `MemoryStore` remains compatible for existing architecture-decision calle
 
 ## DAINO.md hierarchy
 
-Daino resolves:
+D[Ai]NO resolves:
 
 1. `~/.daino/DAINO.md` (global),
 2. `<repository>/DAINO.md` (repository),

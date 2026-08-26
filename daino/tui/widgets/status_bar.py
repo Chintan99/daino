@@ -12,7 +12,7 @@ from textual.content import Content
 from textual.message import Message
 from textual.widgets import Static
 
-from daino import __version__
+from daino import __version__, branding
 from daino.tui import palette
 from daino.tui.render import join
 
@@ -88,7 +88,7 @@ class DainoHeader(Vertical):
         )
         identity = join(
             "  ",
-            ("DAINO", f"bold {palette.ACCENT}"),
+            (branding.NAME, f"bold {palette.ACCENT}"),
             (__version__, palette.DIM),
             (_shorten_path(project, home), palette.BRIGHT),
             *((branch, palette.MUTED),) if branch else (),

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from daino import branding
+
 
 @dataclass(frozen=True, slots=True)
 class SlashCommand:
@@ -56,8 +58,8 @@ SLASH_COMMANDS = (
     SlashCommand("/logs", "Open redacted event logs"),
     SlashCommand("/map", "Open the prompt execution map"),
     SlashCommand("/settings", "Open validated project settings"),
-    SlashCommand("/bye", "Exit Daino safely"),
-    SlashCommand("/quit", "Quit Daino safely"),
+    SlashCommand("/bye", f"Exit {branding.NAME} safely"),
+    SlashCommand("/quit", f"Quit {branding.NAME} safely"),
 )
 
 COMMAND_PALETTE = (

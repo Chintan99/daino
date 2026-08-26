@@ -1,6 +1,6 @@
-# Install Daino as an application
+# Install D[Ai]NO as an application
 
-Daino should be installed as a command-line application, not into a repository's development
+D[Ai]NO should be installed as a command-line application, not into a repository's development
 virtual environment. The application install creates a private, managed Python environment and
 places a `daino` launcher in the user's command path. It never needs to be activated.
 
@@ -39,7 +39,7 @@ cd /path/to/project
 daino
 ```
 
-Daino keeps project state in that project's `.daino` directory. Provider credentials remain in
+D[Ai]NO keeps project state in that project's `.daino` directory. Provider credentials remain in
 environment variables; saved configuration contains only secret references such as
 `env://OPENROUTER_API_KEY`.
 
@@ -72,7 +72,7 @@ See the [browser IDE guide](gui.md).
 
 ## Upgrade
 
-Pull or download the newer Daino source and run the installer again:
+Pull or download the newer D[Ai]NO source and run the installer again:
 
 ```bash
 ./scripts/install.sh
@@ -113,5 +113,5 @@ Uninstalling the command does not remove `.daino` directories from projects.
 
 ## Development setup
 
-Only contributors working on Daino itself need an editable virtual environment. See
+Only contributors working on D[Ai]NO itself need an editable virtual environment. See
 [Contributing](contributing.md) for that workflow.

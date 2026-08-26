@@ -2,20 +2,35 @@ import { useEditorStore } from "../../store/editorStore";
 import { reloadBuffer } from "../../lib/saveFile";
 import { EditorTabs } from "./EditorTabs";
 import { MonacoFileEditor } from "./MonacoFileEditor";
+import { GitDiffView } from "./GitDiffView";
+
+function EmptyState() {
+  return (
+    <div className="canvas-hint" style={{ position: "static", height: "100%" }}>
+      <div className="big">No file open</div>
+      <div>
+        Pick a file in the Explorer, or select a change in Source Control to
+        review its diff.
+      </div>
+    </div>
+  );
+}
 
 export function EditorWorkspace() {
-  const activePath = useEditorStore((s) => s.activePath);
-  const hasBuffer = useEditorStore((s) =>
-    activePath ? !!s.buffers[activePath] : false,
-  );
+  const tabs = useEditorStore((s) => s.tabs);
+  const activeTabId = useEditorStore((s) => s.activeTabId);
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
   const conflict = useEditorStore((s) =>
-    activePath ? s.buffers[activePath]?.conflict : false,
+    activeTab?.kind === "file" ? !!s.buffers[activeTab.path]?.conflict : false,
+  );
+  const hasBuffer = useEditorStore((s) =>
+    activeTab?.kind === "file" ? !!s.buffers[activeTab.path] : false,
   );
 
   return (
     <div className="panel" style={{ background: "var(--bg-0)" }}>
       <EditorTabs />
-      {activePath && conflict && (
+      {activeTab?.kind === "file" && conflict && (
         <div className="conflict-bar">
           <span>
             ⚠ This file changed on disk since you opened it. Saving may overwrite
@@ -23,19 +38,22 @@ export function EditorWorkspace() {
           </span>
           <button
             className="btn danger"
-            onClick={() => void reloadBuffer(activePath)}
+            onClick={() => void reloadBuffer(activeTab.path)}
           >
             Reload from disk
           </button>
         </div>
       )}
-      <div className="panel-body" style={{ position: "relative" }}>
-        {activePath && hasBuffer ? (
-          <MonacoFileEditor path={activePath} />
-        ) : (
-          <div className="empty">
-            Open a file from the Explorer to start editing.
-          </div>
+      <div className="panel-body" style={{ position: "relative", overflow: "hidden" }}>
+        {!activeTab && <EmptyState />}
+        {activeTab?.kind === "file" &&
+          (hasBuffer ? <MonacoFileEditor path={activeTab.path} /> : <EmptyState />)}
+        {activeTab?.kind === "diff" && (
+          <GitDiffView
+            key={activeTab.id}
+            path={activeTab.path}
+            staged={activeTab.staged}
+          />
         )}
       </div>
     </div>

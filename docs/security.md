@@ -47,12 +47,12 @@ removed from HTML, and page text is labeled as untrusted data in the model obser
 
 QA sub-agents are read-only by construction. Their action schema exposes only repository reads,
 search, globbing, directory listing, and finish operations, while `EditTools` also enforces
-read-only mode underneath. Automated QA commands are selected by Daino rather than the model and
+read-only mode underneath. Automated QA commands are selected by D[Ai]NO rather than the model and
 still pass through the configured runtime and command policy. Registry-backed dependency audits
 are grouped behind one explicit network approval; declining it records those checks as skipped and
 sends no audit request.
 
-Production deployment and rollback require `--approve`. Daino never pushes or merges a mission.
+Production deployment and rollback require `--approve`. D[Ai]NO never pushes or merges a mission.
 Every mission begins with a worktree and archive checkpoint and records its initial commit as the
 rollback point. Task and final commits stage only paths changed by successful model edit actions,
 so test-generated caches, bytecode, coverage data, and other command side effects are not swept

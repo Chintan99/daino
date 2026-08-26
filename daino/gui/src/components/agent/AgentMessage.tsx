@@ -1,5 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import type { SessionMessage } from "../../api/types";
+import { BRAND } from "../../lib/branding";
 
 const ROLE_CLASS: Record<string, string> = {
   user: "user",
@@ -17,7 +18,7 @@ export function AgentMessage({ message }: { message: SessionMessage }) {
     message.kind === "user"
       ? "You"
       : message.kind === "agent"
-        ? "Daino"
+        ? BRAND
         : message.kind;
   return (
     <div className={`msg ${cls}`}>
