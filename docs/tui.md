@@ -4,6 +4,10 @@ The Textual UI is the primary Daino experience. It is a presentation layer over 
 mission engine—not a second implementation of providers, agents, Git, verification, persistence,
 or deployment.
 
+> Prefer a graphical editor? `daino . --gui` opens a local browser IDE (Monaco editor, integrated
+> terminal, Git views, and AI Design/Preview workspaces) driven by the same agent runtime and the
+> same session. See the [browser IDE guide](gui.md).
+
 ## Install and launch
 
 Daino requires Python 3.12 or newer and Git. Docker is optional: a project records the runtime

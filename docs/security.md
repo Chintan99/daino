@@ -9,6 +9,15 @@ conversation starts, and Full also auto-approves mission execution/change gates.
 not bypass hard-denied destructive-command rules, repository boundaries, or deployment safety
 checks.
 
+The browser IDE (`daino . --gui`) is held to the same model. It binds `127.0.0.1` by default and
+never `0.0.0.0` implicitly, so the file, shell, and terminal APIs are not network-exposed without
+deliberate configuration. Command approvals round-trip over the WebSocket to the same `CommandGate`
+and `PolicyEngine` the TUI uses — the GUI is not permitted to be less secure than the TUI — and
+never-approvable commands are still refused. File writes from the editor use content-hash
+optimistic concurrency and reject a stale write rather than clobbering an out-of-band change. The
+GUI never commits or pushes, and Design changes never write production code without an explicit
+plan-first "Implement Design" step.
+
 Configuration stores secret references, never values. `env://NAME`, `keyring://service/account`,
 and `file://path` are resolved immediately before use. The Providers screen may accept a pasted
 OpenRouter key, but validates it first and then writes it under `.daino/secrets` with user-only

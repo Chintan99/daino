@@ -2,9 +2,11 @@
 
 ## Interactive presentation boundary
 
-The Textual application under `daino/tui` depends only on `daino/application` facades and typed
-events. It never applies patches, chooses provider credentials, creates worktrees, executes test
-commands, or deploys services directly.
+Daino has two front-ends — the terminal UI (`daino/tui`) and the browser IDE (`daino/server` +
+`daino/gui`) — over **one** agent runtime. Both depend only on `daino/application` facades and typed
+events; neither applies patches, chooses provider credentials, creates worktrees, executes test
+commands, or deploys services directly. There is a single agent implementation; the GUI is a
+transport and a frontend, not a second agent.
 
 `ProjectContext` assembles validated settings, the database, and an `EventBus`. Application services
 provide mission, repository, verification, provider, settings, checkpoint, and deployment use
@@ -12,8 +14,8 @@ cases. The existing `MissionService`, model gateway, repository indexer, runtime
 engine, workspace manager, and deployment manager remain the authoritative implementations.
 
 Core lifecycle events are serializable dataclasses in `daino/events/events.py`. They are persisted
-to `mission_events`, mirrored to the redacted audit log, and consumed live by Textual workers.
-This boundary is intentionally reusable by a future web or remote Mission Control client.
+to `mission_events`, mirrored to the redacted audit log, and consumed live by both the Textual
+workers and the browser IDE over WebSockets — the same stream, two consumers.
 
 Daino separates orchestration from every environment-specific boundary:
 
@@ -31,8 +33,43 @@ DeploymentManager -> LocalRuntime or RemoteSSHRuntime
 
 Strict Pydantic contracts are the protocol between model calls, agents, tools, verification, and
 deployment. Malformed model output is repaired a bounded number of times and is never executed.
-SQLAlchemy records durable state independently of terminal history. This allows a future API,
-worker queue, IDE extension, or web UI to call the same services without moving orchestration logic.
+SQLAlchemy records durable state independently of terminal history. The browser IDE already uses
+this to call the same services; a worker queue, IDE extension, or remote Mission Control could do
+the same without moving orchestration logic.
+
+## Browser IDE server
+
+```text
+DAINO CORE (agent · LLM · tools · fs · shell · git · MCP · memory · sessions)
+   -> EventBus (structured, serializable events)
+      -> Daino TUI  (Textual)
+      -> Local API  (FastAPI, 127.0.0.1)  -> WebSocket -> React GUI (daino/gui)
+```
+
+`daino/server` is a thin FastAPI + WebSocket transport built by `create_app(context)` from a
+`ProjectContext`. `GuiState` holds the shared `MissionApplicationService`, `DesignService`,
+`TerminalManager`, `PreviewManager`, `GitClient`, and `FileTools`, so every request and socket uses
+the same runtime, session store, and event bus as the TUI.
+
+- `/ws/session/{id}` drains `EventBus.open_stream()` to the browser and supplies a socket-backed
+  `ApprovalCallback`, so a GUI turn is the *same* `MissionApplicationService.chat` turn the TUI runs
+  — streamed events in, command approvals round-tripped, identical `CommandGate`/`PolicyEngine`.
+- REST routes cover file browsing/editing (optimistic-concurrency conflict checks via content hash),
+  Git status/diff, sessions/messages/context, design CRUD and granular node/edge mutations, preview
+  process detection/lifecycle, and PTY terminals (`daino/services/terminal.py`).
+- `daino/server/launch.py` resolves the project (initializing like `daino init` on first run),
+  serves the built `daino/gui/dist`, picks a free port, binds `127.0.0.1`, and opens a browser.
+
+## Design workspace
+
+`daino/design` is a structured, versioned artifact store (`DesignService`) under
+`.daino/designs/<id>/design.json` for architecture, flowchart, database, API-flow, UI, and prototype
+diagrams. The GUI canvas and the agent edit the **same** artifact: eight granular agent tools
+(`create_design`, `read_design`, `update_design`, `add/update/delete_design_node`,
+`connect/disconnect_design_nodes`) are wired through the normal `AgentAction` schema →
+`ActionExecutor` → tool-spec path, so no full-JSON rewrite is needed for a small change, and every
+mutation publishes `DesignCreated`/`DesignUpdated` on the bus. Design never writes production code
+directly; "Implement Design" asks the agent to inspect the repository and propose a plan first.
 
 Mission task execution is sequential by design. Task dependencies are validated and topologically
 ordered, and one builder loop runs at a time inside the mission worktree.

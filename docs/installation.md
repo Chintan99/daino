@@ -47,6 +47,29 @@ Running `daino init` in a greenfield directory also initializes Git and creates 
 commit. Existing repositories and their history are left intact. This gives direct edits an
 immediate pre-change checkpoint and gives worktree missions a valid starting revision.
 
+The deprecated `vasuki` command still works as an alias and prints a one-time notice; use `daino`.
+
+## Browser IDE (optional)
+
+`daino .` opens the terminal UI. To open the local browser IDE instead:
+
+```bash
+daino . --gui            # http://127.0.0.1:4173
+daino . --gui --port 5000
+```
+
+The GUI server needs no extra dependencies, but its React frontend must be built once with a Node
+toolchain (Node 18+). From the source checkout:
+
+```bash
+cd daino/gui
+npm install
+npm run build            # emits daino/gui/dist, served by the API at /
+```
+
+Until `daino/gui/dist` exists, `--gui` still runs and the full API is available (see `/docs`); the
+root path returns a short "build the GUI" notice. See the [browser IDE guide](gui.md).
+
 ## Upgrade
 
 Pull or download the newer Daino source and run the installer again:

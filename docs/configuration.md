@@ -52,3 +52,25 @@ Provider configuration fields reject literal values. Configure `env://`, `keyrin
 key: it checks the key before saving and stores a valid key in the private `.daino/secrets`
 directory while persisting only its reference. PostgreSQL is enabled by setting `database.url` or
 `DATABASE_URL` to a SQLAlchemy PostgreSQL URL and installing the desired database driver.
+
+## Browser IDE
+
+`daino . --gui` starts the local browser IDE. It binds `127.0.0.1` by default (never `0.0.0.0`) on
+port `4173`; override with `--host` / `--port` (port `0` picks a free port), and `--no-browser`
+suppresses auto-opening a browser. Remote access requires deliberate configuration. See the
+[browser IDE guide](gui.md).
+
+## Migrating from Vasuki
+
+Daino was renamed from Vasuki. Configuration and state are resolved **read-legacy / write-new**, and
+legacy data is never moved or deleted:
+
+- Project state uses `.daino/`, but a checkout that already has `.vasuki/` keeps using it in place
+  (its `config.yaml`, database, and sessions stay together).
+- Global config/memory prefer `~/.config/daino` and `~/.daino`, falling back to `~/.config/vasuki`
+  and `~/.vasuki` when only those exist.
+- Environment variables `DAINO_CONFIG_HOME`, `DAINO_HOME`, and `DAINO_RUNTIME` are read first, with
+  the `VASUKI_*` equivalents still honoured.
+- Instruction files: `DAINO.md` is discovered first; a legacy `VASUKI.md` is still read where no
+  `DAINO.md` exists at the same level.
+- The default database is `.daino/daino.db`; an existing `.vasuki/vasuki.db` is opened in place.
