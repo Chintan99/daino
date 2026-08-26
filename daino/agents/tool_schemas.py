@@ -169,9 +169,11 @@ AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     ),
     _tool(
         "todo",
-        "Record your plan for work that takes several steps, and update it as you "
-        "go. Send the whole list each time, with exactly one item in_progress. "
-        "Skip this for a request that is a single edit.",
+        "Record your plan for work that takes several steps, and update it as you go. "
+        "Call this again after finishing each step: resend the whole list with that step "
+        "marked completed and the next one in_progress (exactly one in_progress at a time). "
+        "Keeping statuses current is how the user sees progress. Skip this only for a "
+        "request that is a single edit.",
         {
             "todos": {
                 "type": "array",

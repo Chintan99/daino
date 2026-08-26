@@ -37,7 +37,7 @@ from daino.events import (
     TestsStarted as VerificationStartedEvent,
 )
 from daino.persistence.models import ModelCall, ToolCall
-from daino.schemas import InteractionMode, QAReport
+from daino.schemas import InteractionMode, QAReport, TodoItem
 from daino.tui.app import DainoApp
 from daino.tui.keybindings import SLASH_COMMANDS
 from daino.tui.screens.onboarding import OnboardingScreen
@@ -110,6 +110,72 @@ async def test_tui_launches_existing_project_and_navigation_works(tmp_path: Path
         ]
         scroll = app_instance.screen.query_one("#qa-scroll", VerticalScroll)
         assert scroll.max_scroll_y > 0
+
+
+@pytest.mark.asyncio
+async def test_completing_a_task_shows_a_readable_line_in_the_conversation(
+    tmp_path: Path,
+) -> None:
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+
+        # A task transitioning to completed must surface a readable, ticked line,
+        # not only bump the side-panel counter.
+        workspace.missions.set_session_todos(
+            workspace.session_id,
+            [
+                TodoItem(content="Find book cover URLs", status="completed"),
+                TodoItem(content="Rewrite index.html", status="in_progress"),
+            ],
+        )
+        await pilot.pause()
+        await pilot.pause()
+
+        painted = painted_text(app_instance)
+        assert "Find book cover URLs" in painted
+        assert "✓" in painted
+
+
+@pytest.mark.asyncio
+async def test_successful_turn_clears_a_previous_failure_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from daino.schemas import ChatOutcome
+
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+
+        # A prior turn left the header/mission strip showing a failure.
+        workspace.active_status = "Failed"
+        workspace._chat_previous_status = None
+        workspace.query_one("#context-strip").set_mission("mission-old", "Failed")
+
+        async def fake_chat(instruction, session_id, *, profile_override="", approve=None):
+            return ChatOutcome(
+                mission_id="mission-new",
+                summary="done",
+                changed=["index.html"],
+                steps=3,
+                verified=True,
+            )
+
+        monkeypatch.setattr(workspace.missions, "chat", fake_chat)
+        workspace.run_chat_agent("redesign the page")
+        await app_instance.workers.wait_for_complete()
+        await pilot.pause()
+
+        # A successful turn returns the header to Ready (never lingering "Failed"),
+        # and the mission strip reflects the new completed mission, not the old one.
+        assert workspace.active_status == "Ready"
+        painted = painted_text(app_instance)
+        assert "mission-new completed" in painted
+        assert "mission-old failed" not in painted
 
 
 @pytest.mark.asyncio

@@ -58,8 +58,9 @@ daino . --gui            # http://127.0.0.1:4173
 daino . --gui --port 5000
 ```
 
-The GUI server needs no extra dependencies, but its React frontend must be built once with a Node
-toolchain (Node 18+). From the source checkout:
+The first `daino . --gui` builds the React frontend automatically when Node.js 18+ is installed (a
+one-time step; later launches are instant). If Node isn't present, `--gui` still starts the API and
+the page at `/` explains how to build it manually:
 
 ```bash
 cd daino/gui
@@ -67,8 +68,7 @@ npm install
 npm run build            # emits daino/gui/dist, served by the API at /
 ```
 
-Until `daino/gui/dist` exists, `--gui` still runs and the full API is available (see `/docs`); the
-root path returns a short "build the GUI" notice. See the [browser IDE guide](gui.md).
+See the [browser IDE guide](gui.md).
 
 ## Upgrade
 

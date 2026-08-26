@@ -83,6 +83,38 @@ async def test_search_asks_for_network_and_extracts_results(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_posts_a_form_query_with_a_browser_user_agent() -> None:
+    """DuckDuckGo returns an empty challenge page to bare GETs / bot UAs.
+
+    The tool must POST the query as form data with a browser-like User-Agent, or
+    live searches silently come back with no results.
+    """
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["user_agent"] = request.headers.get("user-agent", "")
+        seen["body"] = request.content.decode()
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text='<a class="result__a" href="https://example.com/hit">Hit</a>',
+        )
+
+    web = WebResearchTool(
+        require_approval=False,
+        transport=httpx.MockTransport(handler),
+        resolver=public_dns,
+    )
+    result = await web.search("book cover images")
+
+    assert result.success
+    assert seen["method"] == "POST"
+    assert "Mozilla" in str(seen["user_agent"])
+    assert "q=book" in str(seen["body"])
+
+
+@pytest.mark.asyncio
 async def test_session_approval_covers_search_and_followup_fetch() -> None:
     asked: list[str] = []
 

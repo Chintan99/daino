@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from daino import __version__
@@ -62,16 +62,30 @@ def _mount_frontend(app: FastAPI) -> None:
     """
     index = _DIST_DIR / "index.html"
     if not index.is_file():
+        gui_dir = _DIST_DIR.parent
 
-        @app.get("/")
-        def _no_frontend() -> JSONResponse:
-            return JSONResponse(
-                {
-                    "message": "Daino API is running. Build the GUI with `npm run build` "
-                    "in daino/gui, or run the Vite dev server for development.",
-                    "docs": "/docs",
-                }
-            )
+        @app.get("/", response_class=HTMLResponse)
+        def _no_frontend() -> str:
+            return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>Daino — build the browser IDE</title>
+<style>
+  body{{background:#0e1116;color:#e6edf3;font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;
+       margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}}
+  .card{{max-width:640px;padding:2.5rem}}
+  h1{{font-size:1.5rem;margin:0 0 .25rem}} .dino{{color:#3fb950}}
+  code,pre{{background:#161b22;border:1px solid #30363d;border-radius:6px}}
+  pre{{padding:1rem;overflow:auto}} code{{padding:.15rem .4rem}}
+  a{{color:#58a6ff}} .muted{{color:#8b949e}}
+</style></head><body><div class="card">
+  <h1><span class="dino">◆</span> Daino API is running</h1>
+  <p class="muted">The browser IDE hasn't been built yet. It builds automatically on
+  <code>daino . --gui</code> when Node.js is installed — install Node 18+ and relaunch, or build it
+  manually:</p>
+  <pre>cd {gui_dir}
+npm install
+npm run build</pre>
+  <p class="muted">Then reload this page. API docs are at <a href="/docs">/docs</a>.</p>
+</div></body></html>"""
 
         return
 

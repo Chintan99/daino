@@ -91,7 +91,14 @@ Preview keeps the same session.
 
 ## Building the frontend
 
-The React frontend lives in `daino/gui`. Build it once so `--gui` can serve it:
+The browser IDE is a compiled React app (in `daino/gui`). **You don't normally
+build it by hand:** the first time you run `daino . --gui`, Daino builds the
+bundle automatically when Node.js (`npm`) is available — a one-time step that
+takes a minute; subsequent launches are instant. Node.js 18+ is the only extra
+prerequisite for the GUI.
+
+If Node isn't installed, `--gui` still starts the API and shows a page at `/`
+explaining how to build it manually:
 
 ```bash
 cd daino/gui
@@ -106,6 +113,3 @@ cd daino/gui
 npm run dev        # http://127.0.0.1:5173, proxying the backend on 4173
 ```
 
-If `daino/gui/dist` is absent, the server still runs and the API is fully usable
-(see `/docs`); it just returns a short notice at `/` until the frontend is built.
-```

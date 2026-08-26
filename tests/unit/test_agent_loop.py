@@ -680,8 +680,50 @@ async def test_the_step_budget_ends_a_looping_agent(tmp_path: Path) -> None:
 
     assert outcome.steps == 3
     assert not outcome.completed
+    assert outcome.stop_reason == "step_budget"
     assert "Step budget exhausted" in outcome.implementation.summary
     assert len(never_finishes) == 7
+
+
+def test_incomplete_message_distinguishes_step_budget_from_stall() -> None:
+    from daino.agents import describe_incomplete_outcome
+    from daino.agents.loop import BuilderOutcome
+    from daino.schemas import Implementation
+
+    step_budget = BuilderOutcome(
+        implementation=Implementation(
+            summary="Step budget exhausted before the agent emitted finish.",
+            modifications=[],
+            verification_commands=[],
+        ),
+        changed=[],
+        steps=4,
+        completed=False,
+        stop_reason="step_budget",
+    )
+    message = describe_incomplete_outcome(step_budget, role_label="coding")
+    assert "step limit" in message
+    assert "max_agent_steps" in message
+
+    stall = BuilderOutcome(
+        implementation=Implementation(
+            summary="Stopped after 5 actions that changed nothing, even after escalation.",
+            modifications=[],
+            verification_commands=[],
+        ),
+        changed=[],
+        steps=4,
+        completed=False,
+        escalated=True,
+        stop_reason="stall",
+    )
+    # A stall must NOT be reported as a step limit, and must not suggest max_agent_steps.
+    pinned_message = describe_incomplete_outcome(stall, role_label="coding", pinned=True)
+    assert "max_agent_steps" not in pinned_message
+    assert "changed nothing" in pinned_message
+    assert "pinned" in pinned_message
+    # When not pinned, the pinning hint is omitted.
+    assert "pinned" not in describe_incomplete_outcome(stall, pinned=False)
 
 
 @pytest.mark.asyncio

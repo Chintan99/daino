@@ -27,6 +27,7 @@ LABELS = {
     "summary": "summary",
     "diff": "edit",
     "status": "",
+    "task": "",
 }
 
 # The high-frequency transcript rows use the same tiny glyph language as the
@@ -36,6 +37,7 @@ INLINE_PREFIXES = {
     "user": ("› ", f"bold {palette.PROMPT_ACCENT}"),
     "tool": ("… ", palette.FAINT),
     "status": ("… ", palette.FAINT),
+    "task": ("✓ ", f"bold {palette.READY}"),
 }
 
 #: Diff bodies are painted per line rather than as one block, so an added line
@@ -78,6 +80,7 @@ LABEL_STYLES = {
     "deployment": f"bold {palette.DEPLOY}",
     "error": f"bold {palette.ALERT}",
     "status": palette.FAINT,
+    "task": f"bold {palette.READY}",
 }
 
 BODY_STYLES = {
@@ -85,6 +88,7 @@ BODY_STYLES = {
     "agent": palette.BRIGHT,
     "tool": palette.FAINT,
     "status": palette.FAINT,
+    "task": palette.BRIGHT,
     "error": palette.ALERT,
 }
 

@@ -87,6 +87,37 @@ class BuilderOutcome:
     #: configured fallback. Explicitly pinned sessions intentionally stay pinned.
     escalated: bool = False
     escalation_reason: str = ""
+    #: Why an incomplete run stopped, so callers report the real cause instead of
+    #: guessing. "" when completed; "step_budget" when a finite ``max_agent_steps``
+    #: ceiling was hit; "stall" when repeated failed/redundant actions gave up.
+    stop_reason: str = ""
+
+
+def describe_incomplete_outcome(
+    outcome: BuilderOutcome, *, role_label: str = "coding", pinned: bool = False
+) -> str:
+    """Build an accurate failure message for a run that did not finish.
+
+    Distinguishes a genuine ``max_agent_steps`` ceiling (where raising the limit
+    helps) from a repeated-failure stall (where it does not — the model is stuck,
+    and a pinned session blocked escalation to a stronger one).
+    """
+    if outcome.stop_reason == "step_budget":
+        return (
+            f"The {role_label} agent reached its {outcome.steps}-step limit before it could "
+            "finish. Partial file changes were preserved but were not reported as complete. "
+            "Increase or clear this profile's max_agent_steps for genuinely long tasks."
+        )
+    summary = outcome.implementation.summary or (
+        "The agent made repeated actions that changed nothing and stopped before finishing."
+    )
+    message = f"The {role_label} agent stopped before finishing: {summary}"
+    if outcome.escalated and pinned:
+        message += (
+            " Escalation to a stronger model was skipped because this session is pinned to one "
+            "model — unpin (Ctrl+M) or route the builder to a more capable model, then retry."
+        )
+    return message
 
 
 class ToolLoop:
@@ -233,6 +264,7 @@ class ToolLoop:
                     completed=False,
                     escalated=self._escalated,
                     escalation_reason=self._escalation_reason,
+                    stop_reason="stall",
                 )
             if stalled:
                 self._escalated = True
@@ -282,6 +314,7 @@ class ToolLoop:
             completed=False,
             escalated=self._escalated,
             escalation_reason=self._escalation_reason,
+            stop_reason="step_budget",
         )
 
     def _native_tools_available(self, routing_context: RoutingContext) -> bool:

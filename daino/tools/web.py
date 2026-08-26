@@ -36,6 +36,13 @@ _TEXT_CONTENT_TYPES = (
 )
 _BLOCKED_HOSTNAMES = frozenset({"localhost", "localhost.localdomain"})
 _USER_AGENT = "Daino/0.4 (+local coding-agent web research)"
+#: DuckDuckGo's HTML/Lite endpoints return an empty challenge page to obvious bot
+#: User-Agents. A browser-like UA (used only for the search request) is what makes
+#: those endpoints actually return result links.
+_SEARCH_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 Resolver = Callable[[str], Awaitable[list[str]]]
 
@@ -275,10 +282,27 @@ class WebResearchTool:
         if denied:
             return ToolResult(tool="web_search", success=False, error=denied)
         count = min(max(max_results or DEFAULT_RESULTS, 1), MAX_RESULTS)
-        last_error = "Search returned no results."
+        last_error = (
+            "Web search returned no results — the search backend may be rate-limiting or "
+            "blocking automated queries. If you already know a source URL, use fetch_url on it "
+            "directly instead of searching."
+        )
         for endpoint in _SEARCH_ENDPOINTS:
             try:
-                _, body, _ = await self._get(endpoint, params={"q": query})
+                # DuckDuckGo's HTML/Lite endpoints expect a POSTed form query from a
+                # browser-like client; a bare GET returns an empty challenge page. The
+                # query is also kept in the URL so mocked transports and logs see it.
+                _, body, _ = await self._get(
+                    endpoint,
+                    params={"q": query},
+                    method="POST",
+                    data={"q": query, "kl": "wt-wt"},
+                    extra_headers={
+                        "User-Agent": _SEARCH_USER_AGENT,
+                        "Referer": endpoint,
+                        "Accept-Language": "en-US,en;q=0.9",
+                    },
+                )
                 parser = _SearchHTML()
                 parser.feed(body)
                 results = _deduplicate(parser.results)[:count]
@@ -338,23 +362,32 @@ class WebResearchTool:
         url: str,
         *,
         params: dict[str, str] | None = None,
+        method: str = "GET",
+        data: dict[str, str] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> tuple[str, str, str]:
         current = str(httpx.URL(url, params=params))
+        headers = {"User-Agent": _USER_AGENT, "Accept": "text/html,text/plain,application/json"}
+        if extra_headers:
+            headers.update(extra_headers)
         async with httpx.AsyncClient(
             transport=self.transport,
             follow_redirects=False,
             timeout=REQUEST_TIMEOUT_SECONDS,
             trust_env=False,
-            headers={"User-Agent": _USER_AGENT, "Accept": "text/html,text/plain,application/json"},
+            headers=headers,
         ) as client:
+            hop_method, hop_data = method.upper(), data
             for _ in range(MAX_REDIRECTS + 1):
                 await _validated_url(current, self.resolver)
-                async with client.stream("GET", current) as response:
+                async with client.stream(hop_method, current, data=hop_data) as response:
                     if response.is_redirect:
                         location = response.headers.get("location")
                         if not location:
                             raise ValueError("Redirect response had no destination")
                         current = urljoin(current, location)
+                        # Follow redirects as a bodyless GET, per normal HTTP behaviour.
+                        hop_method, hop_data = "GET", None
                         continue
                     response.raise_for_status()
                     content_type = response.headers.get("content-type", "").casefold()

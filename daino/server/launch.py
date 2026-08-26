@@ -2,11 +2,54 @@
 
 from __future__ import annotations
 
+import shutil
 import socket
+import subprocess
 import threading
 import time
 import webbrowser
 from pathlib import Path
+
+
+def _ensure_frontend_built() -> bool:
+    """Build the React GUI on first launch so ``--gui`` shows the IDE, not JSON.
+
+    The browser IDE is a compiled React app; its ``dist`` bundle must be built
+    once with Node. If it is missing we build it automatically when ``npm`` is
+    available (a one-time step), and otherwise fall back to the API-only page
+    with a clear instruction rather than failing.
+    """
+    from daino.server.app import _DIST_DIR
+
+    gui_dir = _DIST_DIR.parent
+    index = _DIST_DIR / "index.html"
+    if index.is_file():
+        return True
+    if not (gui_dir / "package.json").is_file():
+        return False
+
+    npm = shutil.which("npm")
+    if npm is None:
+        print(
+            "\n  The browser IDE needs a one-time build, but `npm` (Node.js) was not found.\n"
+            "  Install Node.js 18+ from https://nodejs.org, then run:\n"
+            f"    cd {gui_dir} && npm install && npm run build\n"
+            "  Serving the API-only page until then.\n"
+        )
+        return False
+
+    print("\n  Building the Daino GUI (one-time; this can take a minute)…\n")
+    try:
+        if not (gui_dir / "node_modules").is_dir():
+            subprocess.run([npm, "install"], cwd=str(gui_dir), check=True)  # noqa: S603
+        subprocess.run([npm, "run", "build"], cwd=str(gui_dir), check=True)  # noqa: S603
+    except (OSError, subprocess.CalledProcessError) as exc:
+        print(
+            f"\n  The GUI build did not complete ({exc}). Serving the API-only page.\n"
+            f"  You can build it manually: cd {gui_dir} && npm install && npm run build\n"
+        )
+        return False
+    return index.is_file()
 
 
 def _resolve_port(host: str, port: int) -> int:
@@ -56,6 +99,10 @@ def run_gui(
     if not config_path(root).exists():
         # First GUI launch in a fresh directory: set it up like ``daino init``.
         initialize_project(root)
+
+    # Build the React bundle on first run so the browser shows the IDE directly.
+    _ensure_frontend_built()
+
     context = open_project(root)
 
     resolved_port = _resolve_port(host, port)

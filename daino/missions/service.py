@@ -7,7 +7,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from daino.agents import ModelGateway, ReviewerAgent, ToolLoop
+from daino.agents import ModelGateway, ReviewerAgent, ToolLoop, describe_incomplete_outcome
 from daino.agents.tool_schemas import AGENT_TOOL_SPECS
 from daino.config.models import Settings
 from daino.context import ContextBuilder, ContextCompiler
@@ -946,9 +946,11 @@ class MissionService:
         ).run(workspace.mission_id, context, on_action=observe)
         if not outcome.completed:
             raise RuntimeError(
-                f"The {role.value} agent reached its {outcome.steps}-step safety limit before "
-                "it could finish. Partial file changes were preserved but were not reported "
-                "as complete."
+                describe_incomplete_outcome(
+                    outcome,
+                    role_label=role.value,
+                    pinned=bool(getattr(gateway, "profile_override", "")),
+                )
             )
         return outcome.implementation, outcome.changed
 

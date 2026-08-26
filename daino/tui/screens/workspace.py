@@ -446,9 +446,26 @@ class WorkspaceScreen(Screen[None]):
                 context.add_activity(f"{now}  Completed {event.title[:22]}")
         elif isinstance(event, TodoUpdated):
             if event.session_id == self.session_id:
-                self.query_one("#task-checklist", TaskChecklist).set_todos(
-                    [TodoItem.model_validate(item) for item in event.todos]
-                )
+                checklist = self.query_one("#task-checklist", TaskChecklist)
+                previous = {todo.content: todo.status for todo in checklist.todos}
+                incoming = [TodoItem.model_validate(item) for item in event.todos]
+                checklist.set_todos(incoming)
+                # Surface each task's completion as a readable line the user can
+                # follow, not just a silent tick in the side panel.
+                for todo in incoming:
+                    was = previous.get(todo.content)
+                    if todo.status == "completed" and was != "completed":
+                        await conversation.add_message(
+                            todo.content,
+                            kind="task",
+                            metadata=event.payload(),
+                        )
+                    elif todo.status == "failed" and was != "failed":
+                        await conversation.add_message(
+                            f"Task failed: {todo.content}",
+                            kind="error",
+                            metadata=event.payload(),
+                        )
         elif isinstance(event, ToolStarted):
             # A tool invocation means the preceding model call has ended.
             await conversation.clear_reasoning()
@@ -1254,7 +1271,10 @@ class WorkspaceScreen(Screen[None]):
         conversation = self.query_one("#chat-view", ConversationView)
         self.action_open_view("chat-view")
         previous_status = self._chat_previous_status or self.active_status
-        turn_status = previous_status
+        # A turn defaults to Ready when it ends; only a failure, block, or cancel
+        # overrides that. Inheriting ``previous_status`` here is what let an earlier
+        # failed turn keep the header red after a later turn succeeded.
+        turn_status = "Ready"
         self._chat_running = True
         self.active_status = "Working"
         self._set_activity("thinking", "understanding request")
@@ -1283,12 +1303,24 @@ class WorkspaceScreen(Screen[None]):
                 self.notify(f"{len(outcome.changed)} file(s) changed")
             if outcome.verified is False:
                 turn_status = "Failed"
+                mission_status = "Failed"
                 self._set_activity("failed", "verification failed")
             elif outcome.verified is None and outcome.changed:
                 turn_status = "Blocked"
+                mission_status = "Blocked"
                 self._set_activity("completed", "changes need verification")
             else:
+                # Header returns to Ready; the mission itself reads as Completed.
+                turn_status = "Ready"
+                mission_status = "Completed"
                 self._set_activity("completed", "request complete")
+            # A chat turn emits no MissionCompleted event, so refresh the mission
+            # strip here — otherwise a prior failed turn's status lingers after a
+            # later turn succeeds.
+            if outcome.mission_id and outcome.changed:
+                self.query_one("#context-strip", ContextStrip).set_mission(
+                    outcome.mission_id, mission_status
+                )
         except asyncio.CancelledError:
             turn_status = "Cancelled"
             self._set_activity("idle")
@@ -1915,7 +1947,7 @@ class WorkspaceScreen(Screen[None]):
             actions.extend(["Start Docker", "Switch to /runtime local if policy permits"])
         if "git" in lower or "worktree" in lower:
             actions.extend(["Inspect Git status", "Resolve workspace conflicts and retry"])
-        if "step safety limit" in lower:
+        if "step limit" in lower:
             actions.extend(
                 [
                     "Inspect the partial changes before retrying",
@@ -1923,6 +1955,11 @@ class WorkspaceScreen(Screen[None]):
                     "Increase or clear the profile's max_agent_steps for genuinely long tasks",
                 ]
             )
+        elif "stopped before finishing" in lower or "changed nothing" in lower:
+            actions.append("Inspect the partial changes before retrying")
+            if "pinned" in lower:
+                actions.append("Unpin the model (Ctrl+M) or route the builder to a stronger model")
+            actions.append("Narrow the request, or say what to try instead, then retry")
         if not actions:
             actions.extend(["Open /logs for details", "Retry after correcting the cause"])
         return text + "\n\nPossible actions:\n- " + "\n- ".join(actions)

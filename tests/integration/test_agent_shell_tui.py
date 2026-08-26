@@ -328,6 +328,9 @@ async def test_session_mode_researches_the_web_and_shows_sources(
         url: str,
         *,
         params: dict[str, str] | None = None,
+        method: str = "GET",
+        data: dict[str, str] | None = None,
+        extra_headers: dict[str, str] | None = None,
     ) -> tuple[str, str, str]:
         return (
             url,

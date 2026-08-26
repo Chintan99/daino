@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import select
 
 from daino.agents import ReviewerAgent, TeamLead, TeamRunner, validate_team_plan
-from daino.agents.loop import ToolLoop
+from daino.agents.loop import ToolLoop, describe_incomplete_outcome
 from daino.agents.tool_schemas import AGENT_TOOL_SPECS, CHAT_TOOL_SPECS
 from daino.application.context import ProjectContext
 from daino.application.view_models import ConversationItem, MissionSummary
@@ -893,9 +893,9 @@ class MissionApplicationService:
             )
             if not result.completed:
                 raise RuntimeError(
-                    f"The coding agent reached its {result.steps}-step safety limit before it "
-                    "could finish. Partial file changes were preserved but were not reported "
-                    "as complete."
+                    describe_incomplete_outcome(
+                        result, role_label="coding", pinned=bool(profile_override)
+                    )
                 )
         except Exception as exc:
             self.core._update_mission(
@@ -907,6 +907,20 @@ class MissionApplicationService:
             if runtime is not None:
                 # A container started for this turn must not outlive it.
                 await runtime.cleanup()
+
+        # A verified finish means the planned work is done, but weaker models
+        # routinely forget to re-emit the todo list with completed statuses,
+        # leaving the checklist stuck at 0/N. When the agent actually changed the
+        # tree and finished, reflect the real outcome so completion is visible and
+        # each newly-ticked task surfaces a task-complete line in the UI.
+        if result.changed:
+            pending = self.session_todos(session_id)
+            if pending and any(todo.status != "completed" for todo in pending):
+                self.set_session_todos(
+                    session_id,
+                    [todo.model_copy(update={"status": "completed"}) for todo in pending],
+                    mission_id=mission.id,
+                )
 
         outcome = ChatOutcome(
             mission_id=mission.id,

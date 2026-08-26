@@ -1,5 +1,5 @@
 from daino.agents.gateway import ModelGateway
-from daino.agents.loop import BuilderOutcome, ToolLoop
+from daino.agents.loop import BuilderOutcome, ToolLoop, describe_incomplete_outcome
 from daino.agents.specialists import ReviewerAgent, failure_to_context
 from daino.agents.team import (
     MAX_TEAM_MEMBERS,
@@ -18,6 +18,7 @@ __all__ = [
     "TeamPlanError",
     "TeamRunner",
     "ToolLoop",
+    "describe_incomplete_outcome",
     "failure_to_context",
     "validate_team_plan",
 ]
