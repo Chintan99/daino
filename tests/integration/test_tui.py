@@ -1554,3 +1554,86 @@ async def test_a_new_directory_still_asks_when_nothing_is_configured(
     async with app_instance.run_test(size=(110, 36)) as pilot:
         await pilot.pause()
         assert isinstance(app_instance.screen, OnboardingScreen)
+
+
+@pytest.mark.asyncio
+async def test_the_terminal_client_inhibits_sleep_and_notifies_on_the_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A turn nobody is watching must keep running, and then say how it went.
+
+    Driven through `_set_activity`, which every one of the five turn workers
+    already calls — so this covers chat, plan, ask, team, and QA at once.
+    """
+    monkeypatch.setenv("DAINO_NOTIFY", "on")
+    monkeypatch.setenv("DAINO_WAKELOCK", "on")
+    # No real caffeinate and no real desktop notification, without touching the
+    # shared `platform` module (which would silence the notifier as well).
+    monkeypatch.setattr("daino.keepawake.shutil.which", lambda _: None)
+    announced: list[tuple[str, str]] = []
+
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        attention = workspace.missions.attention
+        monkeypatch.setattr(
+            attention.notifications,
+            "send",
+            lambda kind, title, body: announced.append((str(kind), body)),
+        )
+
+        workspace.verbose = True
+        workspace._set_activity("building", "writing app.py")
+        assert attention.keep_awake.active is True, "the host may sleep mid-turn"
+        assert announced == [], "work in progress is not worth interrupting for"
+
+        workspace._set_activity("completed", "all work verified")
+        assert attention.keep_awake.active is False
+        assert announced == [("completed", "all work verified")]
+
+        # A failure after new work started notifies too, and only once.
+        workspace._set_activity("verifying", "running checks")
+        assert attention.keep_awake.active is True
+        workspace._set_activity("failed", "tests failed")
+        workspace._set_activity("idle")
+        assert attention.keep_awake.active is False
+        assert announced[-1] == ("failed", "tests failed")
+        assert len(announced) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_side_panel_lists_files_as_they_are_edited(tmp_path: Path) -> None:
+    """"Which files has it touched so far?" must be answerable mid-turn.
+
+    Otherwise the only record of the edits is the diff cards scrolling past in
+    the transcript, and the answer is what a user checks before letting a long
+    turn continue.
+    """
+    from daino.tui.widgets.checklist import TaskChecklist
+
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        checklist = workspace.query_one("#task-checklist", TaskChecklist)
+
+        checklist.record_change("docs/index.html", 22, 37)
+        checklist.record_change("README.md", 15, 15)
+        # The same file edited twice is one row, summed.
+        checklist.record_change("docs/index.html", 3, 1)
+        await pilot.pause()
+
+        assert checklist.changes == {"docs/index.html": (25, 38), "README.md": (15, 15)}
+        painted = painted_text(app_instance)
+        assert "EDITED" in painted
+        assert "index.html" in painted
+        assert "+40" in painted and "-53" in painted
+
+        # A new turn starts from an empty list.
+        checklist.clear_changes()
+        await pilot.pause()
+        assert checklist.changes == {}
+        assert "EDITED" not in painted_text(app_instance)

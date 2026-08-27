@@ -20,16 +20,24 @@ router = APIRouter(prefix="/api", tags=["agent"])
 
 
 class CreateSessionRequest(BaseModel):
-    title: str = "New session"
+    #: Empty means unnamed: the service's placeholder applies and the first
+    #: request the session receives renames it.
+    title: str = ""
 
 
 class ContextFileRequest(BaseModel):
     path: str
 
 
+class SessionModelRequest(BaseModel):
+    #: Empty means "auto": follow the saved routing, and allow escalation.
+    profile: str = ""
+
+
 @router.get("/sessions")
 def list_sessions(state: Annotated[GuiState, Depends(get_state)]) -> dict:
     sessions = state.missions.recent_sessions(limit=50)
+    counts = state.missions.session_message_counts()
     return {
         "sessions": [
             {
@@ -38,6 +46,9 @@ def list_sessions(state: Annotated[GuiState, Depends(get_state)]) -> dict:
                 "active_model": item.active_model,
                 "updated_at": item.updated_at.isoformat() if item.updated_at else None,
                 "context_files": list(item.context_files),
+                # Shown in the picker: a long session carries its whole history
+                # into every prompt, which is worth being able to see.
+                "message_count": counts.get(item.id, 0),
             }
             for item in sessions
         ]
@@ -48,8 +59,11 @@ def list_sessions(state: Annotated[GuiState, Depends(get_state)]) -> dict:
 def create_session(
     state: Annotated[GuiState, Depends(get_state)], body: CreateSessionRequest
 ) -> dict:
-    session_id = state.missions.create_session(body.title)
-    return {"id": session_id, "title": body.title}
+    title = body.title.strip()
+    session_id = (
+        state.missions.create_session(title) if title else state.missions.create_session()
+    )
+    return {"id": session_id, "title": title}
 
 
 @router.get("/sessions/latest")
@@ -104,6 +118,30 @@ def toggle_context(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"path": body.path, "attached": attached}
+
+
+@router.post("/sessions/{session_id}/model")
+def select_session_model(
+    state: Annotated[GuiState, Depends(get_state)],
+    session_id: str,
+    body: SessionModelRequest,
+) -> dict:
+    """Pin a model profile to this session, the way the TUI's /model does.
+
+    Sending the profile with each message alone left the session's stored model
+    untouched, so the same conversation reopened in the terminal client showed a
+    different model than the browser had been using.
+    """
+    try:
+        if body.profile.strip():
+            state.providers.select_for_session(session_id, body.profile)
+        else:
+            # Auto: the router picks per role, and a stalled turn may escalate to
+            # a stronger model. A pinned session never can.
+            state.providers.unpin_session(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"session_id": session_id, "profile": body.profile.strip()}
 
 
 @router.get("/workspace")

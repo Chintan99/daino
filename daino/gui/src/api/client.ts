@@ -3,10 +3,12 @@
 // and through the Vite dev proxy in development.
 
 import type {
+  AgentConfig,
   ApprovalEntry,
   AuditLogPage,
   DocsIndex,
   DocsPage,
+  EffectiveInstructions,
   CheckpointEntry,
   Design,
   DesignList,
@@ -19,17 +21,25 @@ import type {
   GitFileDiff,
   GitStatus,
   Health,
+  MemoryItem,
   MissionDetails,
   MissionSummary,
   PreviewCommand,
   PreviewDetect,
+  CatalogModel,
   PreviewStatus,
+  ProjectSettings,
+  ProviderForm,
+  ProviderHealth,
+  ProviderSaveResult,
+  ProviderTestResult,
   QAHistory,
   QALatest,
   RepositoryInfo,
   SearchResult,
   SessionList,
   SessionMessages,
+  SettingsPatch,
   TerminalCreated,
   TerminalList,
   Workspace,
@@ -99,7 +109,8 @@ export const api = {
 
   // Sessions
   listSessions: () => request<SessionList>("GET", "/api/sessions"),
-  createSession: (title: string) =>
+  /** An empty title leaves the session unnamed; its first request names it. */
+  createSession: (title = "") =>
     request<{ id: string; title: string }>("POST", "/api/sessions", { title }),
   latestSession: () => request<{ id: string }>("GET", "/api/sessions/latest"),
   sessionMessages: (id: string) =>
@@ -113,6 +124,12 @@ export const api = {
     request<{ session_id: string; files: string[] }>(
       "GET",
       `/api/sessions/${encodeURIComponent(id)}/context`,
+    ),
+  selectSessionModel: (id: string, profile: string) =>
+    request<{ session_id: string; profile: string }>(
+      "POST",
+      `/api/sessions/${encodeURIComponent(id)}/model`,
+      { profile },
     ),
   attachContext: (id: string, path: string) =>
     request<{ path: string; attached: boolean }>(
@@ -146,6 +163,12 @@ export const api = {
     request<{ path: string; deleted: boolean }>(
       "DELETE",
       `/api/files/delete${qs({ path })}`,
+    ),
+  attachFile: (name: string, contentBase64: string) =>
+    request<{ path: string; name: string; bytes: number }>(
+      "POST",
+      "/api/files/attach",
+      { name, content_base64: contentBase64 },
     ),
   search: (q: string, regex = false, limit = 200) =>
     request<SearchResult>("GET", `/api/files/search${qs({ q, regex, limit })}`),
@@ -292,6 +315,71 @@ export const api = {
     ),
   previewStop: () =>
     request<{ running: boolean }>("POST", "/api/preview/stop", {}),
+
+  // Agent customization: autonomy, effort, instructions, memory, playbooks
+  agentConfig: (sessionId: string) =>
+    request<AgentConfig>("GET", `/api/agent/config${qs({ session_id: sessionId })}`),
+  setAutonomy: (sessionId: string, mode: string) =>
+    request<{ mode: string; hint: string }>("POST", "/api/agent/autonomy", {
+      session_id: sessionId,
+      mode,
+    }),
+  setEffort: (sessionId: string, effort: string) =>
+    request<{ profile: string; effort: string }>("POST", "/api/agent/effort", {
+      session_id: sessionId,
+      effort,
+    }),
+  setVerbose: (sessionId: string, enabled: boolean) =>
+    request<{ verbose: boolean }>("POST", "/api/agent/verbose", {
+      session_id: sessionId,
+      enabled,
+    }),
+  globalInstructions: () =>
+    request<{ path: string; exists: boolean; content: string }>(
+      "GET",
+      "/api/agent/instructions/global",
+    ),
+  saveGlobalInstructions: (content: string) =>
+    request<{ path: string; bytes: number }>("PUT", "/api/agent/instructions/global", {
+      content,
+    }),
+  effectiveInstructions: (path: string) =>
+    request<EffectiveInstructions>(
+      "GET",
+      `/api/agent/instructions/effective${qs({ path })}`,
+    ),
+  listMemory: (params: { q?: string; type?: string; scope?: string; limit?: number }) =>
+    request<{ items: MemoryItem[] }>("GET", `/api/agent/memory${qs({ ...params })}`),
+  remember: (body: { content: string; summary?: string; tags?: string[]; scope?: string }) =>
+    request<{ id: string }>("POST", "/api/agent/memory", body),
+  forgetMemory: (id: string) =>
+    request<{ forgotten: boolean }>("DELETE", `/api/agent/memory/${encodeURIComponent(id)}`),
+  verifyMemory: (id: string) =>
+    request<{ verified: boolean }>(
+      "POST",
+      `/api/agent/memory/${encodeURIComponent(id)}/verify`,
+      {},
+    ),
+  clearMemory: (scope: "session" | "project", sessionId = "") =>
+    request<{ cleared: number }>("POST", "/api/agent/memory/clear", {
+      scope,
+      session_id: sessionId,
+    }),
+
+  // Settings (project/agent configuration)
+  settings: () => request<ProjectSettings>("GET", "/api/settings"),
+  patchSettings: (body: SettingsPatch) =>
+    request<ProjectSettings>("PATCH", "/api/settings", body),
+  reloadSettings: () =>
+    request<ProjectSettings>("POST", "/api/settings/reload", {}),
+  providerHealth: () =>
+    request<{ providers: ProviderHealth[] }>("GET", "/api/settings/providers/health"),
+  saveProvider: (body: ProviderForm) =>
+    request<ProviderSaveResult>("POST", "/api/settings/providers", body),
+  testProvider: (body: ProviderForm) =>
+    request<ProviderTestResult>("POST", "/api/settings/providers/test", body),
+  providerCatalog: (body: ProviderForm) =>
+    request<{ models: CatalogModel[] }>("POST", "/api/settings/providers/catalog", body),
 
   // Terminals
   createTerminal: () => request<TerminalCreated>("POST", "/api/terminals", {}),

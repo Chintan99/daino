@@ -42,6 +42,52 @@ daino providers add local-vllm \
 Both types are marked local automatically, so data-sensitivity routing keeps restricted work on
 the machine. Ollama needs no API key; vLLM accepts an empty one.
 
+## Concurrent requests to one model server
+
+D[Ai]NO fans out model calls in two places: a QA scan runs its specialists in
+parallel, and `/team` runs sub-agents in parallel. Against a hosted API that is
+free speed. Against a local runtime it is not: Ollama and vLLM hold one copy of
+one model, so the requests queue inside the server — and the client's timeout is
+running the whole time each one waits, which is how a fan-out that would have
+finished serially instead times out.
+
+`max_concurrent_requests` bounds the in-flight generation requests per **model
+server** (keyed by base URL, so two profiles on the same Ollama share its queue
+while two Ollamas on different hosts do not block each other):
+
+```yaml
+providers:
+  local-ollama:
+    type: ollama
+    base_url: http://127.0.0.1:11434/v1
+    model: qwen3.5:9b
+    max_concurrent_requests: 1   # the default for ollama and vllm
+  openrouter:
+    type: openrouter
+    base_url: https://openrouter.ai/api/v1
+    model: anthropic/claude-sonnet-4
+    max_concurrent_requests: 0   # the default for hosted APIs: no limit
+```
+
+**What this does and does not buy you.** Measured on an M-series Mac against a
+warm `qwen3.8:27b-mlx` — three concurrent 220-token generations with a ~2 KB
+prompt — serialising made no difference to throughput at all:
+
+| | wall clock | slowest request |
+| --- | --- | --- |
+| unlimited | 15.5s, 15.9s | 15.5s, 15.9s |
+| serialised | 15.8s, 15.4s | 15.8s, 15.4s |
+
+Ollama was already serialising internally, so the gate only moves the queue from
+its side to D[Ai]NO's. That is still worth doing — a request waiting for a slot
+has not started its timeout, and nothing thrashes the model server's memory when
+`OLLAMA_NUM_PARALLEL` is raised — but it is a robustness measure, **not** a
+speed-up. If a local server is genuinely faster with overlap on your hardware,
+set `max_concurrent_requests: 0` and it will be left alone.
+
+Metadata calls — listing models, health checks, key validation — are never
+gated, so the provider form keeps answering while a generation is in flight.
+
 ## Structured output
 
 Structured responses use JSON Schema, validate with Pydantic, attempt bounded repair, and fail

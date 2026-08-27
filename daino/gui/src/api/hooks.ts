@@ -36,6 +36,10 @@ export const qk = {
   previewDetect: ["preview", "detect"] as const,
   previewStatus: ["preview", "status"] as const,
   terminals: ["terminals"] as const,
+  settings: ["settings"] as const,
+  agentConfig: (sessionId: string) => ["agent", "config", sessionId] as const,
+  memory: (key: string) => ["agent", "memory", key] as const,
+  providerHealth: ["settings", "providers", "health"] as const,
 };
 
 export function useWorkspace() {
@@ -177,7 +181,46 @@ export function useTerminals() {
   return useQuery({ queryKey: qk.terminals, queryFn: api.listTerminals });
 }
 
+/** Session autonomy, instructions, memory counts, playbooks — one request. */
+export function useAgentConfig(sessionId: string | null) {
+  return useQuery({
+    queryKey: qk.agentConfig(sessionId ?? ""),
+    queryFn: () => api.agentConfig(sessionId ?? ""),
+    enabled: !!sessionId,
+  });
+}
+
+export function useMemory(params: { q?: string; type?: string; scope?: string }) {
+  const key = JSON.stringify(params);
+  return useQuery({
+    queryKey: qk.memory(key),
+    queryFn: () => api.listMemory(params),
+  });
+}
+
+export function useSettings() {
+  return useQuery({ queryKey: qk.settings, queryFn: api.settings });
+}
+
 // ---- Mutations ----
+
+/**
+ * Change project/agent configuration.
+ *
+ * The server answers with the whole settings payload, so the cache is seeded
+ * from the response instead of re-fetching what was just written.
+ */
+export function useSettingsMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.patchSettings,
+    onSuccess: (data) => {
+      qc.setQueryData(qk.settings, data);
+      // Routing changes which model answers the next turn.
+      qc.invalidateQueries({ queryKey: qk.workspace });
+    },
+  });
+}
 
 export function useFileMutations() {
   const qc = useQueryClient();

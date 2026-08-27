@@ -1,8 +1,11 @@
-import { useEffect } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useUIStore } from "../store/uiStore";
 import { getTab } from "../tabs/registry";
 import { useSessionSocket } from "../ws/useSessionSocket";
+import { useShortcuts } from "../lib/useShortcuts";
+import { useWakeLock } from "../lib/useWakeLock";
+import { useTabAttention } from "../lib/useTabAttention";
+import { useSettings } from "../api/hooks";
 import { TopBar } from "./TopBar";
 import { StatusBar } from "./StatusBar";
 import { ActivityBar } from "./ActivityBar";
@@ -12,6 +15,7 @@ import { BottomPanel } from "./bottom/BottomPanel";
 import { ExplorerPanel } from "./explorer/ExplorerPanel";
 import { SearchPanel } from "./search/SearchPanel";
 import { SourceControlPanel } from "./scm/SourceControlPanel";
+import { Dialogs } from "./ui/Dialogs";
 
 function ActivitySidebar() {
   const view = useUIStore((s) => s.activityView);
@@ -20,33 +24,17 @@ function ActivitySidebar() {
   return <ExplorerPanel />;
 }
 
-/** Layout shortcuts, kept close to the TUI's: ⌘B sidebar, ⌘J panel, ⌘I agent. */
-function useLayoutShortcuts() {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      const ui = useUIStore.getState();
-      const key = e.key.toLowerCase();
-      if (key === "b") {
-        e.preventDefault();
-        ui.toggleSidebar();
-      } else if (key === "j") {
-        e.preventDefault();
-        ui.setBottomVisible(!ui.bottomVisible);
-      } else if (key === "i") {
-        e.preventDefault();
-        ui.toggleAgent();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-}
-
 export function AppShell() {
   // one shared session websocket for the whole app
-  useSessionSocket("latest");
-  useLayoutShortcuts();
+  // Follows the conversation this tab selected; "latest" on first open.
+  useSessionSocket(useUIStore((s) => s.sessionTarget) ?? "latest");
+  // ⌘B sidebar, ⌘J panel, ⌘I agent, and the rest of the menu's bindings.
+  useShortcuts();
+  // One switch governs both halves of "do not sleep while working": the server
+  // inhibits system sleep, the browser keeps this display awake.
+  const { data: projectSettings } = useSettings();
+  useWakeLock(projectSettings?.keep_awake !== false);
+  useTabAttention();
 
   const activeTabId = useUIStore((s) => s.activeWorkspaceTab);
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
@@ -118,6 +106,8 @@ export function AppShell() {
         {!agentVisible && <AgentRail />}
       </div>
       <StatusBar />
+      {/* Prompts and reference sheets the menu opens. */}
+      <Dialogs />
     </div>
   );
 }

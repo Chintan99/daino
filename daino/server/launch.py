@@ -109,7 +109,8 @@ def run_gui(
 
     resolved_port = _resolve_port(host, port)
     url = f"http://{host}:{resolved_port}"
-    app = create_app(context)
+    # The bind host is the one the Host header must name (anti-rebinding).
+    app = create_app(context, host=host)
 
     print(f"\n  {branding.NAME} GUI → {url}")
     print(f"  Project:  {root}")

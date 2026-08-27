@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from daino import __version__, branding
@@ -16,25 +17,43 @@ from daino.application.context import ProjectContext
 from daino.server import websocket
 from daino.server.routes import (
     agent,
+    customization,
     design,
     docs,
     files,
     git,
     insights,
     preview,
+    settings,
     terminal,
 )
+from daino.server.security import DEV_ORIGINS, OriginPolicy
 from daino.server.state import GuiState
 
 #: Built React assets, when present, are served from here in production.
 _DIST_DIR = Path(__file__).resolve().parent.parent / "gui" / "dist"
 
 
-def create_app(context: ProjectContext) -> FastAPI:
+def create_app(context: ProjectContext, *, host: str = "127.0.0.1") -> FastAPI:
+    """Build the API for one open project.
+
+    ``host`` is the interface the server will be bound to; it is what the
+    :class:`~daino.server.security.OriginPolicy` accepts in a ``Host`` header,
+    so a page reached through a rebound hostname is refused.
+    """
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        yield
-        app.state.gui.shutdown()
+        # Interactive terminals outlive the page that opened them, but not by
+        # much: a sweeper closes the ones no client came back for.
+        reaper = asyncio.create_task(_reap_terminals(app))
+        try:
+            yield
+        finally:
+            reaper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reaper
+            app.state.gui.shutdown()
 
     # /docs belongs to the usage documentation the GUI links to; the generated
     # API reference moves to /api-docs.
@@ -46,20 +65,43 @@ def create_app(context: ProjectContext) -> FastAPI:
         redoc_url="/api-redoc",
     )
     app.state.gui = GuiState.from_context(context)
+    app.state.origins = OriginPolicy.for_host(host)
 
     # Local-only: the Vite dev server (5173) may call the API during development.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://127.0.0.1:5173",
-            "http://localhost:5173",
-        ],
+        allow_origins=sorted(DEV_ORIGINS),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    for module in (agent, files, git, design, preview, terminal, insights, docs):
+    @app.middleware("http")
+    async def enforce_origin(request: Request, call_next):  # type: ignore[no-untyped-def]
+        """Refuse requests from a foreign page or a rebound hostname.
+
+        CORS alone is not enough: it stops a cross-origin page from *reading* a
+        response, not from causing the side effect of a "simple" request.
+        """
+        reason = app.state.origins.rejection(
+            request.headers.get("origin"), request.headers.get("host")
+        )
+        if reason is not None:
+            return JSONResponse(status_code=403, content={"detail": reason})
+        return await call_next(request)
+
+    for module in (
+        agent,
+        files,
+        git,
+        design,
+        preview,
+        terminal,
+        insights,
+        docs,
+        settings,
+        customization,
+    ):
         app.include_router(module.router)
     app.include_router(websocket.router)
 
@@ -69,6 +111,19 @@ def create_app(context: ProjectContext) -> FastAPI:
 
     _mount_frontend(app)
     return app
+
+
+#: How often the terminal sweeper runs, and how long an unattached terminal is
+#: kept. A reload should find its shell again; a closed tab should not leak one.
+_TERMINAL_SWEEP_SECONDS = 60.0
+_TERMINAL_IDLE_SECONDS = 600.0
+
+
+async def _reap_terminals(app: FastAPI) -> None:
+    while True:
+        await asyncio.sleep(_TERMINAL_SWEEP_SECONDS)
+        with contextlib.suppress(Exception):
+            app.state.gui.terminals.prune(idle_seconds=_TERMINAL_IDLE_SECONDS)
 
 
 def _mount_frontend(app: FastAPI) -> None:

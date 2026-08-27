@@ -12,7 +12,19 @@ from daino.security.secrets import resolve_secret
 
 
 def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
-    api_key = resolve_secret(config.api_key) if config.api_key else ""
+    """Build a provider, resolving the configured secret reference."""
+    return build_provider(
+        name, config, api_key=resolve_secret(config.api_key) if config.api_key else ""
+    )
+
+
+def build_provider(name: str, config: ProviderConfig, *, api_key: str = "") -> LLMProvider:
+    """Build a provider from an already-resolved key.
+
+    Separate from :func:`create_provider` so a key that has not been stored yet —
+    one typed into the GUI's provider form and being tested before saving — can
+    be used without first writing it to disk.
+    """
     if config.type == "openrouter":
         return OpenRouterProvider(
             base_url=config.base_url,
@@ -20,6 +32,7 @@ def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
             model=config.model,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            concurrency=config.concurrency,
             max_output_tokens=config.max_output_tokens,
             features=config.features,
             application_name=config.application_name,
@@ -33,6 +46,7 @@ def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
             model=config.model,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            concurrency=config.concurrency,
             max_output_tokens=config.max_output_tokens,
             features=config.features,
             reasoning_effort=config.reasoning_effort,
@@ -44,6 +58,7 @@ def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
             model=config.model,
             timeout=config.timeout,
             max_retries=config.max_retries,
+            concurrency=config.concurrency,
             max_output_tokens=config.max_output_tokens,
             features=config.features,
         )
@@ -57,4 +72,5 @@ def create_provider(name: str, config: ProviderConfig) -> LLMProvider:
         max_output_tokens=config.max_output_tokens,
         features=config.features,
         reasoning_effort=config.reasoning_effort,
+        concurrency=config.concurrency,
     )

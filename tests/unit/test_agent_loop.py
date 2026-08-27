@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -224,8 +225,19 @@ async def test_compact_profile_executes_one_bounded_tool_call_per_turn(
 
 
 @pytest.mark.asyncio
-async def test_repeated_non_progress_signals_model_escalation(executor: ActionExecutor) -> None:
-    class EscalationGateway(NativeGateway):
+async def test_single_model_recovers_from_stall_via_strategy_intervention(
+    executor: ActionExecutor,
+) -> None:
+    """A gateway with no stronger model must still get a corrective nudge.
+
+    This is the pinned-session / local-only case: there is exactly one model, so
+    the loop cannot swap in a stronger one. It must recover by telling *that*
+    model to change approach — not by pretending an escalation happened and then
+    giving up. ``NativeGateway`` exposes no ``router`` and no ``profile_override``,
+    so it models that single-model deployment directly.
+    """
+
+    class SingleModelGateway(NativeGateway):
         def __init__(self) -> None:
             super().__init__(
                 [
@@ -255,7 +267,77 @@ async def test_repeated_non_progress_signals_model_escalation(executor: ActionEx
             self.routing_attempts.append(getattr(routing, "failed_attempts", 0))
             return await super().complete(*args, **kwargs)
 
-    gateway = EscalationGateway()
+    gateway = SingleModelGateway()
+    outcome = await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        execution_profile=compact_execution_profile(),
+    ).run("mission-stall", context())
+
+    # No stronger model exists, so the routing context is never bumped to the
+    # escalation trigger and no fake model swap is claimed.
+    assert gateway.routing_attempts == [0, 0, 0, 0]
+    assert outcome.escalated is False
+    # The last thing the model saw before recovering was concrete corrective
+    # guidance, not the old "escalation requested" placeholder.
+    intervention = next(
+        (
+            message
+            for message in reversed(gateway.seen_messages)
+            if message.role == "system" and "Intervention" in message.content
+        ),
+        None,
+    )
+    assert intervention is not None
+    assert "materially DIFFERENT" in intervention.content
+
+
+@pytest.mark.asyncio
+async def test_repeated_non_progress_escalates_when_a_stronger_model_exists(
+    executor: ActionExecutor,
+) -> None:
+    """When the router can reach a stronger model, the stall swaps it in."""
+
+    class StrongerModelRouter:
+        def select(self, role: object, context: object = None):
+            failed = getattr(context, "failed_attempts", 0)
+            name = "big" if failed >= 2 else "small"
+            return SimpleNamespace(profile_name=name)
+
+    class EscalatingGateway(NativeGateway):
+        def __init__(self) -> None:
+            super().__init__(
+                [
+                    [
+                        ToolCall(
+                            id=f"missing_{number}",
+                            name="read_file",
+                            arguments={"thought": "inspect", "path": "missing.py"},
+                        )
+                    ]
+                    for number in range(3)
+                ]
+                + [
+                    [
+                        ToolCall(
+                            id="finish",
+                            name="finish",
+                            arguments={"thought": "blocked", "summary": "Could not inspect"},
+                        )
+                    ]
+                ]
+            )
+            self.router = StrongerModelRouter()
+            self.profile_override = ""
+            self.routing_attempts: list[int] = []
+
+        async def complete(self, *args: object, **kwargs: object) -> LLMResponse:
+            routing = kwargs.get("routing_context")
+            self.routing_attempts.append(getattr(routing, "failed_attempts", 0))
+            return await super().complete(*args, **kwargs)
+
+    gateway = EscalatingGateway()
     outcome = await ToolLoop(
         gateway,  # type: ignore[arg-type]
         ModelRole.BUILDER,
@@ -835,6 +917,51 @@ def test_context_compaction_keeps_task_and_complete_recent_tool_exchange() -> No
     assert sum(_message_tokens(item) for item in fitted) <= 350
 
 
+def test_authoritative_files_message_reflects_current_disk_content(tmp_path: Path) -> None:
+    """After an edit, compaction must keep the file's real bytes in front of the model."""
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+    loop = ToolLoop(executor=executor, gateway=NativeGateway([]), role=ModelRole.BUILDER)  # type: ignore[arg-type]
+
+    message = loop._authoritative_files_message(["app.py"])
+    assert message is not None
+    assert message.role == "system"
+    assert "value = 1" in message.content
+    assert "from memory" in message.content
+
+    # The block is read from disk, so a later edit is reflected, not a stale read.
+    (tmp_path / "app.py").write_text("value = 2\n", encoding="utf-8")
+    refreshed = loop._authoritative_files_message(["app.py"])
+    assert refreshed is not None
+    assert "value = 2" in refreshed.content
+    assert "value = 1" not in refreshed.content
+
+
+def test_authoritative_files_message_is_empty_when_nothing_changed(tmp_path: Path) -> None:
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+    loop = ToolLoop(executor=executor, gateway=NativeGateway([]), role=ModelRole.BUILDER)  # type: ignore[arg-type]
+    assert loop._authoritative_files_message([]) is None
+    # A path that no longer exists on disk is skipped rather than raising.
+    assert loop._authoritative_files_message(["gone.py"]) is None
+
+
+def test_authoritative_files_message_bounds_the_pinned_file_count(tmp_path: Path) -> None:
+    from daino.agents.loop import _PINNED_FILE_LIMIT
+
+    for index in range(_PINNED_FILE_LIMIT + 3):
+        (tmp_path / f"f{index}.py").write_text(f"x = {index}\n", encoding="utf-8")
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+    loop = ToolLoop(executor=executor, gateway=NativeGateway([]), role=ModelRole.BUILDER)  # type: ignore[arg-type]
+
+    changed = [f"f{index}.py" for index in range(_PINNED_FILE_LIMIT + 3)]
+    message = loop._authoritative_files_message(changed)
+    assert message is not None
+    # Only the most-recently-changed files are pinned, newest first.
+    assert message.content.count("### ") == _PINNED_FILE_LIMIT
+    last = changed[-1]
+    assert f"### {last}" in message.content
+
+
 @pytest.mark.asyncio
 async def test_gateway_uses_configured_fallback_after_provider_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -928,7 +1055,11 @@ async def test_rewriting_identical_content_counts_as_no_progress(tmp_path: Path)
 
     content = "const books = [];\n"
     executor = RecordingActionExecutor(EditTools(tmp_path, require_read_before_write=False))
-    gateway = NativeGateway([rewrite_turn(index, content) for index in range(1, 9)])
+    # Script far more identical rewrites than the loop should ever take: the
+    # intervention ladder is bounded, so it must stop well before running them
+    # all rather than spinning through every scripted turn.
+    turns = 40
+    gateway = NativeGateway([rewrite_turn(index, content) for index in range(1, turns + 1)])
     loop = ToolLoop(
         gateway,  # type: ignore[arg-type]
         ModelRole.BUILDER,
@@ -939,9 +1070,14 @@ async def test_rewriting_identical_content_counts_as_no_progress(tmp_path: Path)
     outcome = await loop.run("mission-loop", context())
 
     # The first write lands; the identical rewrites after it are not progress,
-    # so the loop stops instead of spinning through every scripted turn.
+    # so after a bounded number of corrective interventions the loop gives up
+    # instead of rewriting the same file forever.
     assert (tmp_path / "books-data.js").read_text(encoding="utf-8") == content
-    assert outcome.steps < 8, f"the loop never noticed the no-op rewrites ({outcome.steps} steps)"
+    assert outcome.steps < turns, (
+        f"the loop never noticed the no-op rewrites ({outcome.steps} steps)"
+    )
+    assert not outcome.completed
+    assert outcome.stop_reason == "stall"
 
 
 @pytest.mark.asyncio
@@ -974,3 +1110,53 @@ async def test_a_no_op_write_tells_the_agent_nothing_changed(tmp_path: Path) -> 
     assert any("already contained exactly this content" in item for item in observations), (
         observations
     )
+
+
+def test_small_file_read_is_shown_whole_without_a_paging_banner() -> None:
+    from daino.agents.loop import _read_file_detail
+
+    body = "line one\nline two\nline three\n"
+    result = ToolResult(
+        tool="read_file",
+        success=True,
+        data={"content": body, "total_lines": 3, "start_line": 1, "end_line": 3},
+    )
+    detail = _read_file_detail(result)
+    assert detail == body
+    assert "truncated" not in detail
+    assert "offset" not in detail
+
+
+def test_large_file_read_is_truncated_with_an_actionable_paging_banner() -> None:
+    """A silent cut is what makes a local model hallucinate unseen lines."""
+    from daino.agents.loop import _READ_FILE_MAX_CHARS, _read_file_detail
+
+    body = "".join(f"line {number}\n" for number in range(1, 2001))  # ~14k+ chars
+    assert len(body) > _READ_FILE_MAX_CHARS
+    result = ToolResult(
+        tool="read_file",
+        success=True,
+        data={"content": body, "total_lines": 2000, "start_line": 1, "end_line": 2000},
+    )
+    detail = _read_file_detail(result)
+    assert "content truncated" in detail
+    # The model is told the file is bigger and exactly how to reach the rest.
+    assert "of 2000" in detail
+    assert "offset:" in detail
+    assert "from memory" in detail
+    # The visible slice really is bounded, not the whole file.
+    assert len(detail) < len(body)
+
+
+def test_partial_range_read_reports_its_position_in_the_file() -> None:
+    from daino.agents.loop import _read_file_detail
+
+    body = "middle chunk line\nmiddle chunk line\n"
+    result = ToolResult(
+        tool="read_file",
+        success=True,
+        data={"content": body, "total_lines": 480, "start_line": 200, "end_line": 201},
+    )
+    detail = _read_file_detail(result)
+    assert "Showing lines 200-201 of 480" in detail
+    assert "offset:202" in detail

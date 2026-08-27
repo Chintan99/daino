@@ -111,6 +111,12 @@ INTERACTION_MODES: tuple[InteractionMode, ...] = (
     InteractionMode.FULL,
 )
 
+#: Activity states that mean work is in progress. Mirrors the runner widget's
+#: own set, which is what the user is looking at while it applies.
+_RUNNING_ACTIVITY = frozenset(
+    {"working", "thinking", "planning", "inspecting", "building", "verifying"}
+)
+
 MODE_DESCRIPTIONS: dict[InteractionMode, str] = {
     InteractionMode.PLAN: "read-only planning; no implementation or deployment",
     InteractionMode.ASK: "routine repository work is allowed; risky commands ask first",
@@ -177,6 +183,8 @@ class WorkspaceScreen(Screen[None]):
         self._last_usage: tuple[int, float] = (0, 0.0)
         self._last_qa_report: QAReport | None = None
         self.verbose = False
+        #: Whether a sleep inhibitor is currently held for in-progress work.
+        self._work_in_progress = False
         self._home = str(Path.home())
 
     def compose(self) -> ComposeResult:
@@ -271,6 +279,8 @@ class WorkspaceScreen(Screen[None]):
     def on_unmount(self) -> None:
         if self._event_subscription is not None:
             self._event_subscription.close()
+        # Quitting mid-turn must not leave the machine unable to sleep.
+        self.missions.attention.shutdown()
 
     @work(exclusive=True, group="references", thread=True)
     def _load_references(self) -> None:
@@ -314,7 +324,29 @@ class WorkspaceScreen(Screen[None]):
             "verifying",
         }:
             state, detail = "working", ""
+        self._attend(state, detail)
         self.query_one("#task-checklist", TaskChecklist).set_activity(state, detail)
+
+    def _attend(self, state: str, detail: str) -> None:
+        """Keep the machine awake while working, and announce the ending.
+
+        Every path that changes what the runner shows comes through
+        ``_set_activity``, which makes it the one place where "is work in
+        progress?" is already known — so sleep inhibition and notifications need
+        no separate bookkeeping in each of the five turn workers.
+        """
+        attention = self.missions.attention
+        running = state in _RUNNING_ACTIVITY
+        if running and not self._work_in_progress:
+            self._work_in_progress = True
+            attention.keep_awake.acquire(detail or "agent turn")
+        elif not running and self._work_in_progress:
+            self._work_in_progress = False
+            attention.keep_awake.release()
+            if state == "completed":
+                attention.notifications.completed(detail or "Work finished")
+            elif state == "failed":
+                attention.notifications.failed(detail or "Needs attention")
 
     @staticmethod
     def _role_activity(role: str) -> str:
@@ -497,6 +529,9 @@ class WorkspaceScreen(Screen[None]):
             )
         elif isinstance(event, FileChanged):
             self._set_activity("building", event.path)
+            self.query_one("#task-checklist", TaskChecklist).record_change(
+                event.path, event.added, event.removed
+            )
             # Show the change itself when the event carries one. "Replace
             # cars.html" says a file moved; the diff says what the agent did.
             if self.verbose:
@@ -943,6 +978,8 @@ class WorkspaceScreen(Screen[None]):
                 self._chat_previous_status = self.active_status
                 self._chat_running = True
                 self.active_status = "Working"
+                # Last turn's files are not this turn's.
+                self.query_one("#task-checklist", TaskChecklist).clear_changes()
                 self._set_activity("thinking", "understanding request")
                 self.request_refresh()
                 self.run_chat_agent(raw)

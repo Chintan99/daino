@@ -41,4 +41,12 @@ class AuditLog:
 
 
 def configure_logging(level: str = "INFO") -> None:
+    """Set the root log level, whether or not logging is already configured.
+
+    ``basicConfig`` is a no-op once the root logger has handlers — which it does
+    as soon as uvicorn or a prior call installed them — so a later change of
+    level (from the GUI's Settings menu, for instance) would silently do nothing
+    without the explicit ``setLevel``.
+    """
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger().setLevel(level)

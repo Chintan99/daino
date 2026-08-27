@@ -77,6 +77,26 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _action(self) -> dict[str, Any]:
         cls = type(self)
+        if cls.mode == "stall":
+            # Read, one edit that lands, then the same replace over and over with
+            # an old_string that no longer exists — exactly the observed stall.
+            if cls.turns == 1:
+                return {"thought": "read it", "action": "read_file", "path": "landing.html"}
+            if cls.turns == 2:
+                return {
+                    "thought": "apply it",
+                    "action": "replace",
+                    "path": "landing.html",
+                    "old_string": "<h1>Welcome</h1>",
+                    "new_string": '<h1 class="glass">Welcome</h1>',
+                }
+            return {
+                "thought": "and again",
+                "action": "replace",
+                "path": "landing.html",
+                "old_string": "<h1>Welcome</h1>",
+                "new_string": '<h1 class="dark">Welcome</h1>',
+            }
         if cls.mode == "answer":
             return {
                 "thought": "this is a question",
@@ -175,7 +195,14 @@ async def test_the_transcript_shows_a_diff_rather_than_a_code_dump(
 
         items = workspace.missions.messages(workspace.session_id)
         kinds = [item.kind for item in items]
-        assert kinds == ["user", "diff", "tool", "test", "agent"]
+        # The per-edit diff lands while the turn runs; the changeset closes it.
+        assert kinds == ["user", "diff", "tool", "test", "agent", "changeset"]
+
+        changeset = items[-1]
+        assert changeset.content.splitlines()[0] == "Edited 1 file  +1 -1"
+        assert changeset.metadata["files"] == [
+            {"path": "landing.html", "change": "modified", "added": 1, "removed": 1}
+        ]
 
         diff = next(item for item in items if item.kind == "diff")
         assert diff.content.splitlines()[0] == "landing.html"
@@ -407,3 +434,41 @@ async def test_the_pre_edit_checkpoint_is_not_announced_every_turn(
         assert not [card for card in workspace.query(MessageCard) if card.kind == "checkpoint"]
         # The checkpoint itself still exists, so /restore still works.
         assert "Before chat edit" in [item.description for item in workspace.checkpoints.list()]
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_stops_early_still_reports_what_it_changed(
+    agent_server: str, tmp_path: Path
+) -> None:
+    """The regression from ~/vasukitest/project4: partial work reported as nothing.
+
+    The agent edited the file, then failed three replaces in a row and hit the
+    no-progress guard. The transcript showed a bare red failure, so the edits
+    already sitting in the working tree were invisible.
+    """
+    _Handler.mode = "stall"
+    app_instance = connected_app(tmp_path, agent_server)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+
+        await workspace.execute_command("add a dark theme")
+        await settle(pilot, workspace)
+
+        items = workspace.missions.messages(workspace.session_id)
+        kinds = [item.kind for item in items]
+        assert "error" in kinds, kinds
+
+        # The edit that landed is summarised, not silently dropped.
+        changesets = [item for item in items if item.kind == "changeset"]
+        assert changesets, f"no changeset recorded; kinds were {kinds}"
+        assert changesets[0].metadata["files"] == [
+            {"path": "landing.html", "change": "modified", "added": 1, "removed": 1}
+        ]
+
+        # And the failure itself names the file, so the user knows to look.
+        failures = [item for item in items if item.kind == "error"]
+        assert failures, f"no failure recorded; kinds were {kinds}"
+        assert "had already been changed and were kept" in failures[-1].content
+        assert "landing.html" in failures[-1].content

@@ -468,6 +468,75 @@ pytest
 
 No paid API key is required.
 
+## Sessions and context
+
+`/new [title]` (Ctrl+N) starts a fresh conversation. That matters beyond
+tidiness: each turn sends the session's recent exchanges as history, so a
+long-lived session makes every prompt larger and answers a new request in the
+context of old ones. On a local model, where prompt size is throughput, starting
+a session for a new piece of work is often the cheapest speed-up available.
+
+Sessions are named after the first request they receive, so `/new` without a
+title still produces a legible list in the mission browser and in the browser
+IDE's session switcher. The two clients share the same sessions.
+
+## Live progress
+
+The side panel beside the conversation carries, top to bottom: the dinosaur
+runner and what it is doing, the task checklist, and — while a turn is editing —
+an **EDITED** list of every file touched so far with running `+`/`-` counts. A
+file edited twice is one row with the counts summed, and the list resets when the
+next turn starts.
+
+Each checklist item that completes also adds a ticked line to the transcript, so
+progress is readable in the conversation and not only as a counter in the panel.
+
+The terminal client owns its own process, so a turn ends only when it finishes or
+you cancel it. The browser IDE now behaves the same way across a page reload —
+see [reloading during a turn](gui.md#reloading-during-a-turn).
+
+## The closing changeset
+
+A turn that edited anything ends with one summary of everything it touched, so
+"what did it change?" does not mean scrolling back through the diffs that
+streamed past while it worked:
+
+```
+changed
+Edited 3 files  +48 -17
+  new.py                     +30 -0
+  README.md                  +16 -1
+  docs/a.svg                  +2 -2
+```
+
+The counts carry the colour, because they are what gets scanned. The same message
+drives the browser IDE's changeset card, so the two clients cannot disagree about
+what a turn did.
+
+## Notifications and staying awake
+
+The terminal client raises an OS notification when a turn completes, when
+something fails, and when a command is waiting for approval — the three moments
+that arrive after you have looked away. It also sends the terminal bell, which
+most terminals turn into a tab badge.
+
+While work is in progress it holds an OS sleep inhibitor (`caffeinate` on macOS,
+`systemd-inhibit` on Linux, `SetThreadExecutionState` on Windows), because a host
+that suspends mid-turn drops the model connection and freezes commands in flight.
+It is released as soon as the work ends, and on quit.
+
+Both are the same implementation the browser IDE uses, and both are configuration:
+
+```
+/settings                     # then, in the two fields:
+notifications.on_completed    false
+notifications.desktop         false
+keep_awake                    false
+```
+
+Notification preferences are user-level, so they follow you between projects.
+`DAINO_NOTIFY=off` and `DAINO_WAKELOCK=off` switch each off for one run.
+
 ## Known limitations and next work
 
 - Long-running background processes (a dev server) are not managed: commands run to completion

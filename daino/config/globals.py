@@ -33,6 +33,7 @@ GLOBAL_SECTIONS = (
     "tui",
     "observability",
     "memory",
+    "notifications",
 )
 
 def global_config_dir() -> Path:

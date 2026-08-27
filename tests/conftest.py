@@ -89,6 +89,18 @@ def commit_all(root: Path) -> None:
 
 
 @pytest.fixture(autouse=True)
+def no_desktop_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never notify the developer's desktop or inhibit their machine's sleep.
+
+    A test that finishes a turn would otherwise raise a real OS notification and
+    spawn a real `caffeinate`, hundreds of times per run. Tests that exercise
+    those features turn the switches back on deliberately and stub the commands.
+    """
+    monkeypatch.setenv("DAINO_NOTIFY", "off")
+    monkeypatch.setenv("DAINO_WAKELOCK", "off")
+
+
+@pytest.fixture(autouse=True)
 def isolated_global_config(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:

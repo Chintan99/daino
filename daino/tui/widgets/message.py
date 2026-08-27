@@ -26,6 +26,7 @@ LABELS = {
     "deployment": "deploy",
     "summary": "summary",
     "diff": "edit",
+    "changeset": "changed",
     "status": "",
     "task": "",
 }
@@ -74,6 +75,7 @@ LABEL_STYLES = {
     "summary": f"bold {palette.ACCENT}",
     "tool": palette.TOOL,
     "diff": f"bold {palette.CAUTION}",
+    "changeset": f"bold {palette.ACCENT}",
     "checkpoint": palette.CHECKPOINT,
     "test": f"bold {palette.READY}",
     "approval": f"bold {palette.CAUTION}",
@@ -152,6 +154,8 @@ class MessageCard(Static):
             parts.append("\n")
         if self.kind == "diff":
             parts.extend(self._diff_spans())
+        elif self.kind == "changeset":
+            parts.extend(self._changeset_spans())
         else:
             # Prose stays one span; fenced code is highlighted per token, which
             # is what stops an answer that is mostly code reading as a grey wall.
@@ -167,6 +171,44 @@ class MessageCard(Static):
             details = json.dumps(self.metadata, indent=2, default=str)
             parts.append((f"\n\n{details}", palette.FAINTEST))
         self.update(Content.assemble(*parts))
+
+    def _changeset_spans(self) -> list[str | Content | tuple[str, str]]:
+        """One closing block: what the turn edited, and by how much.
+
+        The counts carry the colour rather than the path, because "+49 -81" is
+        the part that is scanned; the directory is context and the filename is
+        the identity, so only the filename is bright.
+        """
+        lines = self.raw_content.splitlines()
+        spans: list[str | Content | tuple[str, str]] = []
+        for index, line in enumerate(lines):
+            if index:
+                spans.append("\n")
+            if index == 0:
+                # "Edited 6 files  +49 -81"
+                head, _, counts = line.partition("  +")
+                spans.append((head, f"bold {palette.TEXT}"))
+                if counts:
+                    added, _, removed = counts.partition(" -")
+                    spans.append(("  +" + added, palette.DIFF_ADDED))
+                    if removed:
+                        spans.append((" -" + removed, palette.DIFF_REMOVED))
+                continue
+            path, _, counts = line.strip().rpartition("  +")
+            if not path:
+                spans.append((line, palette.MUTED))
+                continue
+            directory, _, name = path.rpartition("/")
+            if directory:
+                spans.append((f"  {directory}/", palette.FAINTEST))
+                spans.append((name, palette.TEXT))
+            else:
+                spans.append((f"  {name}", palette.TEXT))
+            added, _, removed = counts.partition(" -")
+            spans.append(("  +" + added, palette.DIFF_ADDED))
+            if removed:
+                spans.append((" -" + removed, palette.DIFF_REMOVED))
+        return spans
 
     def _diff_spans(self) -> list[str | Content | tuple[str, str]]:
         """Colour each diff line by its marker, leaving the header plain.

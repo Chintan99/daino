@@ -89,14 +89,115 @@ monaco.editor.defineTheme(DAINO_THEME, {
   },
 });
 
+/** The light counterpart, using the same token roles as the CSS light theme. */
+export const DAINO_LIGHT_THEME = "daino-light";
+
+monaco.editor.defineTheme(DAINO_LIGHT_THEME, {
+  base: "vs",
+  inherit: true,
+  rules: [
+    { token: "", foreground: "343a37" },
+    { token: "comment", foreground: "76817c", fontStyle: "italic" },
+    { token: "keyword", foreground: "6849bb" },
+    { token: "keyword.control", foreground: "6849bb" },
+    { token: "operator", foreground: "5e6562" },
+    { token: "string", foreground: "2c7a30" },
+    { token: "string.escape", foreground: "1c7a4b" },
+    { token: "number", foreground: "ad541b" },
+    { token: "regexp", foreground: "0e6c79" },
+    { token: "type", foreground: "0e6c79" },
+    { token: "type.identifier", foreground: "0e6c79" },
+    { token: "identifier", foreground: "24302b" },
+    { token: "function", foreground: "16603c" },
+    { token: "variable", foreground: "24302b" },
+    { token: "variable.parameter", foreground: "8a6714" },
+    { token: "constant", foreground: "ad541b" },
+    { token: "tag", foreground: "b32e3c" },
+    { token: "attribute.name", foreground: "16603c" },
+    { token: "attribute.value", foreground: "2c7a30" },
+    { token: "delimiter", foreground: "5e6562" },
+    { token: "metatag", foreground: "2a57b0" },
+  ],
+  colors: {
+    "editor.background": "#fcfcfb",
+    "editor.foreground": "#343a37",
+    "editorLineNumber.foreground": "#b3bab6",
+    "editorLineNumber.activeForeground": "#5e6562",
+    "editorCursor.foreground": "#135e39",
+    "editor.selectionBackground": "#d3e7db",
+    "editor.inactiveSelectionBackground": "#e6ede9",
+    "editor.lineHighlightBackground": "#f4f5f3",
+    "editor.lineHighlightBorder": "#00000000",
+    "editorIndentGuide.background1": "#e2e5e0",
+    "editorIndentGuide.activeBackground1": "#c7ccc6",
+    "editorWhitespace.foreground": "#c7ccc6",
+    "editorGutter.background": "#fcfcfb",
+    "editorGutter.addedBackground": "#2c7a30",
+    "editorGutter.modifiedBackground": "#8a6714",
+    "editorGutter.deletedBackground": "#b32e3c",
+    "editorWidget.background": "#f4f5f3",
+    "editorWidget.border": "#c7ccc6",
+    "editorSuggestWidget.background": "#f4f5f3",
+    "editorSuggestWidget.selectedBackground": "#dbe8e0",
+    "editorHoverWidget.background": "#f4f5f3",
+    "editorHoverWidget.border": "#c7ccc6",
+    "scrollbarSlider.background": "#c9cec899",
+    "scrollbarSlider.hoverBackground": "#b1b7b0",
+    "scrollbarSlider.activeBackground": "#a6d2b8",
+    "minimap.background": "#fcfcfb",
+    "diffEditor.insertedTextBackground": "#2c7a3022",
+    "diffEditor.removedTextBackground": "#b32e3c22",
+    "diffEditor.insertedLineBackground": "#eaf5ea",
+    "diffEditor.removedLineBackground": "#fdecee",
+    "diffEditor.border": "#e2e5e0",
+    "diffEditorGutter.insertedLineBackground": "#eaf5ea",
+    "diffEditorGutter.removedLineBackground": "#fdecee",
+    "editorOverviewRuler.border": "#00000000",
+  },
+});
+
+/** Maximum separation, for the matching high-contrast interface theme. */
+export const DAINO_CONTRAST_THEME = "daino-contrast";
+
+monaco.editor.defineTheme(DAINO_CONTRAST_THEME, {
+  base: "hc-black",
+  inherit: true,
+  rules: [
+    { token: "", foreground: "eef1ef" },
+    { token: "comment", foreground: "a3aaa7", fontStyle: "italic" },
+    { token: "keyword", foreground: "ceb8ff" },
+    { token: "string", foreground: "b6f59a" },
+    { token: "number", foreground: "ffb082" },
+    { token: "type", foreground: "86e6f5" },
+    { token: "function", foreground: "7ff0ad" },
+    { token: "tag", foreground: "ff9aa2" },
+  ],
+  colors: {
+    "editor.background": "#000000",
+    "editor.foreground": "#eef1ef",
+    "editorLineNumber.foreground": "#a3aaa7",
+    "editorLineNumber.activeForeground": "#ffffff",
+    "editorCursor.foreground": "#a9ffc9",
+    "editor.selectionBackground": "#2c332f",
+    "editorGutter.background": "#000000",
+  },
+});
+
+/** Resolve the interface theme to the editor theme that matches it. */
+export function monacoThemeFor(theme: "dark" | "light" | "contrast"): string {
+  if (theme === "light") return DAINO_LIGHT_THEME;
+  if (theme === "contrast") return DAINO_CONTRAST_THEME;
+  return DAINO_THEME;
+}
+
 loader.config({ monaco });
 
 /** Options every Monaco surface in the app shares, so they look like one editor. */
 export const EDITOR_OPTIONS = {
-  fontSize: 12.5,
+  fontSize: 13.5,
   fontFamily:
     "'SFMono-Regular', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace",
-  lineHeight: 19,
+  lineHeight: 0, // 0 lets Monaco derive it from fontSize
   minimap: { enabled: false },
   scrollBeyondLastLine: false,
   automaticLayout: true,

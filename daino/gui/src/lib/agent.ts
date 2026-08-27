@@ -1,6 +1,7 @@
 // Send a chat message to the agent over the shared session websocket,
 // prepending the context block (from the ContextBar chips) unless disabled.
 import { useAgentStore } from "../store/agentStore";
+import { useSettingsStore } from "../store/settingsStore";
 import { useUIStore } from "../store/uiStore";
 import { composeMessage } from "./context";
 
@@ -12,7 +13,10 @@ export function sendChatMessage(
   if (!state.send || !text.trim() || state.turnRunning) return false;
 
   const workspace = useUIStore.getState().activeWorkspaceTab;
-  const withContext = opts?.withContext !== false;
+  // An explicit argument wins; otherwise Settings ▸ Agent decides whether the
+  // open file, selection, and diff ride along with the message.
+  const withContext =
+    opts?.withContext ?? useSettingsStore.getState().sendWithContext;
   const finalText = withContext
     ? composeMessage(state.chips, workspace, text)
     : text;

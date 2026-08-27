@@ -8,15 +8,24 @@ and mutation, preview detection, terminal lifecycle, and event streaming.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from daino.application import initialize_project, open_project
 from daino.events import GitChanged
 from daino.server.app import create_app
+from daino.services.terminal import MAX_SESSIONS
+
+#: What a browser on the loopback listener sends. Starlette's test client
+#: hard-codes ``ws://testserver`` for WebSockets, so the Host has to be supplied
+#: explicitly — and the origin policy rightly refuses anything else.
+LOCAL_HOST = "127.0.0.1:4173"
+LOCAL_ORIGIN = f"http://{LOCAL_HOST}"
 
 
 @pytest.fixture
@@ -24,7 +33,9 @@ def client(git_repo: Path) -> Iterator[TestClient]:
     initialize_project(git_repo)
     context = open_project(git_repo)
     app = create_app(context)
-    with TestClient(app) as test_client:
+    # A real browser addresses the loopback listener, and the origin policy
+    # checks the Host header, so the test client must look like one.
+    with TestClient(app, base_url="http://127.0.0.1:4173") as test_client:
         test_client.app_root = git_repo  # type: ignore[attr-defined]
         yield test_client
     context.close()
@@ -161,7 +172,9 @@ def test_terminal_lifecycle(client: TestClient) -> None:
 
 
 def test_websocket_session_stream_and_events(client: TestClient) -> None:
-    with client.websocket_connect("/ws/session/latest") as ws:
+    with client.websocket_connect(
+        "/ws/session/latest", headers={"host": LOCAL_HOST, "origin": LOCAL_ORIGIN}
+    ) as ws:
         first = ws.receive_json()
         assert first["type"] == "session"
         assert first["session_id"]
@@ -347,3 +360,494 @@ def test_documentation_is_served_to_the_gui(client: TestClient) -> None:
 
     # The generated reference is still available, just not at /docs.
     assert client.get("/api-docs").status_code == 200
+
+
+def test_settings_read_and_patch(client: TestClient) -> None:
+    """The Settings menu's server half: read, route, and persist."""
+    from daino.config import load_settings
+    from daino.config.models import ModelProfileConfig, ProviderConfig
+
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    settings = client.app.state.gui.context.settings  # type: ignore[attr-defined]
+    settings.providers["local-ollama"] = ProviderConfig(
+        type="ollama", base_url="http://127.0.0.1:11434/v1", model="qwen2.5-coder:7b"
+    )
+    settings.models["local-ollama"] = ModelProfileConfig(
+        provider="local-ollama", model="qwen2.5-coder:7b", local=True
+    )
+
+    payload = client.get("/api/settings").json()
+    assert "debugger" in payload["roles"]
+    assert [item["name"] for item in payload["providers"]] == ["local-ollama"]
+    # An unsaved in-memory provider reads as project scope, not inherited.
+    assert payload["providers"][0]["scope"] == "project"
+    assert payload["runtime"]["default"] in {"local", "docker", "ssh"}
+
+    # A provider choice routes every agent role, including the debugger.
+    routed = client.patch("/api/settings", json={"default_provider": "local-ollama"}).json()
+    assert set(routed["routing"].values()) == {"local-ollama"}
+
+    # One role can then be pointed somewhere else on its own.
+    settings.models["strong-cloud"] = ModelProfileConfig(
+        provider="local-ollama", model="anthropic/claude-sonnet-4"
+    )
+    single = client.patch(
+        "/api/settings", json={"routing": {"debugger": "strong-cloud"}}
+    ).json()
+    assert single["routing"]["debugger"] == "strong-cloud"
+    assert single["routing"]["builder"] == "local-ollama"
+
+    # Runtime, network access, approvals, and log level are all persisted.
+    updated = client.patch(
+        "/api/settings",
+        json={
+            "runtime": "local",
+            "network_access": "allowed",
+            "log_level": "DEBUG",
+            "require_approval_for_install": False,
+        },
+    ).json()
+    assert updated["runtime"] == {
+        **updated["runtime"],
+        "default": "local",
+        "network_access": "allowed",
+    }
+    assert updated["observability"]["log_level"] == "DEBUG"
+    assert updated["security"]["require_approval_for_install"] is False
+
+    on_disk = load_settings(root)
+    assert on_disk.runtime.default == "local"
+    assert on_disk.routing["debugger"] == "strong-cloud"
+
+    # Unknown names are rejected rather than written.
+    assert client.patch("/api/settings", json={"default_provider": "nope"}).status_code == 400
+    assert (
+        client.patch("/api/settings", json={"routing": {"architect": "nope"}}).status_code
+        == 400
+    )
+    assert (
+        client.patch("/api/settings", json={"routing": {"nope": "local-ollama"}}).status_code
+        == 400
+    )
+    assert client.patch("/api/settings", json={"runtime": "vm"}).status_code == 422
+
+    # Reloading re-reads the file that was just written.
+    reloaded = client.post("/api/settings/reload").json()
+    assert reloaded["runtime"]["default"] == "local"
+
+
+def test_foreign_origin_is_refused_everywhere(client: TestClient) -> None:
+    """A page on another site must not be able to drive this local API.
+
+    WebSockets are exempt from CORS, so without an Origin check any site the
+    user has open can run shell commands and answer the agent's own approval
+    prompts. DNS rebinding is the same attack with a forged Host.
+    """
+    evil = {"origin": "https://evil.example"}
+
+    # REST: a "simple" cross-origin POST reaches the server even under CORS.
+    assert client.get("/api/workspace", headers=evil).status_code == 403
+    assert client.post("/api/terminals", json={}, headers=evil).status_code == 403
+    assert client.patch("/api/settings", json={"runtime": "local"}, headers=evil).status_code == 403
+
+    # DNS rebinding: loopback listener, attacker-controlled hostname.
+    assert client.get("/api/workspace", headers={"host": "evil.example"}).status_code == 403
+
+    # WebSockets: the session socket drives the agent, the terminal socket a shell.
+    created = client.post("/api/terminals", json={}).json()
+    for path in ("/ws/session/latest", f"/ws/terminal/{created['id']}"):
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(
+                path, headers={"host": LOCAL_HOST, **evil}
+            ):
+                pass  # pragma: no cover - the handshake never completes
+
+    # The IDE's own page, and non-browser clients, are unaffected.
+    assert client.get("/api/workspace", headers={"origin": LOCAL_ORIGIN}).status_code == 200
+    assert client.get("/api/workspace").status_code == 200
+    # The Vite dev server is allowed, so `npm run dev` still works.
+    assert (
+        client.get("/api/workspace", headers={"origin": "http://localhost:5173"}).status_code
+        == 200
+    )
+
+
+def test_only_one_agent_turn_runs_at_a_time(client: TestClient) -> None:
+    """A second tab must wait rather than interleave edits with the first."""
+    state = client.app.state.gui  # type: ignore[attr-defined]
+    assert not state.turn_lock.locked()
+
+    # Stand in for a turn started by another connection: the handler only reads
+    # `locked()`, and an asyncio.Lock is not bound to a loop until it is awaited.
+    asyncio.run(state.turn_lock.acquire())
+
+    with client.websocket_connect(
+        "/ws/session/latest", headers={"host": LOCAL_HOST, "origin": LOCAL_ORIGIN}
+    ) as ws:
+        ws.receive_json()  # session id
+        ws.send_json({"type": "user_message", "text": "hello"})
+        message = ws.receive_json()
+    assert message["type"] == "error"
+    assert "already running" in message["message"]
+    state.turn_lock.release()
+
+
+def test_terminals_are_reaped_when_no_client_returns(client: TestClient) -> None:
+    """Every page load opens a shell; closed tabs must not leak PTYs forever."""
+    terminals = client.app.state.gui.terminals  # type: ignore[attr-defined]
+    first = client.post("/api/terminals", json={}).json()["id"]
+
+    # A shell with a live client is never reaped, however long it idles.
+    terminals.attach(first)
+    assert terminals.prune(idle_seconds=0) == []
+    assert first in terminals.list_ids()
+
+    # Once the client goes away, the idle countdown starts.
+    terminals.detach(first)
+    assert terminals.prune(idle_seconds=3600) == []
+    assert terminals.prune(idle_seconds=0) == [first]
+    assert terminals.list_ids() == []
+
+    # And a project cannot accumulate shells without bound.
+    for _ in range(MAX_SESSIONS):
+        client.post("/api/terminals", json={})
+    for terminal_id in terminals.list_ids():
+        terminals.attach(terminal_id)
+    assert client.post("/api/terminals", json={}).status_code == 429
+
+
+def test_provider_form_test_and_save(client: TestClient) -> None:
+    """The agent panel's provider form: probe, save, and re-route."""
+    unreachable = {
+        "name": "local-ollama",
+        "type": "ollama",
+        # Port 1 is never a model server, so this exercises the failure path.
+        "base_url": "http://127.0.0.1:1/v1",
+        "model": "qwen2.5-coder:7b",
+    }
+
+    # Testing reports a verdict instead of raising, and writes nothing.
+    probed = client.post("/api/settings/providers/test", json=unreachable).json()
+    assert probed["provider"]["connected"] is False
+    assert probed["provider"]["detail"]
+    assert client.get("/api/settings").json()["providers"] == []
+
+    # Every step is reported separately: a single green tick for "the port
+    # answered" is exactly the false confidence this is meant to avoid.
+    steps = {check["name"]: check for check in probed["checks"]}
+    assert list(steps) == ["endpoint", "credentials", "model", "generation"]
+    assert steps["endpoint"]["status"] == "fail"
+    assert steps["endpoint"]["detail"]
+    # Nothing downstream of an unreachable endpoint is claimed as passing.
+    assert [steps[name]["status"] for name in ("credentials", "model", "generation")] == [
+        "skip",
+        "skip",
+        "skip",
+    ]
+
+    # A catalog request against the same dead endpoint is a client error.
+    assert client.post("/api/settings/providers/catalog", json=unreachable).status_code == 400
+
+    # Saving a self-hosted provider works even while it is down, and routes to it.
+    saved = client.post("/api/settings/providers", json=unreachable).json()
+    assert saved["provider"]["connected"] is False
+    assert set(saved["settings"]["routing"].values()) == {"local-ollama"}
+    assert [item["name"] for item in saved["settings"]["providers"]] == ["local-ollama"]
+    assert saved["settings"]["providers"][0]["scope"] == "project"
+
+    # Editing keeps one entry rather than adding a second.
+    edited = client.post(
+        "/api/settings/providers",
+        json={**unreachable, "model": "llama3.2"},
+    ).json()
+    assert [item["model"] for item in edited["settings"]["providers"]] == ["llama3.2"]
+
+    # A nameless provider is refused before anything is written.
+    assert (
+        client.post("/api/settings/providers", json={**unreachable, "name": " "}).status_code
+        == 400
+    )
+
+
+def test_notification_and_keep_awake_settings(client: TestClient) -> None:
+    """The browser can turn both attention features on and off."""
+    from daino.config import load_settings
+
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    payload = client.get("/api/settings").json()
+    assert payload["keep_awake"] is True
+    assert payload["notifications"] == {
+        "enabled": True,
+        "desktop": True,
+        "terminal_bell": True,
+        "on_completed": True,
+        "on_failed": True,
+        "on_approval": True,
+    }
+
+    updated = client.patch(
+        "/api/settings",
+        json={
+            "keep_awake": False,
+            "notify_on_completed": False,
+            "notify_terminal_bell": False,
+        },
+    ).json()
+    assert updated["keep_awake"] is False
+    assert updated["notifications"]["on_completed"] is False
+    assert updated["notifications"]["terminal_bell"] is False
+    assert updated["notifications"]["on_failed"] is True
+
+    # The live services honour the change without a restart, and the running
+    # inhibitor is dropped rather than held until the process exits.
+    attention = client.app.state.gui.missions.attention  # type: ignore[attr-defined]
+    assert attention.keep_awake.enabled is False
+    assert attention.notifications.config.on_completed is False
+
+    on_disk = load_settings(root)
+    assert on_disk.keep_awake is False
+    assert on_disk.notifications.on_completed is False
+
+
+def test_attachments_are_stored_inside_the_state_directory(client: TestClient) -> None:
+    """A file dropped on the chat box becomes a path the agent can open."""
+    import base64
+
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"x" * 32).decode()
+
+    first = client.post(
+        "/api/files/attach", json={"name": "Screen Shot 2026.png", "content_base64": png}
+    ).json()
+    assert first["path"] == ".daino/attachments/Screen-Shot-2026.png"
+    assert (root / first["path"]).read_bytes().startswith(b"\x89PNG")
+
+    # Two screenshots pasted in a row are two attachments, not one overwritten.
+    second = client.post(
+        "/api/files/attach", json={"name": "Screen Shot 2026.png", "content_base64": png}
+    ).json()
+    assert second["path"] == ".daino/attachments/Screen-Shot-2026-1.png"
+
+    # A crafted name cannot escape the attachment directory.
+    escaped = client.post(
+        "/api/files/attach", json={"name": "../../etc/passwd", "content_base64": png}
+    ).json()
+    assert escaped["path"] == ".daino/attachments/etc-passwd"
+    assert (root / ".daino" / "attachments" / "etc-passwd").is_file()
+
+    assert (
+        client.post(
+            "/api/files/attach", json={"name": "x.png", "content_base64": "not base64!"}
+        ).status_code
+        == 400
+    )
+    oversized = base64.b64encode(b"x" * 9_000_000).decode()
+    assert (
+        client.post(
+            "/api/files/attach", json={"name": "big.bin", "content_base64": oversized}
+        ).status_code
+        == 413
+    )
+    # Attachments are conversation material, so they stay out of the working tree
+    # the user is about to review.
+    assert client.get("/api/git/status").json()["untracked"] == []
+
+
+def test_the_browser_can_leave_the_session_unpinned(client: TestClient) -> None:
+    """Auto must be reachable, or the browser can never escalate.
+
+    A pinned session is deliberately excluded from escalation to a stronger
+    model. The browser used to send a concrete profile with every message, so it
+    was always pinned and a stalled turn could never recover — unlike the
+    terminal client, which is unpinned until the user picks a model.
+    """
+    from daino.config.models import ModelProfileConfig, ProviderConfig
+
+    settings = client.app.state.gui.context.settings  # type: ignore[attr-defined]
+    settings.providers["local"] = ProviderConfig(
+        type="ollama", base_url="http://127.0.0.1:11434/v1", model="qwen"
+    )
+    settings.models["local"] = ModelProfileConfig(provider="local", model="qwen")
+    providers = client.app.state.gui.providers  # type: ignore[attr-defined]
+    session = client.post("/api/sessions", json={"title": "pinning"}).json()["id"]
+
+    assert providers.session_profile(session) == ""
+
+    pinned = client.post(f"/api/sessions/{session}/model", json={"profile": "local"})
+    assert pinned.status_code == 200
+    assert providers.session_profile(session) == "local"
+
+    # An empty profile means auto, and clears the pin rather than erroring.
+    unpinned = client.post(f"/api/sessions/{session}/model", json={"profile": ""})
+    assert unpinned.status_code == 200
+    assert unpinned.json()["profile"] == ""
+    assert providers.session_profile(session) == ""
+
+    assert (
+        client.post(f"/api/sessions/{session}/model", json={"profile": "nope"}).status_code
+        == 400
+    )
+
+
+def test_a_refresh_does_not_kill_a_running_turn(client: TestClient) -> None:
+    """The regression from ~/vasukitest/project4: work died on page reload.
+
+    Closing the socket used to cancel the turn task. CancelledError is not an
+    Exception, so nothing reported it: the log stopped mid-action and the mission
+    was left orphaned at status "created".
+    """
+    import asyncio
+
+    state = client.app.state.gui  # type: ignore[attr-defined]
+    started = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def slow_chat(text: str, session_id: str, **_: object) -> object:
+        started.set()
+        await release.wait()
+        finished.set()
+        raise RuntimeError("finished after the client left")
+
+    state.missions.chat = slow_chat  # type: ignore[method-assign]
+
+    with client.websocket_connect(
+        "/ws/session/latest", headers={"host": LOCAL_HOST, "origin": LOCAL_ORIGIN}
+    ) as ws:
+        hello = ws.receive_json()
+        assert hello["turn_running"] is False
+        ws.send_json({"type": "user_message", "text": "long job"})
+        # Wait for the turn to actually be in flight before "refreshing".
+        for _ in range(200):
+            if state.turn_lock.locked():
+                break
+            ws.send_json({"type": "ping"})
+            ws.receive_json()
+        assert state.turn_lock.locked(), "the turn never started"
+
+    # The tab is gone. The turn must still be running, and the lock still held.
+    assert state.turn_lock.locked()
+    task = state.active_turn
+    assert task is not None and not task.done()
+
+    # A reconnecting client is told the work is still in flight.
+    with client.websocket_connect(
+        "/ws/session/latest", headers={"host": LOCAL_HOST, "origin": LOCAL_ORIGIN}
+    ) as ws:
+        assert ws.receive_json()["turn_running"] is True
+
+        # And can stop it, even though another connection started it.
+        release.set()
+        ws.send_json({"type": "cancel"})
+
+    for _ in range(200):
+        if not state.turn_lock.locked():
+            break
+    assert not state.turn_lock.locked(), "the turn lock was never released"
+
+
+def test_an_abandoned_approval_is_denied_rather_than_left_hanging(
+    client: TestClient,
+) -> None:
+    """Keeping the turn alive must not let it wait forever for a gone client.
+
+    An approval is answered by the browser. With no browser, the future would
+    never resolve, holding the turn — and the project's turn lock — open for the
+    life of the process.
+    """
+    import asyncio
+
+    state = client.app.state.gui  # type: ignore[attr-defined]
+    answered: list[tuple[bool, bool]] = []
+    asked = asyncio.Event()
+
+    async def chat_needing_approval(
+        text: str, session_id: str, *, approve=None, **_: object
+    ) -> object:
+        asked.set()
+        answered.append(await approve("rm -rf build/", "writes outside the workspace"))
+        raise RuntimeError("done")
+
+    state.missions.chat = chat_needing_approval  # type: ignore[method-assign]
+
+    with client.websocket_connect(
+        "/ws/session/latest", headers={"host": LOCAL_HOST, "origin": LOCAL_ORIGIN}
+    ) as ws:
+        ws.receive_json()
+        ws.send_json({"type": "user_message", "text": "clean up"})
+        # The approval request reaches the client…
+        request = ws.receive_json()
+        while request.get("type") != "approval_request":
+            request = ws.receive_json()
+        assert request["command"] == "rm -rf build/"
+    # …and then the tab closes without answering.
+
+    for _ in range(200):
+        if answered:
+            break
+    assert answered == [(False, False)], "the agent was never told the answer"
+    for _ in range(200):
+        if not state.turn_lock.locked():
+            break
+    assert not state.turn_lock.locked(), "the turn lock was held by a dead approval"
+
+
+def test_sessions_are_named_and_listed_so_they_can_be_switched(client: TestClient) -> None:
+    """One project, several conversations — legible enough to choose between.
+
+    Every session used to keep the placeholder title, so a session list was
+    three identical rows and the browser simply stayed in the newest one
+    forever, carrying its whole history into every prompt.
+    """
+    first = client.post("/api/sessions", json={}).json()["id"]
+    second = client.post("/api/sessions", json={}).json()["id"]
+
+    state = client.app.state.gui  # type: ignore[attr-defined]
+    state.missions.add_message(
+        first, kind="user", role="user", content="add a dark theme to test.html"
+    )
+    state.missions.add_message(first, kind="agent", role="builder", content="done")
+    state.missions.add_message(second, kind="user", role="user", content="why is the build slow?")
+
+    listing = {item["id"]: item for item in client.get("/api/sessions").json()["sessions"]}
+    # The first request names the session; the placeholder is gone.
+    assert listing[first]["title"] == "add a dark theme to test.html"
+    assert listing[second]["title"] == "why is the build slow?"
+    # And the size of each conversation is visible, since it is prompt weight.
+    assert listing[first]["message_count"] == 2
+    assert listing[second]["message_count"] == 1
+
+    # A later request does not rename an already-named session.
+    state.missions.add_message(second, kind="user", role="user", content="never mind")
+    renamed = {i["id"]: i["title"] for i in client.get("/api/sessions").json()["sessions"]}
+    assert renamed[second] == "why is the build slow?"
+
+    # An explicit title survives too.
+    titled = client.post("/api/sessions", json={"title": "Release checks"}).json()["id"]
+    state.missions.add_message(titled, kind="user", role="user", content="run the tests")
+    kept = {i["id"]: i["title"] for i in client.get("/api/sessions").json()["sessions"]}
+    assert kept[titled] == "Release checks"
+
+    # Each session's transcript is its own; switching is just choosing an id.
+    assert len(client.get(f"/api/sessions/{first}/messages").json()["messages"]) == 2
+    assert len(client.get(f"/api/sessions/{titled}/messages").json()["messages"]) == 1
+
+
+def test_a_new_session_starts_without_the_old_one_s_history(client: TestClient) -> None:
+    """The reason to start one: history is what each turn sends as context."""
+    state = client.app.state.gui  # type: ignore[attr-defined]
+    old = client.post("/api/sessions", json={}).json()["id"]
+    for index in range(6):
+        state.missions.add_message(old, kind="user", role="user", content=f"request {index}")
+        state.missions.add_message(old, kind="agent", role="builder", content=f"answer {index}")
+
+    assert len(state.missions.conversation_history(old)) == 12
+
+    fresh = client.post("/api/sessions", json={}).json()["id"]
+    assert state.missions.conversation_history(fresh) == []
+    # Todos and interaction mode start clean as well.
+    assert client.get(f"/api/sessions/{fresh}/todos").json()["todos"] == []
+    assert (
+        client.get("/api/agent/config", params={"session_id": fresh}).json()["autonomy"]["mode"]
+        == "ask"
+    )

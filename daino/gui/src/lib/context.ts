@@ -8,9 +8,17 @@ export function buildContextBlock(
 ): string | null {
   if (chips.length === 0) return null;
   const block: Record<string, unknown> = { workspace };
+  const attachments: string[] = [];
   for (const chip of chips) {
+    if (chip.kind === "attachment") {
+      // Several attachments are a list, not the last one winning.
+      const path = chip.payload.attachment;
+      if (typeof path === "string") attachments.push(path);
+      continue;
+    }
     Object.assign(block, chip.payload);
   }
+  if (attachments.length) block.attachments = attachments;
   return JSON.stringify(block);
 }
 

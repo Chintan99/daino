@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import replace
 from typing import Any
 from urllib.parse import urlparse
@@ -10,7 +11,13 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 
 from daino.application.context import ProjectContext
-from daino.application.view_models import CatalogModel, OpenRouterModel, ProviderStatus
+from daino.application.view_models import (
+    CatalogModel,
+    OpenRouterModel,
+    ProviderCheck,
+    ProviderDiagnosis,
+    ProviderStatus,
+)
 from daino.config import (
     default_settings,
     load_settings,
@@ -23,11 +30,13 @@ from daino.config.globals import (
     merge_layers,
     save_global,
 )
-from daino.config.models import ModelProfileConfig, ProviderConfig, Settings
+from daino.config.models import ModelProfileConfig, ProviderConfig, Settings, model_strength
 from daino.events import ModelSelected
 from daino.model_router import ModelRole
 from daino.persistence.models import ConversationSession, Provider
 from daino.providers import OllamaProvider, OpenRouterProvider, create_provider
+from daino.providers.factory import build_provider
+from daino.schemas import Message
 from daino.security import redact, resolve_secret, store_global_secret, store_project_secret
 from daino.utils.ids import new_id
 
@@ -109,12 +118,18 @@ class ProviderApplicationService:
         make_default: bool,
         settings: Settings | None = None,
     ) -> list[str]:
-        """Point agent roles at ``profile_name``.
+        """Point agent roles at ``profile_name`` and keep failover fallbacks current.
 
         Routes that no longer resolve to a configured provider are always repaired;
         otherwise the profile only takes over every role when it is made the default.
         Without this a provider connected after the first one is validated, saved,
         and then never used, because every role still points at the original.
+
+        Escalation and provider failover both need somewhere to go: a role with no
+        fallbacks silently pins to one model, so a stalled build can neither fail
+        over a dead provider nor escalate to a stronger model. Every role's
+        fallbacks are therefore recomputed here from the other usable models,
+        strongest first, whenever routing changes.
         """
         selected_settings = settings or self.context.settings
         routing = selected_settings.routing
@@ -131,7 +146,31 @@ class ProviderApplicationService:
             if current != profile_name:
                 rerouted.append(role.value)
             routing[role.value] = profile_name
+        self._apply_fallbacks(selected_settings)
         return rerouted
+
+    @staticmethod
+    def _apply_fallbacks(settings: Settings) -> None:
+        """Set each role's failover chain to the other usable models, strongest first.
+
+        Fallbacks are for a different failure than routing: routing picks the model
+        for the job, fallbacks are where the gateway turns when that model's
+        provider is unavailable or the router escalates a stalled task. Leaving
+        them empty is what made escalation a no-op on a two-model install.
+        """
+        usable = {
+            name: profile
+            for name, profile in settings.models.items()
+            if profile.provider in settings.providers
+        }
+        ranked = sorted(usable, key=lambda name: model_strength(usable[name]), reverse=True)
+        fallbacks: dict[str, list[str]] = {}
+        for role in ModelRole:
+            primary = settings.routing.get(role.value)
+            chain = [name for name in ranked if name != primary]
+            if chain:
+                fallbacks[role.value] = chain
+        settings.routing_fallbacks = fallbacks
 
     def add(
         self,
@@ -427,6 +466,187 @@ class ProviderApplicationService:
             ),
         )
 
+    #: Per-step time budgets for a diagnosis. A local model that has to be
+    #: loaded from disk is slow the first time, so generation gets the most.
+    _REACH_TIMEOUT = 10.0
+    _AUTH_TIMEOUT = 12.0
+    _CATALOG_TIMEOUT = 15.0
+    _GENERATE_TIMEOUT = 60.0
+
+    async def _catalog_ids(self, provider: object, provider_type: str) -> list[str] | None:
+        """Model ids this provider says it offers, or ``None`` when it has no list."""
+        try:
+            if provider_type == "ollama":
+                return [item.id for item in self._ollama_models(await provider.list_models())]
+            if provider_type == "openrouter":
+                return [item.id for item in self._openrouter_models(await provider.list_models())]
+            # vLLM and generic gateways expose the OpenAI /models endpoint.
+            response = await provider.client.get("models")  # type: ignore[attr-defined]
+            if response.status_code != 200:
+                return None
+            data = response.json().get("data")
+            if not isinstance(data, list):
+                return None
+            return [
+                str(item.get("id"))
+                for item in data
+                if isinstance(item, dict) and item.get("id")
+            ]
+        except Exception:  # noqa: BLE001 - absence of a catalog is not a failure
+            return None
+
+    async def diagnose(
+        self,
+        *,
+        name: str = "",
+        provider_type: str,
+        base_url: str,
+        model: str,
+        api_key_input: str = "",
+    ) -> ProviderDiagnosis:
+        """Test a provider configuration end to end, without saving it.
+
+        Four questions, answered separately, because each one fails for its own
+        reason: does the endpoint answer, is the credential accepted, is *this*
+        model actually available there, and can it generate? The last is the only
+        one that proves the configuration would work in a turn — it sends a
+        one-token request — and the earlier ones say where it broke when it does.
+        """
+        existing = self.context.settings.providers.get(name.strip())
+        supplied = api_key_input.strip() or (existing.api_key if existing else "")
+        key = self._secret_value(supplied)
+        secrets = [key] if key else []
+        config = ProviderConfig(
+            type=provider_type,  # type: ignore[arg-type]
+            base_url=base_url.strip(),
+            model=model.strip(),
+            api_key="",
+            timeout=self._GENERATE_TIMEOUT,
+            max_retries=0,
+        )
+        provider = build_provider(name.strip() or provider_type, config, api_key=key)
+        checks: list[ProviderCheck] = []
+
+        def record(step: str, status: str, detail: str = "") -> None:
+            checks.append(ProviderCheck(name=step, status=status, detail=redact(detail, secrets)))
+
+        try:
+            # 1. Does anything answer at this URL?
+            try:
+                result = await asyncio.wait_for(
+                    provider.health_check(), timeout=self._REACH_TIMEOUT
+                )
+            except TimeoutError:
+                record("endpoint", "fail", f"no response within {self._REACH_TIMEOUT:.0f}s")
+                result = {"healthy": False}
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                record("endpoint", "fail", str(exc))
+                result = {"healthy": False}
+            else:
+                if result.get("healthy"):
+                    record(
+                        "endpoint",
+                        "pass",
+                        f"answered in {float(result.get('latency_ms', 0)):.0f} ms",
+                    )
+                else:
+                    record("endpoint", "fail", str(result.get("error") or "unreachable"))
+
+            reachable = bool(result.get("healthy"))
+
+            # 2. Is the credential accepted? Only OpenRouter can be asked directly.
+            if not reachable:
+                record("credentials", "skip", "endpoint did not answer")
+            elif provider_type == "openrouter":
+                try:
+                    details = await asyncio.wait_for(
+                        provider.validate_key(), timeout=self._AUTH_TIMEOUT  # type: ignore[attr-defined]
+                    )
+                except TimeoutError:
+                    record("credentials", "fail", f"no response within {self._AUTH_TIMEOUT:.0f}s")
+                except Exception as exc:  # noqa: BLE001 - a rejected key is a result
+                    record("credentials", "fail", str(exc))
+                else:
+                    label = str(details.get("label") or "validated")
+                    remaining = details.get("limit_remaining")
+                    suffix = f"; limit remaining {remaining}" if remaining is not None else ""
+                    record("credentials", "pass", f"key {label}{suffix}")
+            elif key:
+                record("credentials", "skip", "sent with each request; covered by generation")
+            else:
+                record("credentials", "skip", "no key configured")
+
+            # 3. Is this exact model available there?
+            catalog: list[str] | None = None
+            if not reachable:
+                record("model", "skip", "endpoint did not answer")
+            elif not config.model:
+                record("model", "fail", "no model selected")
+            else:
+                try:
+                    catalog = await asyncio.wait_for(
+                        self._catalog_ids(provider, provider_type), timeout=self._CATALOG_TIMEOUT
+                    )
+                except TimeoutError:
+                    catalog = None
+                if catalog is None:
+                    record("model", "skip", "this provider publishes no model list")
+                elif config.model in catalog:
+                    record("model", "pass", f"{config.model} is available")
+                else:
+                    stem = config.model.split(":", 1)[0]
+                    near = [item for item in catalog if item.split(":", 1)[0] == stem]
+                    hint = f"; did you mean {near[0]}?" if near else ""
+                    record(
+                        "model",
+                        "fail",
+                        f"{config.model} is not among the {len(catalog)} models offered{hint}",
+                    )
+
+            # 4. Can it actually generate? The only check that proves a turn would work.
+            if not reachable or not config.model:
+                record("generation", "skip", "nothing to send a request to")
+            else:
+                started = time.monotonic()
+                try:
+                    await asyncio.wait_for(
+                        provider.complete(  # type: ignore[attr-defined]
+                            [Message(role="user", content="ping")], max_tokens=1
+                        ),
+                        timeout=self._GENERATE_TIMEOUT,
+                    )
+                except TimeoutError:
+                    record(
+                        "generation",
+                        "fail",
+                        f"no reply within {self._GENERATE_TIMEOUT:.0f}s"
+                        " (a local model may still be loading)",
+                    )
+                except Exception as exc:  # noqa: BLE001 - the point is to report it
+                    record("generation", "fail", str(exc))
+                else:
+                    record(
+                        "generation",
+                        "pass",
+                        f"replied in {(time.monotonic() - started) * 1000:.0f} ms",
+                    )
+        finally:
+            await provider.close()
+
+        failed = [check for check in checks if check.status == "fail"]
+        detail = failed[0].detail if failed else "all checks passed"
+        return ProviderDiagnosis(
+            status=ProviderStatus(
+                name=name.strip() or provider_type,
+                type=provider_type,
+                base_url=config.base_url,
+                model=config.model,
+                connected=not failed,
+                detail=redact(detail, secrets),
+            ),
+            checks=tuple(checks),
+        )
+
     async def health_all(self) -> list[ProviderStatus]:
         return await asyncio.gather(
             *(self.health(name) for name in self.context.settings.providers)
@@ -454,6 +674,21 @@ class ProviderApplicationService:
             conversation = session.get(ConversationSession, session_id)
             selected = (conversation.active_model if conversation else "") or ""
         return selected if self.route_is_usable(selected) else ""
+
+    def unpin_session(self, session_id: str) -> None:
+        """Clear a session's model pin so routing (and escalation) applies again.
+
+        A pinned session is deliberately excluded from escalation — the user
+        asked for *that* model — so leaving one pinned by default silently
+        disables the recovery path when a weaker model stalls.
+        """
+        with self.context.database.session() as session:
+            conversation = session.scalar(
+                select(ConversationSession).where(ConversationSession.id == session_id)
+            )
+            if conversation is None:
+                raise ValueError(f"Unknown session {session_id}")
+            conversation.active_model = ""
 
     def select_for_session(self, session_id: str, profile_name: str) -> None:
         profile = self.context.settings.models.get(profile_name)

@@ -4,17 +4,21 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from daino.server.deps import get_state
 from daino.server.state import GuiState
+from daino.services.terminal import TerminalLimitError
 
 router = APIRouter(prefix="/api/terminals", tags=["terminal"])
 
 
 @router.post("")
 def create_terminal(state: Annotated[GuiState, Depends(get_state)]) -> dict:
-    session = state.terminals.create()
+    try:
+        session = state.terminals.create()
+    except TerminalLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     return {"id": session.id, "cwd": session.cwd}
 
 

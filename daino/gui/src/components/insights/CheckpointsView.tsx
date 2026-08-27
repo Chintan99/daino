@@ -8,7 +8,7 @@ export function CheckpointsView() {
   return (
     <div className="split-right">
       <div className="toolbar">
-        <span className="muted" style={{ fontSize: 11 }}>
+        <span className="muted" style={{ fontSize: "var(--fs-11)" }}>
           Recoverable snapshots of the working tree. Restoring one is an
           approval-gated action and stays in the TUI and CLI.
         </span>

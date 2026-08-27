@@ -155,7 +155,7 @@ export function DesignToolbar({
 
       <span className="grow" />
       {design && (
-        <span className="muted" style={{ fontSize: 11 }}>
+        <span className="muted" style={{ fontSize: "var(--fs-11)" }}>
           {design.nodes.length} nodes · {design.edges.length} edges · v
           {design.version}
         </span>

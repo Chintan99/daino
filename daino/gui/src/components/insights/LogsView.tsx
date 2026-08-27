@@ -166,7 +166,7 @@ export function LogsView() {
             onChange={(e) => setQuery(e.target.value)}
           />
           <span className="grow" />
-          <label className="row muted" style={{ fontSize: 11, cursor: "pointer" }}>
+          <label className="row muted" style={{ fontSize: "var(--fs-11)", cursor: "pointer" }}>
             <input
               type="checkbox"
               checked={follow}

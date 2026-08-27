@@ -69,6 +69,7 @@ from daino.tools import ActionExecutor, EditTools
 from daino.tools.commands import CommandRunner
 from daino.utils.ids import new_id
 from daino.verification import RepairLoop, VerificationEngine
+from daino.verification.engine import missing_executable
 from daino.workspace import Workspace, WorkspaceManager
 
 MAX_REVIEW_REPAIR_ATTEMPTS = 2
@@ -427,6 +428,7 @@ class MissionService:
                 commit_verified=not require_change_approval,
                 profile_override=profile_override,
             )
+            await self._run_integration_gate(workspace)
             evidence_path = await self._review_and_finish(
                 workspace,
                 requirements,
@@ -543,12 +545,31 @@ class MissionService:
                     )
                 ).all()
             )
+        # A task that fails no longer aborts the whole mission: only its dependents
+        # are skipped, so independent tasks still run and commit. The mission is
+        # reported failed at the end if anything did not complete, but with the
+        # completed work preserved rather than thrown away at the first failure.
+        failed: dict[str, str] = {}
+        skipped: dict[str, list[str]] = {}
         try:
             for spec in validate_task_graph(plan):
                 if spec.id in completed:
                     continue
-                if not set(spec.dependencies) <= completed:
-                    raise RuntimeError(f"Dependencies not completed for {spec.id}")
+                blocked_by = sorted(set(spec.dependencies) & (failed.keys() | skipped.keys()))
+                if blocked_by:
+                    skipped[spec.id] = blocked_by
+                    self._update_task(
+                        spec.id,
+                        TaskStatus.BLOCKED,
+                        evidence=[{"blocked_by": blocked_by}],
+                    )
+                    self.log.emit(
+                        "task.skipped",
+                        mission_id=workspace.mission_id,
+                        task_id=spec.id,
+                        blocked_by=blocked_by,
+                    )
+                    continue
                 self._update_task(spec.id, TaskStatus.RUNNING)
                 self.events.publish(
                     TaskStarted(
@@ -614,15 +635,19 @@ class MissionService:
                     memory=self.memory,
                     memory_task_id=persistent.task_id if persistent else None,
                 )
-                implementation, changed = await self._run_builder(
-                    workspace,
-                    spec,
-                    context,
-                    gateway,
-                    executor,
-                    debugger=False,
-                    attempts=0,
-                )
+                try:
+                    implementation, changed = await self._run_builder(
+                        workspace,
+                        spec,
+                        context,
+                        gateway,
+                        executor,
+                        debugger=False,
+                        attempts=0,
+                    )
+                except RuntimeError as exc:
+                    self._record_task_failure(workspace, failed, spec, str(exc))
+                    continue
                 indexer.build()
                 self._update_task(spec.id, TaskStatus.VERIFYING)
                 engine = VerificationEngine(workspace.path, runtime)
@@ -724,11 +749,15 @@ class MissionService:
                         )
                     )
 
-                report, attempts = await loop.run(
-                    commands,
-                    repair,
-                    observe=observe_report,
-                )
+                try:
+                    report, attempts = await loop.run(
+                        commands,
+                        repair,
+                        observe=observe_report,
+                    )
+                except RuntimeError as exc:
+                    self._record_task_failure(workspace, failed, spec, str(exc))
+                    continue
                 with self.database.session() as session:
                     session.add(
                         VerificationRun(
@@ -771,9 +800,15 @@ class MissionService:
                         attempt_count=attempts,
                         evidence=[item.model_dump(mode="json") for item in report.failures],
                     )
-                    raise RuntimeError(
-                        f"Verification failed for {spec.title}: {report.failures[0].summary}"
+                    reason = f"Verification failed for {spec.title}: {report.failures[0].summary}"
+                    failed[spec.id] = reason
+                    self.log.emit(
+                        "task.failed",
+                        mission_id=workspace.mission_id,
+                        task_id=spec.id,
+                        error=reason,
                     )
+                    continue
                 revision = None
                 if commit_verified and self.settings.git.auto_commit_verified_tasks:
                     changed_paths = sorted(set(changed))
@@ -810,8 +845,118 @@ class MissionService:
                         completed_steps=_append_unique(refreshed.completed_steps, spec.title),
                         current_step="",
                     )
+            self._raise_on_incomplete_plan(plan, completed, failed, skipped)
         finally:
             await runtime.cleanup()
+
+    async def _run_integration_gate(self, workspace: Workspace) -> None:
+        """Verify the assembled project once more after every task has finished.
+
+        Each task is verified against its own commands in isolation, so a change
+        that only breaks another task's code — a renamed symbol, a moved import —
+        can leave every per-task check green while the whole project no longer
+        builds. Running the project's discovered checks once over the final tree
+        closes that gap before the mission is reported complete.
+        """
+        if not self.settings.verification.integration_gate:
+            return
+        runtime = self._runtime(workspace.path)
+        await runtime.prepare()
+        try:
+            engine = VerificationEngine(workspace.path, runtime)
+            commands = self.settings.verification.commands or engine.discover_commands()
+            self.events.publish(
+                TestsStarted(mission_id=workspace.mission_id, commands=commands)
+            )
+            report = await engine.run(commands)
+        finally:
+            await runtime.cleanup()
+        with self.database.session() as session:
+            session.add(
+                VerificationRun(
+                    id=new_id("verification"),
+                    mission_id=workspace.mission_id,
+                    task_id=None,
+                    passed=report.passed,
+                    report=report.model_dump(mode="json"),
+                )
+            )
+        duration = (report.finished_at - report.started_at).total_seconds()
+        self.events.publish(
+            TestsCompleted(
+                mission_id=workspace.mission_id,
+                passed=report.passed,
+                passed_count=sum(check.passed for check in report.checks),
+                failed_count=len(report.failures),
+                duration_seconds=duration,
+                failures=[item.model_dump(mode="json") for item in report.failures],
+                details={"scope": "integration"},
+            )
+        )
+        if report.passed:
+            return
+        # A check the runtime could not even launch (its own program is missing)
+        # says nothing about the code, so it must not fail an assembled project.
+        real = [
+            failure
+            for failure in report.failures
+            if not missing_executable(failure.command, failure.output_excerpt or "")
+        ]
+        if not real:
+            return
+        raise RuntimeError(
+            "Integration verification failed after all tasks completed: "
+            f"{real[0].summary} (command: {real[0].command}). The per-task work is "
+            "committed; fix the cross-task breakage and retry."
+        )
+
+    def _record_task_failure(
+        self,
+        workspace: Workspace,
+        failed: dict[str, str],
+        spec: TaskSpec,
+        reason: str,
+    ) -> None:
+        """Mark a task failed and record why, without aborting sibling tasks."""
+        failed[spec.id] = reason
+        self._update_task(spec.id, TaskStatus.FAILED, evidence=[{"error": reason}])
+        self.log.emit(
+            "task.failed",
+            mission_id=workspace.mission_id,
+            task_id=spec.id,
+            error=reason,
+        )
+
+    def _raise_on_incomplete_plan(
+        self,
+        plan: TaskPlan,
+        completed: set[str],
+        failed: dict[str, str],
+        skipped: dict[str, list[str]],
+    ) -> None:
+        """Fail the mission with a precise breakdown when any task did not finish.
+
+        Completed tasks have already been verified and committed, so the message
+        names what got done and what did not rather than discarding the run.
+        """
+        if not failed and not skipped:
+            return
+        by_id = {task.id: task for task in plan.tasks}
+        done = sum(1 for task in plan.tasks if task.id in completed)
+        parts = [f"Completed {done} of {len(plan.tasks)} tasks."]
+        failed_titles = [by_id[task_id].title for task_id in failed if task_id in by_id]
+        skipped_titles = [by_id[task_id].title for task_id in skipped if task_id in by_id]
+        if failed_titles:
+            parts.append("Failed: " + "; ".join(failed_titles) + ".")
+        if skipped_titles:
+            parts.append(
+                "Skipped after a dependency failed: " + "; ".join(skipped_titles) + "."
+            )
+        parts.append(
+            "Completed tasks were verified and committed; review them, then narrow or "
+            "reword the failed tasks and retry."
+        )
+        raise RuntimeError(" ".join(parts))
 
     async def _run_builder(
         self,

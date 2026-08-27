@@ -84,6 +84,131 @@ def patterns_overlap(first: str, second: str) -> bool:
     return scope_matches(first, second_prefix) or scope_matches(second, first_prefix)
 
 
+
+#: Returned by :func:`_tolerant_span` when the relaxed match is not unique.
+_AMBIGUOUS = (-1, -1)
+
+
+def _normalise(line: str) -> str:
+    """A line with its horizontal whitespace collapsed, for anchor matching."""
+    return " ".join(line.split())
+
+
+def _indent(line: str) -> str:
+    return line[: len(line) - len(line.lstrip())]
+
+
+def _tolerant_span(text: str, old_string: str) -> tuple[int, int] | None:
+    """Locate ``old_string`` in ``text`` ignoring horizontal whitespace.
+
+    Returns the character span of the match, ``_AMBIGUOUS`` when more than one
+    region matches, or ``None`` when nothing does. Line *structure* still has to
+    agree — only indentation and runs of spaces inside a line are forgiven — so
+    this cannot silently rewrite a different part of the file.
+    """
+    wanted = [_normalise(line) for line in old_string.splitlines()]
+    if not wanted or not any(wanted):
+        return None
+    lines = text.splitlines(keepends=True)
+    normalised = [_normalise(line) for line in lines]
+    # Character offset of the start of each line, to convert a line match back
+    # into a span the caller can splice.
+    offsets: list[int] = []
+    cursor = 0
+    for line in lines:
+        offsets.append(cursor)
+        cursor += len(line)
+
+    matches: list[tuple[int, int]] = []
+    for index in range(len(lines) - len(wanted) + 1):
+        if normalised[index : index + len(wanted)] != wanted:
+            continue
+        start = offsets[index]
+        last = index + len(wanted) - 1
+        end = offsets[last] + len(lines[last])
+        # Keep the newline out of the span when the anchor did not include one,
+        # so the replacement does not swallow the line break.
+        if not old_string.endswith("\n") and lines[last].endswith("\n"):
+            end -= len(lines[last]) - len(lines[last].rstrip("\r\n"))
+        matches.append((start, end))
+        if len(matches) > 1:
+            return _AMBIGUOUS
+    return matches[0] if matches else None
+
+
+def _reindented(new_string: str, matched: str) -> str:
+    """Shift ``new_string`` onto the indentation the file actually uses.
+
+    The model supplied both the anchor and the replacement with the same wrong
+    indentation, so applying the replacement verbatim would leave the file
+    misaligned by exactly the amount the anchor was wrong by.
+    """
+    replacement_lines = new_string.splitlines(keepends=True)
+    if not replacement_lines:
+        return new_string
+    target = _indent(matched.splitlines()[0]) if matched.splitlines() else ""
+    source = _indent(replacement_lines[0])
+    if target == source:
+        return new_string
+    shifted: list[str] = []
+    for line in replacement_lines:
+        stripped = line.lstrip(" \t")
+        if not stripped.strip():
+            shifted.append(line)
+            continue
+        existing = _indent(line)
+        # Preserve relative indentation inside the block.
+        extra = existing[len(source) :] if existing.startswith(source) else ""
+        shifted.append(target + extra + stripped)
+    return "".join(shifted)
+
+
+def _recovery_hint(text: str, old_string: str) -> str:
+    """Point the agent at where the anchor nearly matched.
+
+    "Read the file again" is advice a weak model follows by reading the same file
+    and producing the same near-miss. A line number is something it can act on.
+    """
+    first = next((line for line in old_string.splitlines() if line.strip()), "")
+    needle = _normalise(first)
+    if not needle:
+        return "Read the file again and copy the text exactly, including indentation."
+    hits = [
+        number
+        for number, line in enumerate(text.splitlines(), start=1)
+        if _normalise(line) == needle
+    ]
+    if not hits:
+        partial = [
+            number
+            for number, line in enumerate(text.splitlines(), start=1)
+            if needle[:40] and needle[:40] in _normalise(line)
+        ][:3]
+        if partial:
+            return (
+                f"Its first line resembles line(s) {', '.join(map(str, partial))}; "
+                "read that region and copy the text exactly, including indentation."
+            )
+
+        line_count = text.count("\n") + 1
+        if line_count > 150:
+            return (
+                f"None of its lines appear in this {line_count}-line file. The region you want "
+                "is probably outside the part you have already seen — read the file in ranges "
+                "with offset/limit until you locate the exact lines, then copy them verbatim. "
+                "Do not write content from memory."
+            )
+        return (
+            "None of its lines appear in the file. Read the file again and copy the "
+            "text exactly, including indentation — or use the write action to "
+            "replace the whole file."
+        )
+    shown = ", ".join(str(number) for number in hits[:3])
+    return (
+        f"Its first line matches line(s) {shown}, so the rest of the anchor differs. "
+        "Re-read that region and copy it exactly, including indentation."
+    )
+
 class EditTools:
     def __init__(
         self,
@@ -386,13 +511,47 @@ class EditTools:
             return ToolResult(tool="replace_in_file", success=False, error=str(exc))
         occurrences = text.count(old_string)
         if occurrences == 0:
+            # Exact matching is right, and byte-exactness is also the single
+            # thing weaker models cannot deliver: they reproduce the lines but
+            # drift on indentation or a trailing space, and then retry the same
+            # edit until the no-progress guard stops the whole turn. So before
+            # giving up, look for the same lines ignoring horizontal whitespace.
+            span = _tolerant_span(text, old_string)
+            if span is None:
+                return ToolResult(
+                    tool="replace_in_file",
+                    success=False,
+                    error=(
+                        f"old_string was not found in {relative}. "
+                        f"{_recovery_hint(text, old_string)}"
+                    ),
+                )
+            if span == _AMBIGUOUS:
+                return ToolResult(
+                    tool="replace_in_file",
+                    success=False,
+                    error=(
+                        f"old_string matches several places in {relative} once "
+                        "indentation is ignored. Include more surrounding lines to "
+                        "make it unique"
+                    ),
+                )
+            start, end = span
+            updated = text[:start] + _reindented(new_string, text[start:end]) + text[end:]
+            path.write_text(updated, encoding="utf-8")
+            syntax_error = self._validate_python([relative])
+            if syntax_error:
+                path.write_text(text, encoding="utf-8")
+                return ToolResult(tool="replace_in_file", success=False, error=syntax_error)
             return ToolResult(
                 tool="replace_in_file",
-                success=False,
-                error=(
-                    f"old_string was not found in {relative}. Read the file again and "
-                    "copy the text to replace exactly, including indentation"
-                ),
+                success=True,
+                data={
+                    "path": relative,
+                    "replacements": 1,
+                    # Recorded, never silent: the anchor did not match exactly.
+                    "matched": "whitespace-insensitive",
+                },
             )
         if occurrences > 1 and not replace_all:
             return ToolResult(

@@ -35,7 +35,7 @@ export function ElementInspector({
     return (
       <div className="ve-inspector">
         <div className="panel-header">Element</div>
-        <div className="pad muted" style={{ fontSize: 12 }}>
+        <div className="pad muted" style={{ fontSize: "var(--fs-12)" }}>
           Click anything on the page to select it. Drag to move it, double-click
           to edit its text, and drag a block in from the left.
         </div>
@@ -213,7 +213,7 @@ export function ElementInspector({
 
         <div className="field">
           <label>Insert a block</label>
-          <div className="muted" style={{ fontSize: 11 }}>
+          <div className="muted" style={{ fontSize: "var(--fs-11)" }}>
             Clicking a block on the left drops it just after this element.
           </div>
         </div>

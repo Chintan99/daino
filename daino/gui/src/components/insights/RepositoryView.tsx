@@ -29,7 +29,7 @@ export function RepositoryView() {
         <button className="btn primary" disabled={busy} onClick={() => void reindex()}>
           {busy ? "Indexing…" : "Rebuild index"}
         </button>
-        <span className="muted" style={{ fontSize: 11 }}>
+        <span className="muted" style={{ fontSize: "var(--fs-11)" }}>
           What {BRAND} knows about this codebase — the same index the agent
           consults before it plans.
         </span>
@@ -83,7 +83,7 @@ export function RepositoryView() {
           </div>
 
           <div className="section-title">Entry points</div>
-          <div className="md-block mono" style={{ fontSize: 12 }}>
+          <div className="md-block mono" style={{ fontSize: "var(--fs-12)" }}>
             {data.entrypoints.length === 0
               ? "None detected."
               : data.entrypoints.join("\n")}

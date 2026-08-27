@@ -11,6 +11,7 @@ import type {
   ServerSessionMessage,
   WsEvent,
 } from "../api/types";
+import { roleActivity, toolActivity } from "../lib/activity";
 import { wsUrl } from "./url";
 
 function num(v: unknown): number {
@@ -20,6 +21,64 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+/**
+ * The TUI's activity mapping (daino/tui/screens/workspace.py), applied to the
+ * live event stream. Kept beside the socket because this is the only place the
+ * raw events arrive.
+ */
+function applyActivity(
+  kind: string,
+  event: WsEvent,
+  s: ReturnType<typeof useAgentStore.getState>,
+): void {
+  switch (kind) {
+    case "MissionCreated":
+      s.setActivity("planning", "shaping the task");
+      return;
+    case "AgentRoleChanged":
+      s.setActivity(roleActivity(str(event.role)), `${str(event.role)} active`);
+      return;
+    case "ModelReasoningChunk":
+      if (!s.thinking) s.setActivity("thinking", "model reasoning");
+      return;
+    case "MissionStarted":
+      s.setActivity("building", "mission running");
+      return;
+    case "TaskStarted":
+      s.setActivity("building", str(event.title));
+      return;
+    case "ToolStarted":
+      s.setActivity(toolActivity(str(event.tool)), str(event.summary));
+      return;
+    case "ToolFailed":
+      s.setActivity("failed", str(event.error).slice(0, 60));
+      return;
+    case "FileChanged":
+      s.setActivity("building", str(event.path));
+      return;
+    case "TestsStarted":
+      s.setActivity("verifying", "running checks");
+      return;
+    case "TestsCompleted": {
+      const passed = Boolean(event.passed);
+      const total = num(event.passed_count) + num(event.failed_count);
+      s.setActivity(
+        passed ? "verifying" : "failed",
+        `tests ${num(event.passed_count)}/${total}`,
+      );
+      return;
+    }
+    case "MissionCompleted":
+      s.setActivity("completed", "all work verified");
+      return;
+    case "MissionFailed":
+      s.setActivity("failed", "needs attention");
+      return;
+    default:
+      return;
+  }
+}
+
 export function useSessionSocket(target: string = "latest") {
   const qc = useQueryClient();
   const wsRef = useRef<WebSocket | null>(null);
@@ -27,6 +86,10 @@ export function useSessionSocket(target: string = "latest") {
   const pingRef = useRef<number | null>(null);
 
   useEffect(() => {
+    // A different conversation means none of the previous one's live state
+    // applies: events, plan, file list and chips all belong to the session
+    // being left.
+    useAgentStore.getState().resetForSession();
     let closedByUs = false;
     let retry = 0;
     let reconnectTimer: number | null = null;
@@ -85,6 +148,11 @@ export function useSessionSocket(target: string = "latest") {
         case "session": {
           sessionIdRef.current = msg.session_id;
           s.setSession(msg.session_id);
+          // A refresh reconnects mid-turn: pick the running state back up, and
+          // reload the transcript for whatever landed while we were away.
+          if (msg.turn_running) s.resumeTurn();
+          else if (s.turnRunning) s.endTurn();
+          qc.invalidateQueries({ queryKey: qk.sessionMessages(msg.session_id) });
           break;
         }
         case "event": {
@@ -111,6 +179,7 @@ export function useSessionSocket(target: string = "latest") {
         }
         case "error": {
           s.pushEvent({ kind: "error", message: msg.message });
+          s.setActivity("failed", msg.message.slice(0, 60));
           s.endTurn();
           break;
         }
@@ -126,6 +195,18 @@ export function useSessionSocket(target: string = "latest") {
       s: ReturnType<typeof useAgentStore.getState>,
     ) => {
       const kind = String(event.kind ?? "");
+
+      /**
+       * Move the runner, but only while a turn is actually live.
+       *
+       * Events reach the browser through a pump task while `turn_complete` is
+       * sent directly on the socket, so a queued `TestsCompleted` can land
+       * *after* the turn ended — which put the runner back into VERIFYING and
+       * left it running forever with the answer already on screen. Query
+       * invalidation below still runs for those late events.
+       */
+      if (useAgentStore.getState().turnRunning) applyActivity(kind, event, s);
+
       switch (kind) {
         case "ModelReasoningChunk":
           s.appendThinking(str(event.content));
@@ -152,9 +233,32 @@ export function useSessionSocket(target: string = "latest") {
           break;
         }
         case "FileChanged":
+          // Accumulate the live file list the panel shows while the turn runs.
+          s.recordChange({
+            path: str(event.path),
+            action: str(event.action) || "changed",
+            added: num(event.added),
+            removed: num(event.removed),
+          });
+          qc.invalidateQueries({ queryKey: qk.gitStatus });
+          break;
         case "GitChanged":
           qc.invalidateQueries({ queryKey: qk.gitStatus });
           break;
+        case "TodoUpdated": {
+          const todos = Array.isArray(event.todos)
+            ? (event.todos as { content?: string; status?: string }[]).map((todo) => ({
+                content: String(todo.content ?? ""),
+                status: String(todo.status ?? "pending"),
+              }))
+            : [];
+          // The checklist itself lives in the panel; the stream gets one line per
+          // item that just finished, which is what the TUI shows too.
+          const { completed, failed } = s.applyTodos(todos);
+          for (const content of completed) s.pushEvent({ kind: "TodoCompleted", content });
+          for (const content of failed) s.pushEvent({ kind: "TodoFailed", content });
+          break;
+        }
         case "PreviewStarted":
         case "PreviewStopped":
           qc.invalidateQueries({ queryKey: qk.previewStatus });

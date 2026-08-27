@@ -8,7 +8,7 @@ export function ApprovalsView() {
   return (
     <div className="split-right">
       <div className="toolbar">
-        <span className="muted" style={{ fontSize: 11 }}>
+        <span className="muted" style={{ fontSize: "var(--fs-11)" }}>
           Every risky command, infrastructure change, deployment, and restore the
           agent asked about — and what was decided.
         </span>

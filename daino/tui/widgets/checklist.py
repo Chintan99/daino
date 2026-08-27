@@ -54,6 +54,8 @@ class TaskChecklist(VerticalScroll):
     def __init__(self, *, id: str | None = None, classes: str | None = None) -> None:
         super().__init__(id=id, classes=classes)
         self.todos: list[TodoItem] = []
+        #: Files this turn has edited, in first-touched order with counts summed.
+        self.changes: dict[str, tuple[int, int]] = {}
         self.activity_state = "idle"
         self.activity_detail = ""
         self._runner_frame = 0
@@ -66,6 +68,8 @@ class TaskChecklist(VerticalScroll):
         yield Static("", id="activity-label")
         yield Static("", id="checklist-title")
         yield Static("", id="checklist-items")
+        yield Static("", id="changes-title")
+        yield Static("", id="changes-items")
 
     def on_mount(self) -> None:
         self._runner_timer = self.set_interval(
@@ -87,6 +91,55 @@ class TaskChecklist(VerticalScroll):
         if self.is_mounted:
             self._paint()
 
+    def record_change(self, path: str, added: int, removed: int) -> None:
+        """Add one edit to the live file list.
+
+        Shown while the turn runs, because "which files has it touched so far?"
+        is otherwise only answerable by scrolling back through the diff cards —
+        and the answer is what the user checks before letting it continue.
+        """
+        previous = self.changes.get(path, (0, 0))
+        self.changes[path] = (previous[0] + added, previous[1] + removed)
+        self._update_visibility()
+        if self.is_mounted:
+            self._paint_changes()
+
+    def clear_changes(self) -> None:
+        """Forget the previous turn's files as a new one starts."""
+        self.changes.clear()
+        if self.is_mounted:
+            self._paint_changes()
+
+    def _paint_changes(self) -> None:
+        title = self.query_one("#changes-title", Static)
+        items = self.query_one("#changes-items", Static)
+        if not self.changes:
+            title.update(Text(""))
+            items.update(Text(""))
+            return
+        added = sum(pair[0] for pair in self.changes.values())
+        removed = sum(pair[1] for pair in self.changes.values())
+        title.update(
+            Text.assemble(
+                ("EDITED", f"bold {palette.CAUTION}"),
+                (f"  {len(self.changes)}", palette.DIM),
+                (f"  +{added}", palette.DIFF_ADDED),
+                (f" -{removed}", palette.DIFF_REMOVED),
+            )
+        )
+        body = Text()
+        for index, (path, (file_added, file_removed)) in enumerate(self.changes.items()):
+            if index:
+                body.append("\n")
+            # The filename identifies the file; the directory is context.
+            directory, _, name = path.rpartition("/")
+            if directory:
+                body.append(f"{directory}/", style=palette.FAINTEST)
+            body.append(name, style=palette.TEXT)
+            body.append(f"  +{file_added}", style=palette.DIFF_ADDED)
+            body.append(f" -{file_removed}", style=palette.DIFF_REMOVED)
+        items.update(body)
+
     def set_activity(self, state: str, detail: str = "") -> None:
         """Show what Daino is doing independently of checklist progress."""
         normalized = state if state in _ACTIVITY_LABELS else "thinking"
@@ -107,7 +160,10 @@ class TaskChecklist(VerticalScroll):
             self._sync_animation()
 
     def _update_visibility(self) -> None:
-        self.set_class(not self.todos and self.activity_state == "idle", "hidden-panel")
+        self.set_class(
+            not self.todos and not self.changes and self.activity_state == "idle",
+            "hidden-panel",
+        )
 
     def _paint_activity(self) -> None:
         colour = _ACTIVITY_COLOURS[self.activity_state]
@@ -215,6 +271,7 @@ class TaskChecklist(VerticalScroll):
     def _paint(self) -> None:
         self._paint_runner()
         self._paint_activity()
+        self._paint_changes()
         completed = sum(todo.status == "completed" for todo in self.todos)
         self.query_one("#checklist-title", Static).update(
             Text.assemble(

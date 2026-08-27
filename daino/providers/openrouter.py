@@ -26,6 +26,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         features: list[str] | None = None,
         reasoning_effort: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        concurrency: int = 0,
     ) -> None:
         headers: dict[str, str] = {}
         if application_name:
@@ -44,6 +45,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
             features=features,
             reasoning_effort=reasoning_effort,
             transport=transport,
+            concurrency=concurrency,
         )
 
     def _apply_reasoning_effort(self, payload: dict[str, Any]) -> None:

@@ -31,7 +31,7 @@ function CheckRow({ check }: { check: QACheck }) {
           )}
           {check.label}
           {check.command && (
-            <div className="mono muted" style={{ fontSize: 11 }}>
+            <div className="mono muted" style={{ fontSize: "var(--fs-11)" }}>
               {check.command}
             </div>
           )}
@@ -56,7 +56,7 @@ function CheckRow({ check }: { check: QACheck }) {
                 margin: 0,
                 padding: "10px 14px",
                 background: "var(--bg-0)",
-                fontSize: 11.5,
+                fontSize: "var(--fs-11-5)",
                 maxHeight: 300,
                 overflow: "auto",
                 whiteSpace: "pre-wrap",
@@ -77,7 +77,7 @@ function SpecialistRow({ item }: { item: QASpecialist }) {
     <tr>
       <td>
         {item.label}
-        <div className="muted" style={{ fontSize: 11 }}>
+        <div className="muted" style={{ fontSize: "var(--fs-11)" }}>
           {item.objective}
         </div>
       </td>
@@ -198,7 +198,7 @@ export function QAView() {
               Cancel
             </button>
           )}
-          <span className="muted" style={{ fontSize: 11 }}>
+          <span className="muted" style={{ fontSize: "var(--fs-11)" }}>
             Parallel read-only reviewers, tests, browser checks, and dependency
             audits. Scans needing network approval are skipped, not granted.
           </span>

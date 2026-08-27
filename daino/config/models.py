@@ -42,6 +42,11 @@ class VerificationConfig(BaseModel):
     repair_attempts_local: int = 2
     total_attempts: int = 4
     require_review: bool = True
+    #: Run the project's discovered build/test commands once more over the whole
+    #: workspace after every task finishes. Per-task checks pass in isolation, so
+    #: a task that renames a symbol another task depends on can leave both green
+    #: while the assembled project is broken; this final gate catches that.
+    integration_gate: bool = True
     commands: list[str] = Field(default_factory=list)
 
 
@@ -85,6 +90,11 @@ class ProviderConfig(BaseModel):
     reasoning_effort: Literal[
         "none", "minimal", "low", "medium", "high", "xhigh", "max"
     ] | None = None
+    #: How many generation requests may be in flight at once. ``None`` resolves
+    #: to 1 for a local runtime (Ollama/vLLM serve one model, so concurrent
+    #: requests queue there and each returns slower) and to unlimited for a
+    #: hosted API, which answers from separate capacity. ``0`` is unlimited.
+    max_concurrent_requests: int | None = Field(default=None, ge=0, le=64)
 
     @field_validator("api_key")
     @classmethod
@@ -97,7 +107,14 @@ class ProviderConfig(BaseModel):
     def apply_default_features(self) -> ProviderConfig:
         if not self.features:
             self.features = list(_DEFAULT_FEATURES.get(self.type, ["chat", "structured"]))
+        if self.max_concurrent_requests is None:
+            self.max_concurrent_requests = 1 if self.type in {"ollama", "vllm"} else 0
         return self
+
+    @property
+    def concurrency(self) -> int:
+        """Resolved in-flight request limit; 0 means unlimited."""
+        return self.max_concurrent_requests or 0
 
 
 class ModelProfileConfig(BaseModel):
@@ -133,6 +150,31 @@ class ModelProfileConfig(BaseModel):
     max_agent_steps: int = Field(default=0, ge=0, le=100)
     no_progress_limit: int = Field(default=3, ge=2, le=12)
     staged_retrieval: bool = True
+
+
+_COST_RANK = {"free": 0, "low": 1, "medium": 2, "high": 3}
+
+
+def model_strength(profile: ModelProfileConfig) -> tuple[int, int, int, int]:
+    """Rank models so the strongest sorts first (use with ``reverse=True``).
+
+    Freshly configured models all carry neutral capability scores, so the ranking
+    cannot lean on those alone: a non-local model is treated as the stronger
+    failover choice, then the reasoning-score aggregate, then window size, then
+    cost tier as a coarse proxy for capability.
+    """
+    reasoning = (
+        profile.planning_score
+        + profile.review_score
+        + profile.debugging_score
+        + profile.coding_score
+    )
+    return (
+        0 if profile.local else 1,
+        reasoning,
+        profile.context_window,
+        _COST_RANK.get(profile.cost_classification, 1),
+    )
 
 
 class DeploymentAuthConfig(BaseModel):
@@ -172,6 +214,24 @@ class TUIConfig(BaseModel):
     show_hints: bool = True
     streaming: bool = True
     keybindings: dict[str, str] = Field(default_factory=dict)
+
+
+class NotificationsConfig(BaseModel):
+    """When to raise an OS notification about a long-running turn.
+
+    A turn the user walked away from is the normal case, so the three moments
+    that need attention — it finished, it broke, it is waiting for approval —
+    are announced outside the application window.
+    """
+
+    enabled: bool = True
+    #: A real OS notification (osascript / notify-send / Windows balloon).
+    desktop: bool = True
+    #: The terminal bell, which most terminals turn into a tab badge.
+    terminal_bell: bool = True
+    on_completed: bool = True
+    on_failed: bool = True
+    on_approval: bool = True
 
 
 class MemoryConfig(BaseModel):
@@ -223,6 +283,40 @@ class Settings(BaseSettings):
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     tui: TUIConfig = Field(default_factory=TUIConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
+    #: Hold an OS sleep inhibitor while the agent works. A mission runs for
+    #: minutes without input, and a host that suspends mid-turn drops the
+    #: model connection and freezes commands in flight.
+    keep_awake: bool = True
+
+    @model_validator(mode="after")
+    def backfill_routing_fallbacks(self) -> Settings:
+        """Give every routed role a failover chain when none was configured.
+
+        Escalation and provider failover both consult ``routing_fallbacks``; an
+        empty map silently pins each role to a single model, so a stalled build
+        can neither fail over a dead provider nor escalate to a stronger model.
+        Older configs written before fallbacks existed therefore get a sensible
+        chain here, in memory, without rewriting the file. Explicit configuration
+        is respected: a non-empty map is left exactly as the operator set it.
+        """
+        if self.routing_fallbacks:
+            return self
+        usable = {
+            name: profile
+            for name, profile in self.models.items()
+            if profile.provider in self.providers
+        }
+        if len(usable) < 2:
+            return self
+        ranked = sorted(usable, key=lambda name: model_strength(usable[name]), reverse=True)
+        fallbacks: dict[str, list[str]] = {}
+        for role, primary in self.routing.items():
+            chain = [name for name in ranked if name != primary]
+            if chain:
+                fallbacks[role] = chain
+        self.routing_fallbacks = fallbacks
+        return self
 
     def safe_dump(self) -> dict[str, Any]:
         """Serialize configuration without ever resolving secret references."""

@@ -116,6 +116,30 @@ builder's ad-hoc finishing suggestions. After all task checks pass, an independe
 turned into a scoped corrective task and re-reviewed, with two repair attempts at most; the mission
 blocks if review still fails.
 
+### Editing anchors
+
+`replace` locates its target by exact text, which is correct and is also the one
+thing a weaker local model reliably fails: it reproduces the right lines and
+drifts on indentation or internal spacing, then retries the same edit until the
+no-progress guard stops the whole turn. Observed with a 27B local model on an
+18 KB HTML file: six reads, four `replace` calls, no edits, turn abandoned.
+
+So an exact match is tried first and, only if it finds nothing, the same lines
+are looked for again ignoring horizontal whitespace:
+
+* the match must still agree line for line, so a relaxed anchor cannot land on a
+  different part of the file;
+* more than one relaxed match is refused, not guessed;
+* the replacement is shifted onto the indentation the file actually uses, keeping
+  whatever relative indentation it came with;
+* the result records `matched: whitespace-insensitive`, so a relaxed edit is
+  auditable rather than silent;
+* the Python syntax guard and its rollback still apply.
+
+When nothing matches at all, the error names the line the anchor's first line
+*does* match, because "read the file again" is advice a weak model follows by
+reading the same file and producing the same near-miss.
+
 ## Teams of sub-agents
 
 `daino/agents/team.py` is the concurrent path, reached from `/team`. A team lead turns one

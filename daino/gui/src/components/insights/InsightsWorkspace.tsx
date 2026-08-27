@@ -40,7 +40,7 @@ export function InsightsWorkspace() {
           ))}
         </div>
         <span className="grow" />
-        <span className="muted" style={{ fontSize: 11 }}>
+        <span className="muted" style={{ fontSize: "var(--fs-11)" }}>
           {VIEWS.find((v) => v.id === view)?.hint}
         </span>
       </div>

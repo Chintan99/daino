@@ -18,6 +18,7 @@ from daino.exceptions import (
     ToolCallingUnsupported,
 )
 from daino.providers.base import DEFAULT_MAX_OUTPUT_TOKENS, LLMProvider, ProviderUsage
+from daino.providers.gate import request_slot
 from daino.schemas import LLMResponse, Message, ToolCall
 
 StructuredT = TypeVar("StructuredT", bound=BaseModel)
@@ -342,9 +343,13 @@ class OpenAICompatibleProvider(LLMProvider):
         features: list[str] | None = None,
         reasoning_effort: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        concurrency: int = 0,
     ) -> None:
         self.name = name
         self.model = model
+        #: In-flight generation requests allowed against this provider; 0 is
+        #: unlimited.
+        self.concurrency = concurrency
         self.max_retries = max_retries
         self.max_output_tokens = max_output_tokens
         self.features = set(features or ["chat", "structured"])
@@ -354,6 +359,12 @@ class OpenAICompatibleProvider(LLMProvider):
         headers = {"Content-Type": "application/json", **(extra_headers or {})}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
+        #: The gate is keyed by endpoint, not by provider name: the thing that
+        #: can only serve one request at a time is the model server. Two config
+        #: entries pointing at the same Ollama share its queue; two Ollamas on
+        #: different hosts must not block each other. (Adapters also hardcode
+        #: their own ``name``, so a name key would lump every Ollama together.)
+        self._gate_key = base_url.rstrip("/").casefold()
         self.client = httpx.AsyncClient(
             base_url=base_url.rstrip("/") + "/",
             headers=headers,
@@ -362,6 +373,16 @@ class OpenAICompatibleProvider(LLMProvider):
         )
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Send one completion request, holding this provider's request slot.
+
+        The slot is taken *before* the HTTP call, so the client timeout starts
+        when the request is actually sent rather than while it queues — waiting
+        inside the model server was what turned a slow fan-out into a timeout.
+        """
+        async with request_slot(self._gate_key, self.concurrency):
+            return await self._post_now(payload)
+
+    async def _post_now(self, payload: dict[str, Any]) -> dict[str, Any]:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
@@ -481,10 +502,11 @@ class OpenAICompatibleProvider(LLMProvider):
     ) -> tuple[dict[str, Any], ProviderUsage]:
         """Collect SSE into the same response shape consumed by ``complete``."""
         accumulator = _StreamAccumulator(self.model)
-        async for chunk in self._stream_json(payload):
-            usage = self._capture_usage(chunk)
-            message = accumulator.consume(chunk, usage)
-            self._emit_reasoning(_reasoning_fragment(message))
+        async with request_slot(self._gate_key, self.concurrency):
+            async for chunk in self._stream_json(payload):
+                usage = self._capture_usage(chunk)
+                message = accumulator.consume(chunk, usage)
+                self._emit_reasoning(_reasoning_fragment(message))
         if not accumulator.saw_choice:
             raise ProviderError(f"Malformed streaming response from {self.name}: no choices")
         return accumulator.response(), accumulator.usage

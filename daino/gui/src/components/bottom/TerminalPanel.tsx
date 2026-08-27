@@ -1,32 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { api } from "../../api/client";
+import { useSettingsStore } from "../../store/settingsStore";
 import { useTerminalStore } from "../../store/terminalStore";
 import { useTerminalSocket } from "../../ws/useTerminalSocket";
-
-const THEME = {
-  background: "#05070b",
-  foreground: "#e6edf3",
-  cursor: "#6aa1ff",
-  selectionBackground: "#26314a",
-  black: "#0b0e14",
-  brightBlack: "#7c8798",
-};
+import { xtermTheme } from "../../lib/editorPrefs";
+import { registerTerminal } from "../../lib/terminalRegistry";
+import { closeTerminal, createTerminal, restoreTerminals } from "../../lib/terminals";
 
 function XtermView({ id, active }: { id: string; active: boolean }) {
   const holderRef = useRef<HTMLDivElement | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const [term, setTerm] = useState<Terminal | null>(null);
+  const theme = useSettingsStore((s) => s.theme);
+  const fontSize = useSettingsStore((s) => s.terminalFontSize);
 
   useEffect(() => {
     const holder = holderRef.current;
     if (!holder) return;
     const t = new Terminal({
       fontFamily: "'SFMono-Regular', 'JetBrains Mono', Menlo, monospace",
-      fontSize: 12,
+      fontSize: useSettingsStore.getState().terminalFontSize,
       cursorBlink: true,
-      theme: THEME,
+      theme: xtermTheme(useSettingsStore.getState().theme),
       convertEol: true,
     });
     const fit = new FitAddon();
@@ -34,6 +30,7 @@ function XtermView({ id, active }: { id: string; active: boolean }) {
     t.open(holder);
     fitRef.current = fit;
     setTerm(t);
+    const unregister = registerTerminal(id, t);
     const raf = requestAnimationFrame(() => {
       try {
         fit.fit();
@@ -52,9 +49,28 @@ function XtermView({ id, active }: { id: string; active: boolean }) {
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      unregister();
       t.dispose();
     };
-  }, []);
+  }, [id]);
+
+  /**
+   * Restyle in place when the theme or font size changes.
+   *
+   * A terminal cannot be re-created for a preference change: its scrollback and
+   * the PTY behind it would be lost. Writing the options and re-fitting keeps
+   * both, and the re-fit is required because a font change alters the grid.
+   */
+  useEffect(() => {
+    if (!term) return;
+    term.options.theme = xtermTheme(theme);
+    term.options.fontSize = fontSize;
+    try {
+      fitRef.current?.fit();
+    } catch {
+      /* the panel may be hidden; the next reveal re-fits */
+    }
+  }, [term, theme, fontSize]);
 
   useTerminalSocket(id, term);
 
@@ -88,37 +104,12 @@ function XtermView({ id, active }: { id: string; active: boolean }) {
 export function TerminalPanel() {
   const ids = useTerminalStore((s) => s.ids);
   const activeId = useTerminalStore((s) => s.activeId);
-  const addTerminal = useTerminalStore((s) => s.addTerminal);
-  const removeTerminal = useTerminalStore((s) => s.removeTerminal);
   const setActive = useTerminalStore((s) => s.setActive);
-  const creatingRef = useRef(false);
+  const error = useTerminalStore((s) => s.error);
 
-  const createTerminal = async () => {
-    if (creatingRef.current) return;
-    creatingRef.current = true;
-    try {
-      const res = await api.createTerminal();
-      addTerminal(res.id);
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error("createTerminal failed", err);
-    } finally {
-      creatingRef.current = false;
-    }
-  };
-
-  const closeTerminal = async (id: string) => {
-    removeTerminal(id);
-    try {
-      await api.deleteTerminal(id);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  // auto-create the first terminal
+  // Re-attach to this project's shells, or open the first one.
   useEffect(() => {
-    if (ids.length === 0) void createTerminal();
+    void restoreTerminals();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -147,14 +138,26 @@ export function TerminalPanel() {
         <button
           className="btn subtle"
           style={{ width: "100%", marginTop: 4 }}
-          onClick={() => void createTerminal()}
+          onClick={() => void createTerminal({ reveal: false })}
         >
           + New
         </button>
       </div>
       <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
-        {ids.length === 0 && (
+        {ids.length === 0 && !error && (
           <div className="empty">Starting a terminal…</div>
+        )}
+        {ids.length === 0 && error && (
+          <div className="empty">
+            <div>{error}</div>
+            <button
+              className="btn sm"
+              style={{ marginTop: 10 }}
+              onClick={() => void createTerminal({ reveal: false })}
+            >
+              Try again
+            </button>
+          </div>
         )}
         {ids.map((id) => (
           <XtermView key={id} id={id} active={id === activeId} />

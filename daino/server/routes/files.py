@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from daino.config import paths
 from daino.events import GitChanged
@@ -18,6 +21,14 @@ _IGNORED = {".git", *paths.STATE_DIR_NAMES, ".venv", "venv", "node_modules", "__
             ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build", ".tox"}
 _MAX_EDITABLE_BYTES = 2_000_000
 
+#: Where a file dropped on the chat box lands. Inside the state directory rather
+#: than the working tree: an attachment is conversation material, not a change
+#: to the repository, and it must not turn up as an untracked file in the diff
+#: the user is about to review.
+_ATTACHMENT_DIR = "attachments"
+#: Attachments are conversation context, not asset hosting.
+_MAX_ATTACHMENT_BYTES = 8_000_000
+
 
 class WriteRequest(BaseModel):
     path: str
@@ -25,6 +36,14 @@ class WriteRequest(BaseModel):
     #: sha256 of the content the client last read; guards against clobbering an
     #: out-of-band change. Omit/empty for a brand-new file.
     base_hash: str = ""
+
+
+class AttachRequest(BaseModel):
+    """One file dropped, pasted, or picked in the chat composer."""
+
+    name: str = Field(min_length=1, max_length=255)
+    #: Base64 so an image or any other binary survives the JSON round trip.
+    content_base64: str
 
 
 class CreateRequest(BaseModel):
@@ -150,6 +169,47 @@ def delete(
         target.unlink()
     state.context.events.publish(GitChanged(paths=[path]))
     return {"path": path, "deleted": True}
+
+
+@router.post("/attach")
+def attach_file(
+    state: Annotated[GuiState, Depends(get_state)], body: AttachRequest
+) -> dict:
+    """Store an attachment and return the path the agent can act on.
+
+    The agent reads files by path, so an attachment becomes a real file it can
+    open rather than bytes smuggled through the prompt. Names are sanitised and
+    the target is always inside the state directory's attachment folder, so a
+    crafted name cannot write elsewhere.
+    """
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", body.name.strip()).strip("-.") or "attachment"
+    try:
+        payload = base64.b64decode(body.content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Not valid base64: {exc}") from exc
+    if len(payload) > _MAX_ATTACHMENT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Attachment is larger than {_MAX_ATTACHMENT_BYTES // 1_000_000} MB",
+        )
+
+    directory = paths.state_dir(state.root, create=True) / _ATTACHMENT_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / safe_name
+    # Never overwrite: two screenshots pasted in a row are two attachments.
+    if target.exists():
+        stem, suffix = target.stem, target.suffix
+        for index in range(1, 1000):
+            candidate = directory / f"{stem}-{index}{suffix}"
+            if not candidate.exists():
+                target = candidate
+                break
+    target.write_bytes(payload)
+    return {
+        "path": str(target.relative_to(state.root)),
+        "name": target.name,
+        "bytes": len(payload),
+    }
 
 
 @router.get("/search")

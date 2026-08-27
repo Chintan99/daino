@@ -48,6 +48,30 @@ class ProviderStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderCheck:
+    """One step of a provider diagnosis.
+
+    A provider "test" that only proves an HTTP endpoint answered is worse than
+    no test: a reachable server with the wrong model, a rejected key, or a model
+    that cannot load all report the same green tick. Each step is therefore
+    reported separately, with what it actually observed.
+    """
+
+    name: str
+    #: ``pass`` | ``fail`` | ``skip`` — skipped steps do not count against health.
+    status: str
+    detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderDiagnosis:
+    """The result of testing a provider configuration end to end."""
+
+    status: ProviderStatus
+    checks: tuple[ProviderCheck, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CatalogModel:
     """One model a provider reports that it actually offers.
 

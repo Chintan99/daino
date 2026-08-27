@@ -172,14 +172,28 @@ async def qa_run(state: Annotated[GuiState, Depends(get_state)]) -> dict:
         state.qa_live = report
 
     async def run() -> None:
-        try:
-            state.qa_live = await state.qa.run(on_update=on_update)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - a crashed scan must not kill the server
-            # The service records orchestration failures in the report itself, so
-            # reaching here means something unexpected; keep it in the audit log.
-            state.audit.emit("QARunCrashed", error=f"{type(exc).__name__}: {exc}")
+        # A full scan is the longest thing D[Ai]NO does, so it is exactly the
+        # work that must not be interrupted by the host sleeping — and exactly
+        # the result worth a notification when it lands.
+        async with state.missions.attention.turn("QA scan") as attention:
+            try:
+                report = await state.qa.run(on_update=on_update)
+                state.qa_live = report
+                failed = sum(item.status == "failed" for item in report.checks) + sum(
+                    item.status == "failed" for item in report.specialists
+                )
+                if failed:
+                    attention.failed(f"QA finished with {failed} failed check(s)")
+                else:
+                    attention.completed("QA finished with no failed checks")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a crashed scan must not kill the server
+                # The service records orchestration failures in the report
+                # itself, so reaching here means something unexpected; keep it
+                # in the audit log.
+                attention.failed(f"QA scan crashed: {type(exc).__name__}")
+                state.audit.emit("QARunCrashed", error=f"{type(exc).__name__}: {exc}")
 
     state.qa_task = asyncio.create_task(run())
     return {"running": True}

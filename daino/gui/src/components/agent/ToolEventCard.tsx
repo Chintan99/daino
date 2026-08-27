@@ -7,12 +7,6 @@ function num(v: unknown): number {
   return typeof v === "number" ? v : 0;
 }
 
-interface Todo {
-  content?: string;
-  title?: string;
-  status?: string;
-}
-
 // Maps a single live event to a friendly card. Never renders raw JSON.
 export function ToolEventCard({ item }: { item: LiveEvent }) {
   const e = item.event;
@@ -94,26 +88,25 @@ export function ToolEventCard({ item }: { item: LiveEvent }) {
         </div>
       );
     }
-    case "TodoUpdated": {
-      const todos = Array.isArray(e.todos) ? (e.todos as Todo[]) : [];
+    // The plan itself is the panel's job (TodoPanel); repeating it in the
+    // stream on every update buried the work between five copies of the same
+    // checklist. What belongs here is the transition.
+    case "TodoUpdated":
+      return null;
+    case "TodoCompleted":
       return (
-        <div className="todo-card">
-          <div className="muted" style={{ marginBottom: 4 }}>
-            Plan
-          </div>
-          {todos.map((t, i) => {
-            const status = t.status ?? "pending";
-            const done = status === "completed" || status === "done";
-            return (
-              <div key={i} className={`todo-item ${status} ${done ? "done" : ""}`}>
-                <span className="box">{done ? "☑" : "☐"}</span>
-                <span className="label">{t.content ?? t.title ?? ""}</span>
-              </div>
-            );
-          })}
+        <div className="task-line done">
+          <span className="mark">✓</span>
+          <span className="label">{str(e.content)}</span>
         </div>
       );
-    }
+    case "TodoFailed":
+      return (
+        <div className="task-line failed">
+          <span className="mark">✗</span>
+          <span className="label">{str(e.content)}</span>
+        </div>
+      );
     case "error":
       return (
         <div className="tool-card fail">

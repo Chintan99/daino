@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,8 +10,10 @@ from daino.application.checkpoint_service import CheckpointApplicationService
 from daino.application.context import ProjectContext
 from daino.application.execution_map_service import ExecutionMapApplicationService
 from daino.application.mission_service import MissionApplicationService
+from daino.application.provider_service import ProviderApplicationService
 from daino.application.qa_service import QAApplicationService
 from daino.application.repository_service import RepositoryApplicationService
+from daino.application.settings_service import SettingsApplicationService
 from daino.design import DesignService
 from daino.git import GitClient
 from daino.observability import AuditLog
@@ -41,9 +44,19 @@ class GuiState:
     execution_map: ExecutionMapApplicationService
     checkpoints: CheckpointApplicationService
     repository: RepositoryApplicationService
+    #: Provider/model routing and validated configuration writes — the same
+    #: services the TUI's providers and settings screens drive.
+    providers: ProviderApplicationService
+    settings: SettingsApplicationService
     audit: AuditLog
-    #: Serialized so only one agentic turn runs against the shared runtime at a time.
-    active_turns: dict[str, object] = field(default_factory=dict)
+    #: The agentic turn in flight, if any. Shared rather than per-connection
+    #: because a turn outlives the socket that started it — a refreshed tab must
+    #: still be able to stop it.
+    active_turn: object | None = None
+    #: Held for the duration of an agentic turn. One runtime, one working tree:
+    #: a second browser tab must wait rather than interleave tool calls with the
+    #: first. Declaring it was not enough — every turn now actually takes it.
+    turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     #: The in-flight QA run, if any, plus the newest report it has emitted. QA is
     #: long-running, so the GUI kicks it off and polls rather than holding a request open.
     qa_task: object | None = None
@@ -68,9 +81,13 @@ class GuiState:
             execution_map=ExecutionMapApplicationService(context),
             checkpoints=CheckpointApplicationService(context),
             repository=RepositoryApplicationService(context),
+            providers=ProviderApplicationService(context),
+            settings=SettingsApplicationService(context),
             audit=AuditLog(context.root),
         )
 
     def shutdown(self) -> None:
         self.terminals.close_all()
         self.preview.stop()
+        # Stopping the server mid-turn must not leave sleep inhibited.
+        self.missions.attention.shutdown()

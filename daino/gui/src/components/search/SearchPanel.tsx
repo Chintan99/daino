@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearch } from "../../api/hooks";
 import { openFileInEditor } from "../../lib/openFile";
 import { useEditorStore } from "../../store/editorStore";
+import { useUIStore } from "../../store/uiStore";
 import type { SearchMatch } from "../../api/types";
 
 /** Where the query sits inside the matched line, so it can be selected. */
@@ -33,6 +34,16 @@ export function SearchPanel() {
   const { data, isFetching } = useSearch(query);
   const activePath = useEditorStore((s) => s.activePath);
   const reveal = useEditorStore((s) => s.reveal);
+  const focusNonce = useUIStore((s) => s.searchFocusNonce);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Edit ▸ Find in files opens this panel; it has to land in the field, or the
+  // command only *looks* like it did something.
+  useEffect(() => {
+    if (!focusNonce) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusNonce]);
 
   // Group by file, the way a search result list is expected to read.
   const groups = useMemo(() => {
@@ -66,6 +77,7 @@ export function SearchPanel() {
       <div style={{ padding: 8, borderBottom: "1px solid var(--border)" }}>
         <input
           className="input"
+          ref={inputRef}
           placeholder="Search files…  (Enter)"
           value={input}
           onChange={(e) => setInput(e.target.value)}

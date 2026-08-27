@@ -6,7 +6,7 @@ import { useDesignStore } from "../../store/designStore";
 import { useAgentStore } from "../../store/agentStore";
 import { sendChatMessage } from "../../lib/agent";
 import { exportArtifact } from "../../lib/exportDesign";
-import { DAINO_THEME, EDITOR_OPTIONS } from "../../lib/monaco";
+import { useEditorOptions, useMonacoTheme } from "../../lib/editorPrefs";
 import { BRAND } from "../../lib/branding";
 
 const LANGUAGE: Record<string, string> = {
@@ -24,6 +24,8 @@ export function DesignInspector({
   onNotice: (message: string) => void;
 }) {
   const { data: design } = useDesign(designId);
+  const monacoTheme = useMonacoTheme();
+  const sourceOptions = useEditorOptions({ lineNumbers: "off" });
   const m = useDesignMutations(designId);
   const selectedNodeIds = useDesignStore((s) => s.selectedNodeIds);
   const sourceNodeId = useDesignStore((s) => s.sourceNodeId);
@@ -124,7 +126,7 @@ export function DesignInspector({
         </button>
 
         {!selected && (
-          <div className="muted" style={{ fontSize: 12 }}>
+          <div className="muted" style={{ fontSize: "var(--fs-12)" }}>
             {selectedNodeIds.length > 1
               ? `${selectedNodeIds.length} items selected.`
               : "Select an item to inspect it, or drop a file onto the canvas."}
@@ -155,14 +157,14 @@ export function DesignInspector({
             {isArtifact && data.filename ? (
               <div className="field">
                 <label>Source file</label>
-                <div className="mono" style={{ fontSize: 11 }}>
+                <div className="mono" style={{ fontSize: "var(--fs-11)" }}>
                   {String(data.filename)}
                 </div>
               </div>
             ) : null}
             <div className="field">
               <label>Position</label>
-              <div className="mono" style={{ fontSize: 11 }}>
+              <div className="mono" style={{ fontSize: "var(--fs-11)" }}>
                 x {Math.round(selected.position.x)}, y{" "}
                 {Math.round(selected.position.y)}
               </div>
@@ -204,12 +206,12 @@ export function DesignInspector({
                     <Editor
                       value={source}
                       language={LANGUAGE[kind] ?? "plaintext"}
-                      theme={DAINO_THEME}
+                      theme={monacoTheme}
                       onChange={(value) => {
                         setSource(value ?? "");
                         setDirty(true);
                       }}
-                      options={{ ...EDITOR_OPTIONS, fontSize: 11.5, lineNumbers: "off" }}
+                      options={sourceOptions}
                     />
                   </div>
                 )}

@@ -174,7 +174,7 @@ export function MissionsView() {
             )}
 
             <div className="section-title">Workspace</div>
-            <div className="md-block mono" style={{ fontSize: 12 }}>
+            <div className="md-block mono" style={{ fontSize: "var(--fs-12)" }}>
               {String(mission.workspace_path || "not created")}
             </div>
           </div>

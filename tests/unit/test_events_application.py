@@ -205,6 +205,40 @@ def test_connecting_another_provider_reroutes_every_agent_role(
     context.close()
 
 
+def test_adding_a_second_provider_populates_failover_fallbacks(
+    project: tuple[Path, object, object],
+) -> None:
+    """Escalation and provider failover need a target; a two-model install must have one."""
+    root, _, _ = project
+    context = open_project(root)
+    service = ProviderApplicationService(context)
+    service.add(
+        name="local-ollama",
+        provider_type="ollama",
+        base_url="http://127.0.0.1:11434/v1",
+        model="qwen2.5-coder",
+    )
+    # A single model has nowhere to fail over to.
+    assert context.settings.routing_fallbacks == {}
+
+    service.add(
+        name="openrouter",
+        provider_type="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        model="vendor/model",
+        api_key_reference="env://OPENROUTER_API_KEY",
+        make_default=False,
+    )
+
+    # The builder is now pinned to local but can escalate/fail over to the cloud model.
+    assert context.settings.routing["builder"] == "local-ollama"
+    fallbacks = context.settings.routing_fallbacks
+    assert fallbacks.get("builder") == ["openrouter"]
+    # The non-local model ranks ahead of the local one in every chain.
+    assert all(chain and chain[0] == "openrouter" for chain in fallbacks.values())
+    context.close()
+
+
 def test_secondary_provider_can_be_added_without_stealing_the_routing(
     project: tuple[Path, object, object],
 ) -> None:

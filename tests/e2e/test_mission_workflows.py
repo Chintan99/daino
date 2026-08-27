@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from daino.missions import MissionService
 from daino.persistence import Database
 from daino.schemas import (
     AgentAction,
+    Message,
     ProjectMode,
     RequirementSpec,
     ReviewFinding,
@@ -264,3 +266,219 @@ async def test_rejected_review_is_repaired_and_reviewed_again(git_repo: Path) ->
     assert mission.status == "completed"
     assert "return 42" in (workspace / "feature.py").read_text(encoding="utf-8")
     assert gateway.review_calls == 2
+
+
+class PartialPlanGateway:
+    """Two-task plan where one task fails, to exercise skip-and-continue.
+
+    ``dependent`` links the second task to the first; ``independent`` leaves them
+    unrelated. Which file to write is chosen from a marker in the task objective,
+    so the gateway is correct regardless of the order the scheduler runs them in.
+    """
+
+    def __init__(self, good_cmd: str, bad_cmd: str, *, dependent: bool) -> None:
+        self.good_cmd = good_cmd
+        self.bad_cmd = bad_cmd
+        self.dependent = dependent
+        self.written: set[str] = set()
+
+    async def structured(
+        self,
+        mission_id: str,
+        role: object,
+        messages: object,
+        schema: type[Any],
+        **kwargs: object,
+    ) -> Any:
+        if schema is RequirementSpec:
+            return RequirementSpec(
+                problem_statement="Two tasks, one of which fails",
+                goals=["Complete the independent task regardless"],
+                functional_requirements=["good.py and bad.py are created"],
+                acceptance_criteria=["both modules exist"],
+                test_strategy=[self.good_cmd],
+            )
+        if schema is TaskPlan:
+            good = TaskSpec(
+                id="good",
+                title="Write the good module",
+                objective="MARK_GOOD create good.py",
+                expected_files=["good.py"],
+                allowed_files=["good.py"],
+                acceptance_criteria=["good.py exists"],
+                verification_commands=[self.good_cmd],
+            )
+            bad = TaskSpec(
+                id="bad",
+                title="Write the bad module",
+                objective="MARK_BAD create bad.py",
+                expected_files=["bad.py"],
+                allowed_files=["bad.py"],
+                acceptance_criteria=["bad.py exists"],
+                verification_commands=[self.bad_cmd],
+            )
+            if self.dependent:
+                # good depends on bad, so a failed bad blocks good entirely.
+                good = good.model_copy(update={"dependencies": ["bad"]})
+                tasks = [bad, good]
+            else:
+                tasks = [good, bad]
+            return TaskPlan(summary="Two tasks", mode=ProjectMode.SPECIFICATION, tasks=tasks)
+        if schema is ReviewReport:
+            return ReviewReport(approved=True, summary="ok")
+        if schema is AgentAction:
+            # The current task's objective is the bundle's top-level ``task`` field,
+            # which uniquely identifies which task is running even though sibling
+            # context can leak elsewhere in the prompt.
+            objective = self._current_objective(messages)
+            if "MARK_GOOD" in objective and "good.py" not in self.written:
+                self.written.add("good.py")
+                return AgentAction(
+                    thought="write", action="write", path="good.py", content="ok = 'good'\n"
+                )
+            if "MARK_BAD" in objective and "bad.py" not in self.written:
+                self.written.add("bad.py")
+                return AgentAction(
+                    thought="write", action="write", path="bad.py", content="ok = 'bad'\n"
+                )
+            return AgentAction(thought="done", action="finish", summary="done")
+        raise AssertionError(schema)
+
+    @staticmethod
+    def _current_objective(messages: object) -> str:
+        for item in messages if isinstance(messages, list) else []:
+            if isinstance(item, Message) and item.role == "user":
+                try:
+                    return str(json.loads(item.content).get("task", ""))
+                except (ValueError, TypeError):
+                    return item.content
+        return ""
+
+
+def make_partial_service(root: Path, gateway: PartialPlanGateway) -> MissionService:
+    settings = default_settings(root)
+    settings.runtime.default = "local"
+    settings.verification.require_review = False
+    settings.verification.repair_attempts_local = 0
+    settings.verification.total_attempts = 1
+    settings.providers = {
+        "mock": ProviderConfig(type="vllm", base_url="http://mock.invalid/v1", model="mock")
+    }
+    settings.models = {"mock": ModelProfileConfig(provider="mock", model="mock", local=True)}
+    settings.routing = {
+        role: "mock" for role in ("architect", "planner", "builder", "reviewer", "debugger")
+    }
+    save_settings(settings, root)
+    database = Database(settings, root)
+    database.initialize()
+    service = MissionService(root, settings, database)
+    service.gateway = gateway  # type: ignore[assignment]
+    return service
+
+
+@pytest.mark.asyncio
+async def test_a_failed_task_does_not_stop_an_independent_task(git_repo: Path) -> None:
+    good_cmd = f"{sys.executable} -c 'pass'"
+    bad_cmd = f"{sys.executable} -c 'import sys; sys.exit(1)'"
+    gateway = PartialPlanGateway(good_cmd, bad_cmd, dependent=False)
+    service = make_partial_service(git_repo, gateway)
+
+    mission, requirements, plan = await service.plan("Two tasks", ProjectMode.SPECIFICATION)
+    with pytest.raises(RuntimeError, match="Completed 1 of 2"):
+        await service.execute(mission.id, requirements, plan)
+
+    refreshed = service.get(mission.id)
+    assert refreshed.status == "failed"
+    workspace = Path(refreshed.workspace_path or "")
+    # The independent good task ran and committed even though the other failed.
+    assert (workspace / "good.py").exists()
+    assert "good.py" in git(workspace, "ls-files").splitlines()
+
+
+class SingleTaskGateway:
+    """One task that passes its own check, to isolate the integration gate."""
+
+    def __init__(self, task_cmd: str) -> None:
+        self.task_cmd = task_cmd
+        self.written = False
+
+    async def structured(
+        self,
+        mission_id: str,
+        role: object,
+        messages: object,
+        schema: type[Any],
+        **kwargs: object,
+    ) -> Any:
+        if schema is RequirementSpec:
+            return RequirementSpec(
+                problem_statement="Ship one module",
+                goals=["Create app.py"],
+                functional_requirements=["app.py exists"],
+                acceptance_criteria=["app.py exists"],
+                test_strategy=[self.task_cmd],
+            )
+        if schema is TaskPlan:
+            return TaskPlan(
+                summary="One task",
+                mode=ProjectMode.SPECIFICATION,
+                tasks=[
+                    TaskSpec(
+                        id="only",
+                        title="Write the module",
+                        objective="create app.py",
+                        expected_files=["app.py"],
+                        allowed_files=["app.py"],
+                        acceptance_criteria=["app.py exists"],
+                        verification_commands=[self.task_cmd],
+                    )
+                ],
+            )
+        if schema is ReviewReport:
+            return ReviewReport(approved=True, summary="ok")
+        if schema is AgentAction:
+            if not self.written:
+                self.written = True
+                return AgentAction(
+                    thought="write", action="write", path="app.py", content="ok = 1\n"
+                )
+            return AgentAction(thought="done", action="finish", summary="done")
+        raise AssertionError(schema)
+
+
+@pytest.mark.asyncio
+async def test_integration_gate_catches_breakage_the_task_checks_missed(git_repo: Path) -> None:
+    task_cmd = f"{sys.executable} -c 'pass'"
+    integration_cmd = f"{sys.executable} -c 'import sys; sys.exit(2)'"
+    gateway = SingleTaskGateway(task_cmd)
+    service = make_partial_service(git_repo, gateway)  # type: ignore[arg-type]
+    # A whole-project check that the per-task check does not run.
+    service.settings.verification.commands = [integration_cmd]
+
+    mission, requirements, plan = await service.plan("Ship one module", ProjectMode.SPECIFICATION)
+    with pytest.raises(RuntimeError, match="Integration verification failed"):
+        await service.execute(mission.id, requirements, plan)
+
+    refreshed = service.get(mission.id)
+    assert refreshed.status == "failed"
+    workspace = Path(refreshed.workspace_path or "")
+    # The task itself passed and committed; only the assembled-project gate failed.
+    assert (workspace / "app.py").exists()
+    assert "app.py" in git(workspace, "ls-files").splitlines()
+
+
+@pytest.mark.asyncio
+async def test_a_task_blocked_by_a_failed_dependency_is_skipped(git_repo: Path) -> None:
+    good_cmd = f"{sys.executable} -c 'pass'"
+    bad_cmd = f"{sys.executable} -c 'import sys; sys.exit(1)'"
+    gateway = PartialPlanGateway(good_cmd, bad_cmd, dependent=True)
+    service = make_partial_service(git_repo, gateway)
+
+    mission, requirements, plan = await service.plan("Two tasks", ProjectMode.SPECIFICATION)
+    with pytest.raises(RuntimeError) as excinfo:
+        await service.execute(mission.id, requirements, plan)
+
+    message = str(excinfo.value)
+    assert "Completed 0 of 2" in message
+    assert "Skipped after a dependency failed" in message
+    assert service.get(mission.id).status == "failed"

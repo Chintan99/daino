@@ -30,6 +30,7 @@ class OllamaProvider(OpenAICompatibleProvider):
         features: list[str] | None = None,
         reasoning_effort: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        concurrency: int = 0,
     ) -> None:
         super().__init__(
             name="ollama",
@@ -42,6 +43,7 @@ class OllamaProvider(OpenAICompatibleProvider):
             features=(features if features is not None else ["chat", "structured", "tools"]),
             reasoning_effort=reasoning_effort,
             transport=transport,
+            concurrency=concurrency,
         )
 
     async def list_models(self) -> list[dict[str, Any]]:

@@ -132,10 +132,10 @@ export function ExecutionMapView() {
         {trace && (
           <>
             <div style={{ padding: "12px 14px 0" }}>
-              <div style={{ color: "var(--text-0)", fontSize: 13 }}>
+              <div style={{ color: "var(--text-0)", fontSize: "var(--fs-13)" }}>
                 {trace.request}
               </div>
-              <div className="muted" style={{ fontSize: 11, marginTop: 3 }}>
+              <div className="muted" style={{ fontSize: "var(--fs-11)", marginTop: 3 }}>
                 Built from structured audit events — never private chain of
                 thought.
               </div>

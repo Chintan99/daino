@@ -22,6 +22,7 @@ class VLLMProvider(OpenAICompatibleProvider):
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         features: list[str] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        concurrency: int = 0,
     ) -> None:
         super().__init__(
             name="vllm",
@@ -33,6 +34,7 @@ class VLLMProvider(OpenAICompatibleProvider):
             max_output_tokens=max_output_tokens,
             features=features,
             transport=transport,
+            concurrency=concurrency,
         )
 
     def _constrain_payload(

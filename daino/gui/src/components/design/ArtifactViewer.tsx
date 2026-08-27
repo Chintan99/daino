@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import { useDesign, useDesignMutations } from "../../api/hooks";
 import { api, ApiError } from "../../api/client";
 import { useAgentStore } from "../../store/agentStore";
-import { DAINO_THEME, EDITOR_OPTIONS } from "../../lib/monaco";
+import { useEditorOptions, useMonacoTheme } from "../../lib/editorPrefs";
 import { download, exportArtifact, exportPrototypeZip } from "../../lib/exportDesign";
 import { buildFrameDoc } from "../../lib/visualEditor";
 import { Menu } from "../ui/Menu";
@@ -72,6 +72,8 @@ export function ArtifactViewer({
   const kind = String(data.kind ?? "text");
   const saved = String(data.content ?? "");
 
+  const monacoTheme = useMonacoTheme();
+  const editorOptions = useEditorOptions({ minimap: { enabled: false } });
   const [mode, setMode] = useState<Mode>("preview");
   const [viewport, setViewport] = useState<Viewport>(VIEWPORTS[0]);
   const [draft, setDraft] = useState(saved);
@@ -588,9 +590,9 @@ export function ArtifactViewer({
               <Editor
                 value={draft}
                 language={LANGUAGE[kind] ?? "plaintext"}
-                theme={DAINO_THEME}
+                theme={monacoTheme}
                 onChange={(value) => setDraft(value ?? "")}
-                options={{ ...EDITOR_OPTIONS, minimap: { enabled: false } }}
+                options={editorOptions}
               />
             </div>
           </div>

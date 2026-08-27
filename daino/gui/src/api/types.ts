@@ -20,6 +20,8 @@ export interface SessionSummary {
   active_model: string;
   updated_at: string;
   context_files: string[];
+  /** Transcript entries. A long session carries more history into every prompt. */
+  message_count: number;
 }
 
 export interface SessionList {
@@ -33,7 +35,29 @@ export type MessageKind =
   | "error"
   | "status"
   | "summary"
-  | "approval";
+  | "approval"
+  | "diff"
+  | "changeset"
+  | "plan"
+  | "test"
+  | "checkpoint"
+  | "deployment"
+  | "mission_link";
+
+/** One file in a turn's closing changeset, from the message's metadata. */
+export interface ChangesetFile {
+  path: string;
+  change: "created" | "modified" | "deleted";
+  added: number;
+  removed: number;
+}
+
+export interface Changeset {
+  files: ChangesetFile[];
+  added: number;
+  removed: number;
+  verified: boolean | null;
+}
 
 export interface SessionMessage {
   id: string;
@@ -233,7 +257,7 @@ export interface WsEvent {
 }
 
 export type ServerSessionMessage =
-  | { type: "session"; session_id: string }
+  | { type: "session"; session_id: string; turn_running?: boolean }
   | { type: "event"; event: WsEvent }
   | { type: "approval_request"; id: string; command: string; reason: string }
   | { type: "turn_complete"; session_id: string }
@@ -467,4 +491,189 @@ export interface DocsPage {
   slug: string;
   title: string;
   markdown: string;
+}
+
+// ---- Settings (project/agent configuration; interface prefs stay local) ----
+
+export interface ProviderInfo {
+  name: string;
+  type: string;
+  base_url: string;
+  model: string;
+  /** Which configuration layer this provider is defined in. */
+  scope: "project" | "global";
+}
+
+export interface ModelProfileInfo {
+  name: string;
+  provider: string;
+  model: string;
+  role: string;
+  context_window: number;
+  cost: string;
+  latency: string;
+  local: boolean;
+}
+
+export interface ProjectSettings {
+  project: {
+    name: string;
+    default_mode: string;
+    context_budget_tokens: number;
+  };
+  providers: ProviderInfo[];
+  models: ModelProfileInfo[];
+  /** Agent roles, in routing order: architect … debugger … deployer. */
+  roles: string[];
+  routing: Record<string, string>;
+  runtime: {
+    default: "local" | "docker" | "ssh";
+    network_access: "restricted" | "allowed";
+    docker_image: string;
+    command_timeout_seconds: number;
+  };
+  security: {
+    require_approval_for_install: boolean;
+    require_approval_for_network: boolean;
+    require_approval_for_production: boolean;
+  };
+  verification: {
+    require_review: boolean;
+    commands: string[];
+  };
+  observability: { log_level: string };
+  memory: { enabled: boolean; auto_save: boolean };
+  /** Hold an OS sleep inhibitor while the agent works. */
+  keep_awake: boolean;
+  notifications: {
+    enabled: boolean;
+    desktop: boolean;
+    terminal_bell: boolean;
+    on_completed: boolean;
+    on_failed: boolean;
+    on_approval: boolean;
+  };
+}
+
+export interface SettingsPatch {
+  keep_awake?: boolean;
+  notifications_enabled?: boolean;
+  notify_on_completed?: boolean;
+  notify_on_failed?: boolean;
+  notify_on_approval?: boolean;
+  notify_desktop?: boolean;
+  notify_terminal_bell?: boolean;
+  routing?: Record<string, string>;
+  default_provider?: string;
+  runtime?: "local" | "docker" | "ssh";
+  network_access?: "restricted" | "allowed";
+  log_level?: "DEBUG" | "INFO" | "WARNING" | "ERROR" | "CRITICAL";
+  require_approval_for_install?: boolean;
+  require_approval_for_network?: boolean;
+  require_approval_for_production?: boolean;
+  require_review?: boolean;
+}
+
+export interface ProviderHealth extends ProviderInfo {
+  connected: boolean;
+  detail: string;
+}
+
+/** One provider as the agent panel's form describes it. */
+export interface ProviderForm {
+  name: string;
+  type: "openrouter" | "ollama" | "vllm" | "openai-compatible";
+  base_url: string;
+  model: string;
+  api_key: string;
+  scope: "project" | "global";
+  make_default: boolean;
+}
+
+export interface CatalogModel {
+  id: string;
+  name: string;
+  detail: string;
+}
+
+/** One step of a provider test: endpoint, credentials, model, generation. */
+export interface ProviderCheck {
+  name: string;
+  status: "pass" | "fail" | "skip";
+  detail: string;
+}
+
+export interface ProviderTestResult {
+  provider: ProviderHealth;
+  checks: ProviderCheck[];
+}
+
+export interface ProviderSaveResult {
+  provider: ProviderHealth;
+  catalog: CatalogModel[];
+  settings: ProjectSettings;
+}
+
+// ---- Agent customization (the browser's /mode, /effort, /verbose, /memory, /playbooks) ----
+
+export interface AutonomyOption {
+  id: "plan" | "ask" | "session" | "full";
+  label: string;
+  hint: string;
+}
+
+export interface InstructionFile {
+  scope: "global" | "repository" | "scoped";
+  label: string;
+  path: string;
+  /** Empty for the global file, which lives outside the repository. */
+  relative_path: string;
+  exists: boolean;
+  bytes: number;
+  editable_in_editor: boolean;
+}
+
+export interface PlaybookSummary {
+  name: string;
+  version: string;
+  purpose: string;
+  stages: string[];
+  allowed_tools: string[];
+  approval_points: string[];
+  builtin: boolean;
+  relative_path: string;
+}
+
+export interface AgentConfig {
+  session_id: string;
+  autonomy: { mode: AutonomyOption["id"]; options: AutonomyOption[] };
+  effort: { value: string; options: string[] };
+  verbose: boolean;
+  roles: { role: string; profile: string }[];
+  profiles: string[];
+  instructions: { files: InstructionFile[]; max_bytes: number };
+  playbooks: PlaybookSummary[];
+  memory: { enabled: boolean; counts: Record<string, number>; total: number };
+}
+
+export interface MemoryItem {
+  id: string;
+  type: string;
+  scope: string;
+  status: string;
+  content: string;
+  summary: string;
+  source: string;
+  source_type: string;
+  confidence: number;
+  tags: string[];
+  why: string[];
+  created_at: string | null;
+}
+
+export interface EffectiveInstructions {
+  target: string;
+  text: string;
+  sources: string[];
+  scopes: Record<string, string[]>;
 }

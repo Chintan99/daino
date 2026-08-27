@@ -3,7 +3,7 @@ import { DiffEditor } from "@monaco-editor/react";
 import { useGitFile } from "../../api/hooks";
 import { api } from "../../api/client";
 import { useQueryClient } from "@tanstack/react-query";
-import { DAINO_THEME, EDITOR_OPTIONS } from "../../lib/monaco";
+import { useEditorOptions, useMonacoTheme } from "../../lib/editorPrefs";
 import { openFileInEditor } from "../../lib/openFile";
 
 /** Count changed lines the cheap way, for the header's ± summary. */
@@ -32,6 +32,15 @@ export function GitDiffView({
 }) {
   const qc = useQueryClient();
   const { data, isLoading, refetch } = useGitFile(path, staged);
+  const theme = useMonacoTheme();
+  const options = useEditorOptions({
+    readOnly: true,
+    renderSideBySide: true,
+    ignoreTrimWhitespace: false,
+    renderOverviewRuler: false,
+    diffWordWrap: "off",
+    originalEditable: false,
+  });
 
   const stat = useMemo(
     () => lineStat(data?.original ?? "", data?.modified ?? ""),
@@ -104,16 +113,8 @@ export function GitDiffView({
             original={data.original}
             modified={data.modified}
             language={data.language}
-            theme={DAINO_THEME}
-            options={{
-              ...EDITOR_OPTIONS,
-              readOnly: true,
-              renderSideBySide: true,
-              ignoreTrimWhitespace: false,
-              renderOverviewRuler: false,
-              diffWordWrap: "off",
-              originalEditable: false,
-            }}
+            theme={theme}
+            options={options}
           />
         )}
       </div>

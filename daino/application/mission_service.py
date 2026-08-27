@@ -12,11 +12,12 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from daino.agents import ReviewerAgent, TeamLead, TeamRunner, validate_team_plan
 from daino.agents.loop import ToolLoop, describe_incomplete_outcome
 from daino.agents.tool_schemas import AGENT_TOOL_SPECS, CHAT_TOOL_SPECS
+from daino.application.attention import TurnAttention
 from daino.application.context import ProjectContext
 from daino.application.view_models import ConversationItem, MissionSummary
 from daino.context import ModelExecutionProfile
@@ -83,6 +84,28 @@ from daino.utils.ids import new_id
 from daino.verification import missing_executable
 
 
+def _with_partial_changes(reason: str, diffs: list[FileDiff]) -> str:
+    """Append what was already changed to a failure reason.
+
+    A stop is not the same as nothing having happened. Naming the files makes
+    the difference actionable — the user can review or revert them — instead of
+    leaving a red message above edits they have to discover for themselves.
+    """
+    if not diffs:
+        return reason
+    paths = list(dict.fromkeys(diff.path for diff in diffs))
+    listed = ", ".join(paths[:5]) + (f", and {len(paths) - 5} more" if len(paths) > 5 else "")
+    return (
+        f"{reason}\n\n{len(paths)} file{'s' if len(paths) != 1 else ''} "
+        f"had already been changed and were kept: {listed}. Review or revert them before retrying."
+    )
+
+
+#: The placeholder a session carries until its first request names it. Every
+#: session used to keep it, which made a session list three identical rows.
+DEFAULT_SESSION_TITLE = "General repository questions"
+
+
 class MissionApplicationService:
     """Facade used by the TUI and suitable for thin CLI handlers."""
 
@@ -100,12 +123,16 @@ class MissionApplicationService:
             events=context.events,
             memory=self.memory,
         )
+        #: Sleep inhibition and OS notifications, so a turn the user walked
+        #: away from keeps running and says how it ended. Shared by the TUI,
+        #: the browser server, and the CLI.
+        self.attention = TurnAttention(context.settings)
         #: Command approval memory per conversation session.
         self._command_gates: dict[str, CommandGate] = {}
 
     def create_session(
         self,
-        title: str = "General repository questions",
+        title: str = DEFAULT_SESSION_TITLE,
         *,
         mission_id: str | None = None,
     ) -> str:
@@ -332,6 +359,11 @@ class MissionApplicationService:
                 raise ValueError(f"Unknown conversation session {session_id}")
             if mission_id:
                 stored_session.mission_id = mission_id
+            # The first request names the session, so a session list is legible.
+            if kind == "user" and stored_session.title == DEFAULT_SESSION_TITLE:
+                summary = " ".join(content.split())[:80].strip()
+                if summary:
+                    stored_session.title = summary
             session.add(message)
         return message
 
@@ -553,6 +585,17 @@ class MissionApplicationService:
             ),
         )
 
+    def session_message_counts(self) -> dict[str, int]:
+        """How many transcript entries each session holds, for the session list."""
+        with self.context.database.session() as session:
+            rows = session.execute(
+                select(
+                    ConversationMessage.session_id,
+                    func.count(ConversationMessage.id),
+                ).group_by(ConversationMessage.session_id)
+            ).all()
+        return {row[0]: int(row[1]) for row in rows}
+
     def conversation_history(self, session_id: str, *, turns: int = 12) -> list[Message]:
         """Return recent question/answer turns so follow-up questions have context."""
         history: list[Message] = []
@@ -737,6 +780,9 @@ class MissionApplicationService:
         to work around, not a reason to abandon the edit.
         """
         runtime_name = self.context.settings.runtime.default
+        # Announced here because every approvable command passes through this
+        # runner, whichever client supplied the callback.
+        approve = self.attention.watching_approvals(approve)
         runtime = self.core._runtime(self.context.root)
         try:
             await runtime.prepare()
@@ -898,10 +944,20 @@ class MissionApplicationService:
                     )
                 )
         except Exception as exc:
+            # A turn that stops early has usually already changed files, and
+            # reporting only the failure hides them: the user is told the work
+            # failed while two edits sit in their working tree. Record what
+            # landed, then report the stop.
+            partial = ChatOutcome(mission_id=mission.id, diffs=list(diffs))
+            self._record_changeset(session_id, mission.id, partial)
             self.core._update_mission(
-                mission.id, status=MissionStatus.FAILED.value, failure=str(exc)
+                mission.id,
+                status=MissionStatus.FAILED.value,
+                failure=_with_partial_changes(str(exc), diffs),
             )
-            self.record_failure(session_id, mission.id, exc)
+            self.record_failure(
+                session_id, mission.id, RuntimeError(_with_partial_changes(str(exc), diffs))
+            )
             raise
         finally:
             if runtime is not None:
@@ -971,6 +1027,8 @@ class MissionApplicationService:
                 mission_id=mission.id,
             )
 
+        self._record_changeset(session_id, mission.id, outcome)
+
         if outcome.verified is False:
             self.core._update_mission(
                 mission.id,
@@ -1016,6 +1074,56 @@ class MissionApplicationService:
                     outcome=status,
                 )
         return outcome
+
+    def _record_changeset(self, session_id: str, mission_id: str, outcome: ChatOutcome) -> None:
+        """Persist one summary of everything the turn edited.
+
+        Individual diffs are already streamed as they land, which is right while
+        the turn is running and useless afterwards: scrolling back through six
+        separate cards to answer "what did it touch?" is the wrong shape. One
+        closing message carries the whole changeset, so both clients can render
+        the same list of files with their line counts — and neither has to
+        recompute it from the transcript.
+        """
+        if not outcome.diffs:
+            return
+        # A file edited twice in one turn appears once, with the totals summed.
+        totals: dict[str, dict[str, object]] = {}
+        for diff in outcome.diffs:
+            entry = totals.setdefault(
+                diff.path,
+                {"path": diff.path, "change": diff.change, "added": 0, "removed": 0},
+            )
+            entry["added"] = int(entry["added"]) + diff.added  # type: ignore[call-overload]
+            entry["removed"] = int(entry["removed"]) + diff.removed  # type: ignore[call-overload]
+            # A file created and then modified is still, overall, created.
+            if diff.change == "created":
+                entry["change"] = "created"
+        files = sorted(
+            totals.values(),
+            key=lambda item: int(item["added"]) + int(item["removed"]),  # type: ignore[call-overload]
+            reverse=True,
+        )
+        added = sum(int(item["added"]) for item in files)  # type: ignore[call-overload]
+        removed = sum(int(item["removed"]) for item in files)  # type: ignore[call-overload]
+        label = f"Edited {len(files)} file{'s' if len(files) != 1 else ''}"
+        lines = [f"{label}  +{added} -{removed}"]
+        lines.extend(
+            f"  {item['path']}  +{item['added']} -{item['removed']}" for item in files
+        )
+        self.add_message(
+            session_id,
+            kind="changeset",
+            role="",
+            content="\n".join(lines),
+            mission_id=mission_id,
+            metadata={
+                "files": files,
+                "added": added,
+                "removed": removed,
+                "verified": outcome.verified,
+            },
+        )
 
     def _unfinished_todos(self, session_id: str) -> list[TodoItem]:
         """Return the session's plan steps that are neither done nor abandoned."""
