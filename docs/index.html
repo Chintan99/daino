@@ -59,8 +59,8 @@
               <a class="button button-quiet" href="#getting-started">First task</a>
             </div>
             <div class="install-line">
-              <code><span>$</span> git clone https://github.com/Chintan99/daino.git</code>
-              <button class="icon-copy" type="button" data-copy="git clone https://github.com/Chintan99/daino.git" aria-label="Copy clone command">
+              <code><span>$</span> curl -fsSL https://chintan99.github.io/daino/install.sh | sh</code>
+              <button class="icon-copy" type="button" data-copy="curl -fsSL https://chintan99.github.io/daino/install.sh | sh" aria-label="Copy install command">
                 <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6" y="6" width="10" height="10" rx="2"/><path d="M4 13H3a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>
               </button>
             </div>
@@ -111,18 +111,17 @@
 
           <div class="tabs" data-tabs>
             <div class="tab-list" role="tablist" aria-label="Installation methods">
-              <button role="tab" aria-selected="true" aria-controls="install-recommended" id="tab-recommended">macOS / Linux</button>
-              <button role="tab" aria-selected="false" aria-controls="install-uv" id="tab-uv">uv directly</button>
+              <button role="tab" aria-selected="true" aria-controls="install-recommended" id="tab-recommended">One line</button>
+              <button role="tab" aria-selected="false" aria-controls="install-uv" id="tab-uv">uv</button>
               <button role="tab" aria-selected="false" aria-controls="install-pipx" id="tab-pipx">pipx</button>
               <button role="tab" aria-selected="false" aria-controls="install-windows" id="tab-windows">Windows</button>
+              <button role="tab" aria-selected="false" aria-controls="install-source" id="tab-source">From source</button>
             </div>
 
             <div class="code-panel" role="tabpanel" id="install-recommended" aria-labelledby="tab-recommended">
               <div class="code-top"><span>Terminal · recommended</span><button data-copy-target="code-recommended">Copy</button></div>
-              <pre id="code-recommended"><code><span class="cm"># Clone and run the managed installer</span>
-git clone https://github.com/Chintan99/daino.git
-cd daino
-./scripts/install.sh
+              <pre id="code-recommended"><code><span class="cm"># Install D[Ai]NO (bootstraps uv if needed)</span>
+curl -fsSL https://chintan99.github.io/daino/install.sh | sh
 
 <span class="cm"># Open a project in the browser IDE</span>
 cd /path/to/project
@@ -130,8 +129,8 @@ daino --gui</code></pre>
             </div>
 
             <div class="code-panel" role="tabpanel" id="install-uv" aria-labelledby="tab-uv" hidden>
-              <div class="code-top"><span>Terminal · from the cloned source</span><button data-copy-target="code-uv">Copy</button></div>
-              <pre id="code-uv"><code>uv tool install .
+              <div class="code-top"><span>Terminal · with uv, no clone</span><button data-copy-target="code-uv">Copy</button></div>
+              <pre id="code-uv"><code>uv tool install git+https://github.com/Chintan99/daino.git@v2
 uv tool update-shell
 
 <span class="cm"># Open a new terminal, then launch</span>
@@ -140,8 +139,8 @@ daino --gui</code></pre>
             </div>
 
             <div class="code-panel" role="tabpanel" id="install-pipx" aria-labelledby="tab-pipx" hidden>
-              <div class="code-top"><span>Terminal · from the cloned source</span><button data-copy-target="code-pipx">Copy</button></div>
-              <pre id="code-pipx"><code>pipx install .
+              <div class="code-top"><span>Terminal · with pipx, no clone</span><button data-copy-target="code-pipx">Copy</button></div>
+              <pre id="code-pipx"><code>pipx install git+https://github.com/Chintan99/daino.git@v2
 pipx ensurepath
 
 <span class="cm"># Open a new terminal, then launch</span>
@@ -151,13 +150,24 @@ daino --tui</code></pre>
 
             <div class="code-panel" role="tabpanel" id="install-windows" aria-labelledby="tab-windows" hidden>
               <div class="code-top"><span>PowerShell</span><button data-copy-target="code-windows">Copy</button></div>
-              <pre id="code-windows"><code>git clone https://github.com/Chintan99/daino.git
-Set-Location daino
-uv tool install .
+              <pre id="code-windows"><code><span class="cm"># Install uv, then D[Ai]NO from GitHub</span>
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+uv tool install git+https://github.com/Chintan99/daino.git@v2
 uv tool update-shell
 
 <span class="cm"># Restart PowerShell, then open a project</span>
 Set-Location C:\path\to\project
+daino --gui</code></pre>
+            </div>
+
+            <div class="code-panel" role="tabpanel" id="install-source" aria-labelledby="tab-source" hidden>
+              <div class="code-top"><span>Terminal · clone and build</span><button data-copy-target="code-source">Copy</button></div>
+              <pre id="code-source"><code><span class="cm"># Clone and run the managed installer</span>
+git clone https://github.com/Chintan99/daino.git
+cd daino
+./scripts/install.sh
+
+cd /path/to/project
 daino --gui</code></pre>
             </div>
           </div>

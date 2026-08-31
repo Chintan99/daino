@@ -18,49 +18,48 @@ The terminal UI and local runtime work without Docker or Node.js.
 
 ## Recommended installation
 
-Clone the repository and run the included installer:
+On macOS or Linux, install D[Ai]NO with one command — no clone required:
 
 ```bash
-git clone https://github.com/Chintan99/daino.git
-cd daino
-./scripts/install.sh
+curl -fsSL https://chintan99.github.io/daino/install.sh | sh
 ```
 
-The installer prefers `uv tool`, falls back to `pipx`, verifies the installed version, and prints
-the exact launcher path. It does not modify a project's Python dependencies.
-
-If neither application manager is installed, install `uv` and run the script again:
-
-```bash
-python3 -m pip install --user uv
-./scripts/install.sh
-```
-
-!!! note "macOS and Linux"
-
-    The shell installer is the simplest route. On Windows, use the direct `uv tool install .`
-    command from PowerShell after cloning the repository.
+The script installs D[Ai]NO straight from GitHub. It prefers `uv tool` and falls back to `pipx`;
+if neither is present it bootstraps `uv` first, then verifies the installed version and prints the
+exact launcher path. It does not modify any project's Python dependencies.
 
 ## Install directly with uv or pipx
 
-From the cloned D[Ai]NO source directory:
+Already have an application manager? Install from GitHub without cloning:
 
 === "uv"
 
     ```bash
-    uv tool install .
+    uv tool install git+https://github.com/Chintan99/daino.git@v2
     uv tool update-shell
     ```
 
 === "pipx"
 
     ```bash
-    pipx install .
+    pipx install git+https://github.com/Chintan99/daino.git@v2
     pipx ensurepath
     ```
 
-Open a new terminal after updating `PATH`. The usual uv launcher location on macOS and Linux is
-`~/.local/bin/daino`.
+On Windows, install `uv` first (`powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`), then
+run the same `uv tool install git+…` command. Open a new terminal after updating `PATH`; the usual
+uv launcher location on macOS and Linux is `~/.local/bin/daino`.
+
+## Install from a clone
+
+To build from a checked-out source tree — for a specific revision or offline install — run the
+bundled installer, which detects the checkout and installs it in place:
+
+```bash
+git clone https://github.com/Chintan99/daino.git
+cd daino
+./scripts/install.sh
+```
 
 ## Verify the installation
 
@@ -129,18 +128,24 @@ PowerShell after `uv tool update-shell` or `pipx ensurepath`.
 
 ## Upgrade
 
-Update the source checkout and rerun the installer:
+Re-run the one-line installer to pull the latest version:
 
 ```bash
-cd /path/to/daino
-git pull --ff-only
-./scripts/install.sh
+curl -fsSL https://chintan99.github.io/daino/install.sh | sh
 ```
 
 Or reinstall directly with the manager you chose:
 
 ```bash
-uv tool install --force --reinstall-package daino .
+uv tool install --force git+https://github.com/Chintan99/daino.git@v2
+```
+
+From a clone, update the checkout and rerun the bundled installer:
+
+```bash
+cd /path/to/daino
+git pull --ff-only
+./scripts/install.sh
 ```
 
 Upgrading the application leaves every project's `.daino` state and the global configuration
