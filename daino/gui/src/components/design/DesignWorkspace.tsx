@@ -5,6 +5,7 @@ import { useDesignStore } from "../../store/designStore";
 import { DesignCanvas } from "./DesignCanvas";
 import { DesignToolbar } from "./DesignToolbar";
 import { DesignInspector } from "./DesignInspector";
+import { DesignSidebar } from "./DesignSidebar";
 import { ArtifactViewer } from "./ArtifactViewer";
 
 export function DesignWorkspace() {
@@ -45,13 +46,14 @@ export function DesignWorkspace() {
         </div>
       )}
       <div className="design-main">
+        <DesignSidebar onNotice={onNotice} />
         {isLoading && <div className="empty" style={{ margin: "auto" }}>Loading…</div>}
         {!isLoading && !activeId && (
-          <div className="canvas-hint" style={{ position: "relative" }}>
+          <div className="canvas-hint" style={{ position: "relative", flex: 1 }}>
             <div className="big">No canvas yet</div>
             <div>
-              Select <strong>+ Canvas</strong> for a blank sheet, or{" "}
-              <strong>From code</strong> to sketch this repository's
+              Pick <strong>+ Canvas</strong> in the left panel for a blank sheet,
+              or <strong>From code</strong> to sketch this repository's
               architecture.
             </div>
           </div>

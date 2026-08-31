@@ -27,14 +27,21 @@ export type FrameMessage =
   | { t: "ready" }
   | { t: "selected"; node: ElementInfo }
   | { t: "deselected" }
-  | { t: "changed"; html: string };
+  | { t: "changed"; html: string }
+  // The frame cannot own the history stack (a reload would wipe it), so
+  // Cmd+Z / Cmd+Shift+Z inside the page ask the host to step it instead.
+  | { t: "undo" }
+  | { t: "redo" };
 
 export type HostMessage =
   | { t: "select"; path: number[] }
   | { t: "ping" }
   | { t: "clear" }
   | { t: "insert"; html: string; position: "before" | "after" | "inside" | "end" }
-  | { t: "remove" | "duplicate" | "moveUp" | "moveDown"; path: number[] }
+  | {
+      t: "remove" | "duplicate" | "moveUp" | "moveDown" | "copy" | "paste" | "wrap";
+      path: number[];
+    }
   | { t: "setText"; path: number[]; text: string }
   | { t: "setAttr"; path: number[]; name: string; value: string }
   | { t: "setStyle"; path: number[]; prop: string; value: string }
@@ -59,6 +66,11 @@ const RUNTIME = `
   var pendingInsert = null;
   var selectedEl = null;
   var line = null;
+  var clipboardHTML = null;
+  var menuEl = null;
+  var dragRAF = 0;
+  var dragX = 0;
+  var dragY = 0;
 
   function post(message) {
     try { window.parent.postMessage(message, '*'); } catch (err) { /* detached */ }
@@ -130,19 +142,61 @@ const RUNTIME = `
         color: el.style.color || '',
         backgroundColor: el.style.backgroundColor || '',
         fontSize: el.style.fontSize || '',
-        padding: el.style.padding || '',
-        margin: el.style.margin || '',
+        fontWeight: el.style.fontWeight || '',
+        lineHeight: el.style.lineHeight || '',
+        letterSpacing: el.style.letterSpacing || '',
         textAlign: el.style.textAlign || '',
-        display: el.style.display || ''
+        padding: el.style.padding || '',
+        paddingTop: el.style.paddingTop || '',
+        paddingRight: el.style.paddingRight || '',
+        paddingBottom: el.style.paddingBottom || '',
+        paddingLeft: el.style.paddingLeft || '',
+        margin: el.style.margin || '',
+        marginTop: el.style.marginTop || '',
+        marginRight: el.style.marginRight || '',
+        marginBottom: el.style.marginBottom || '',
+        marginLeft: el.style.marginLeft || '',
+        width: el.style.width || '',
+        height: el.style.height || '',
+        borderRadius: el.style.borderRadius || '',
+        borderWidth: el.style.borderWidth || '',
+        borderStyle: el.style.borderStyle || '',
+        borderColor: el.style.borderColor || '',
+        display: el.style.display || '',
+        flexDirection: el.style.flexDirection || '',
+        justifyContent: el.style.justifyContent || '',
+        alignItems: el.style.alignItems || '',
+        gap: el.style.gap || ''
       },
       computed: {
         color: computed.color,
         backgroundColor: computed.backgroundColor,
         fontSize: computed.fontSize,
-        padding: computed.padding,
-        margin: computed.margin,
+        fontWeight: computed.fontWeight,
+        lineHeight: computed.lineHeight,
+        letterSpacing: computed.letterSpacing,
         textAlign: computed.textAlign,
-        display: computed.display
+        padding: computed.padding,
+        paddingTop: computed.paddingTop,
+        paddingRight: computed.paddingRight,
+        paddingBottom: computed.paddingBottom,
+        paddingLeft: computed.paddingLeft,
+        margin: computed.margin,
+        marginTop: computed.marginTop,
+        marginRight: computed.marginRight,
+        marginBottom: computed.marginBottom,
+        marginLeft: computed.marginLeft,
+        width: computed.width,
+        height: computed.height,
+        borderRadius: computed.borderRadius,
+        borderWidth: computed.borderWidth,
+        borderStyle: computed.borderStyle,
+        borderColor: computed.borderColor,
+        display: computed.display,
+        flexDirection: computed.flexDirection,
+        justifyContent: computed.justifyContent,
+        alignItems: computed.alignItems,
+        gap: computed.gap
       },
       crumbs: crumbs.slice(-7),
       canMoveUp: !!el.previousElementSibling,
@@ -256,6 +310,162 @@ const RUNTIME = `
     return { frag: frag, first: first };
   }
 
+  // ---- Element operations shared by keyboard shortcuts and host commands ----
+
+  function copyEl(el) {
+    if (!el) return;
+    var clone = el.cloneNode(true);
+    clone.removeAttribute('data-daino-sel');
+    clone.removeAttribute('data-daino-hover');
+    clipboardHTML = clone.outerHTML;
+  }
+
+  function pasteAfter(anchor) {
+    if (!clipboardHTML) return;
+    var built = fromHTML(clipboardHTML);
+    var first = built.first;
+    if (anchor && anchor.parentNode)
+      anchor.parentNode.insertBefore(built.frag, anchor.nextSibling);
+    else DOC.body.appendChild(built.frag);
+    if (first) select(first);
+    changed();
+  }
+
+  function duplicateEl(el) {
+    if (!el || !el.parentNode) return;
+    var copy = el.cloneNode(true);
+    copy.removeAttribute('data-daino-sel');
+    el.parentNode.insertBefore(copy, el.nextSibling);
+    select(copy);
+    changed();
+  }
+
+  function removeEl(el) {
+    if (!el) return;
+    var next = el.nextElementSibling || el.previousElementSibling || el.parentElement;
+    el.remove();
+    select(selectable(next));
+    changed();
+  }
+
+  /** Wrap the element in a plain container div, keeping it selected. */
+  function wrapEl(el) {
+    if (!el || !el.parentNode) return;
+    var box = DOC.createElement('div');
+    el.parentNode.insertBefore(box, el);
+    box.appendChild(el);
+    select(box);
+    changed();
+  }
+
+  // ---- Free (absolute) dragging: move a component anywhere, keep its look ----
+
+  /** Lift the element out of flow at its current size, ready to be positioned. */
+  function beginFreeDrag(el, p) {
+    var cs = window.getComputedStyle(el);
+    // Freeze the size so leaving the flow does not let it collapse or reflow.
+    el.style.boxSizing = 'border-box';
+    el.style.width = Math.round(p.w) + 'px';
+    el.style.height = Math.round(p.h) + 'px';
+    el.style.margin = '0';
+    // Anything not already absolutely/fixed positioned needs absolute so left/top
+    // place it directly, rather than merely offsetting its in-flow spot.
+    if (cs.position !== 'absolute' && cs.position !== 'fixed') el.style.position = 'absolute';
+    el.style.zIndex = '2147483000';
+    el.setAttribute('data-daino-drag', '1');
+    DOC.documentElement.setAttribute('data-daino-dragging', '1');
+  }
+
+  /** Position the lifted element so the grab point stays under the pointer. */
+  function moveFree(el, offX, offY, x, y) {
+    var parent = el.offsetParent || DOC.body;
+    var prect = parent.getBoundingClientRect();
+    var left = x - offX - prect.left - (parent.clientLeft || 0) + (parent.scrollLeft || 0);
+    var top = y - offY - prect.top - (parent.clientTop || 0) + (parent.scrollTop || 0);
+    el.style.left = Math.round(left) + 'px';
+    el.style.top = Math.round(top) + 'px';
+  }
+
+  function moveUpEl(el) {
+    if (!el) return;
+    var before = el.previousElementSibling;
+    if (before) { el.parentNode.insertBefore(el, before); select(el); changed(); }
+  }
+
+  function moveDownEl(el) {
+    if (!el) return;
+    var after = el.nextElementSibling;
+    if (after) { el.parentNode.insertBefore(after, el); select(el); changed(); }
+  }
+
+  /** Turn a leaf element into an inline text field, cursor across its text. */
+  function startEditing(el) {
+    if (!el || el.children.length) return;
+    el.setAttribute('contenteditable', 'true');
+    el.setAttribute('spellcheck', 'false');
+    el.focus();
+    var range = DOC.createRange();
+    range.selectNodeContents(el);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  // ---- Right-click context menu (rendered inside the frame as chrome) ----
+
+  function closeMenu() {
+    if (menuEl) { menuEl.remove(); menuEl = null; }
+  }
+
+  function openMenu(x, y, el) {
+    closeMenu();
+    menuEl = DOC.createElement('div');
+    menuEl.setAttribute('data-daino-ui', '1');
+    menuEl.className = 'daino-menu';
+
+    var items = [];
+    if (el.children.length === 0) items.push(['Edit text', function () { startEditing(el); }]);
+    items.push(['Duplicate', function () { duplicateEl(el); }]);
+    items.push(['Copy', function () { copyEl(el); }]);
+    if (clipboardHTML) items.push(['Paste after', function () { pasteAfter(el); }]);
+    items.push(['Wrap in box', function () { wrapEl(el); }]);
+    if (el.previousElementSibling) items.push(['Move up', function () { moveUpEl(el); }]);
+    if (el.nextElementSibling) items.push(['Move down', function () { moveDownEl(el); }]);
+    items.push(['sep']);
+    items.push(['Delete', function () { removeEl(el); }, 'danger']);
+
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i];
+      if (it[0] === 'sep') {
+        var hr = DOC.createElement('div');
+        hr.className = 'daino-menu-sep';
+        menuEl.appendChild(hr);
+        continue;
+      }
+      (function (label, fn, cls) {
+        var b = DOC.createElement('button');
+        b.className = 'daino-menu-item' + (cls ? ' ' + cls : '');
+        b.textContent = label;
+        // Act on click; the capture pointerdown below leaves menu clicks alone.
+        b.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          closeMenu();
+          fn();
+        });
+        menuEl.appendChild(b);
+      })(it[0], it[1], it[2]);
+    }
+
+    DOC.body.appendChild(menuEl);
+    // Keep the menu inside the viewport.
+    var vw = DOC.documentElement.clientWidth;
+    var vh = DOC.documentElement.clientHeight;
+    var rect = menuEl.getBoundingClientRect();
+    menuEl.style.left = Math.max(4, Math.min(x, vw - rect.width - 4)) + 'px';
+    menuEl.style.top = Math.max(4, Math.min(y, vh - rect.height - 4)) + 'px';
+  }
+
   // ---- Pointer interaction: click to select, drag to reorder ----
   //
   // Selection happens on pointer *down*, not on pointer up. A click almost
@@ -265,12 +475,27 @@ const RUNTIME = `
   var DRAG_THRESHOLD = 6;
 
   DOC.addEventListener('pointerdown', function (e) {
+    // A press inside the open menu is the menu's own; let its click through.
+    if (menuEl && menuEl.contains(e.target)) return;
+    closeMenu();
     if (e.button !== 0) return;
     var el = selectable(under(e.clientX, e.clientY));
     if (!el) { select(null); return; }
     if (el.isContentEditable) return;
     select(el);
-    press = { el: el, x: e.clientX, y: e.clientY, moved: false };
+    var r = el.getBoundingClientRect();
+    press = {
+      el: el,
+      x: e.clientX,
+      y: e.clientY,
+      moved: false,
+      // Where inside the element it was grabbed, and its size — so it can be
+      // lifted out of flow without jumping or resizing.
+      offX: e.clientX - r.left,
+      offY: e.clientY - r.top,
+      w: r.width,
+      h: r.height,
+    };
   }, true);
 
   DOC.addEventListener('pointermove', function (e) {
@@ -282,41 +507,53 @@ const RUNTIME = `
       if (far && e.buttons === 1) {
         press.moved = true;
         dragging = press.el;
-        DOC.documentElement.setAttribute('data-daino-dragging', '1');
+        beginFreeDrag(dragging, press);
       } else if (far) {
         press = null;
       }
     }
     if (dragging) {
       e.preventDefault();
-      updateDrop(e.clientX, e.clientY);
+      // Coalesce movement into one reposition per frame so a fast drag stays
+      // smooth; the last pointer position always wins.
+      dragX = e.clientX;
+      dragY = e.clientY;
+      if (!dragRAF) {
+        dragRAF = requestAnimationFrame(function () {
+          dragRAF = 0;
+          if (dragging && press) moveFree(dragging, press.offX, press.offY, dragX, dragY);
+        });
+      }
       return;
     }
     if (!pendingInsert) hover(selectable(under(e.clientX, e.clientY)));
   }, true);
 
-  DOC.addEventListener('pointerup', function (e) {
-    if (dragging) {
-      var moved = drop && place(dragging);
-      // Whether or not the drop was somewhere valid, what was dragged stays
-      // selected — losing the selection because a drop missed is disorienting.
-      select(dragging);
-      if (moved) changed();
-    }
+  function endDrag() {
+    if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = 0; }
+    if (dragging) dragging.removeAttribute('data-daino-drag');
     press = null;
     dragging = null;
     drop = null;
     hideLine();
     DOC.documentElement.removeAttribute('data-daino-dragging');
+  }
+
+  DOC.addEventListener('pointerup', function (e) {
+    if (dragging && press) {
+      if (dragRAF) { cancelAnimationFrame(dragRAF); dragRAF = 0; }
+      var target = dragging;
+      // Settle it at the exact release point, then drop the drag-only styling.
+      moveFree(target, press.offX, press.offY, e.clientX, e.clientY);
+      target.removeAttribute('data-daino-drag');
+      target.style.zIndex = '';
+      select(target);
+      changed();
+    }
+    endDrag();
   }, true);
 
-  DOC.addEventListener('pointercancel', function () {
-    press = null;
-    dragging = null;
-    drop = null;
-    hideLine();
-    DOC.documentElement.removeAttribute('data-daino-dragging');
-  }, true);
+  DOC.addEventListener('pointercancel', endDrag, true);
 
   // Editing a page is not browsing it: links and submits must not navigate.
   DOC.addEventListener('click', function (e) {
@@ -329,15 +566,26 @@ const RUNTIME = `
     var el = selectable(under(e.clientX, e.clientY));
     if (!el || el.children.length) return;
     e.preventDefault();
-    el.setAttribute('contenteditable', 'true');
-    el.setAttribute('spellcheck', 'false');
-    el.focus();
-    var range = DOC.createRange();
-    range.selectNodeContents(el);
-    var sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
+    startEditing(el);
   }, true);
+
+  // Right-click anything on the page for its edit menu.
+  DOC.addEventListener('contextmenu', function (e) {
+    if (menuEl && menuEl.contains(e.target)) return;
+    var el = selectable(under(e.clientX, e.clientY));
+    if (!el) { closeMenu(); return; } // leave chrome / empty space to the browser
+    e.preventDefault();
+    select(el);
+    openMenu(e.clientX, e.clientY, el);
+  }, true);
+
+  // Images and links are natively draggable; that native drag would hijack the
+  // reorder gesture, so block it (palette drops set pendingInsert and keep it).
+  DOC.addEventListener('dragstart', function (e) {
+    if (!pendingInsert) e.preventDefault();
+  }, true);
+
+  DOC.addEventListener('scroll', closeMenu, true);
 
   DOC.addEventListener('focusout', function (e) {
     var el = e.target;
@@ -349,10 +597,42 @@ const RUNTIME = `
   }, true);
 
   DOC.addEventListener('keydown', function (e) {
-    var el = DOC.querySelector('[contenteditable="true"]');
-    if (el && (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey))) {
+    if (menuEl && (e.key || '').toLowerCase() === 'escape') {
       e.preventDefault();
-      el.blur();
+      closeMenu();
+      return;
+    }
+    var editing = DOC.querySelector('[contenteditable="true"]');
+    if (editing) {
+      if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        editing.blur();
+      }
+      return; // never hijack keys while text is being typed
+    }
+    var mod = e.metaKey || e.ctrlKey;
+    var key = (e.key || '').toLowerCase();
+    // History lives on the host; ask it to step.
+    if (mod && key === 'z') { e.preventDefault(); post({ t: e.shiftKey ? 'redo' : 'undo' }); return; }
+    if (mod && key === 'y') { e.preventDefault(); post({ t: 'redo' }); return; }
+    if (key === 'escape') { e.preventDefault(); select(null); return; }
+    if (!selectedEl) return;
+    if (mod && key === 'c') { e.preventDefault(); copyEl(selectedEl); return; }
+    if (mod && key === 'v') { e.preventDefault(); pasteAfter(selectedEl); return; }
+    if (mod && key === 'd') { e.preventDefault(); duplicateEl(selectedEl); return; }
+    if (key === 'delete' || key === 'backspace') { e.preventDefault(); removeEl(selectedEl); return; }
+    // Alt+Arrows reorder, so plain arrows still scroll the page.
+    if (e.altKey && key === 'arrowup') {
+      e.preventDefault();
+      var before = selectedEl.previousElementSibling;
+      if (before) { selectedEl.parentNode.insertBefore(selectedEl, before); select(selectedEl); changed(); }
+      return;
+    }
+    if (e.altKey && key === 'arrowdown') {
+      e.preventDefault();
+      var after = selectedEl.nextElementSibling;
+      if (after) { selectedEl.parentNode.insertBefore(after, selectedEl); select(selectedEl); changed(); }
+      return;
     }
   }, true);
 
@@ -409,18 +689,16 @@ const RUNTIME = `
       return;
     }
 
+    if (msg.t === 'paste') { pasteAfter(el || selectedEl); return; }
     if (!el) return;
     if (msg.t === 'remove') {
-      var next = el.nextElementSibling || el.previousElementSibling || el.parentElement;
-      el.remove();
-      select(selectable(next));
-      changed();
+      removeEl(el);
     } else if (msg.t === 'duplicate') {
-      var copy = el.cloneNode(true);
-      copy.removeAttribute('data-daino-sel');
-      el.parentNode.insertBefore(copy, el.nextSibling);
-      select(copy);
-      changed();
+      duplicateEl(el);
+    } else if (msg.t === 'copy') {
+      copyEl(el);
+    } else if (msg.t === 'wrap') {
+      wrapEl(el);
     } else if (msg.t === 'moveUp') {
       var before = el.previousElementSibling;
       if (before) { el.parentNode.insertBefore(el, before); select(el); changed(); }
@@ -447,12 +725,30 @@ const RUNTIME = `
 `;
 
 const RUNTIME_STYLE = `
-  [data-daino-hover] { outline: 1px dashed rgba(108, 191, 141, 0.85) !important; outline-offset: 1px; }
-  [data-daino-sel] { outline: 2px solid #6cbf8d !important; outline-offset: 1px; }
-  [contenteditable="true"] { outline: 2px solid #8ad6a5 !important; }
-  [data-daino-dragging] * { cursor: grabbing !important; }
-  .daino-drop-line { position: fixed; height: 2px; background: #6cbf8d; z-index: 2147483647;
-    pointer-events: none; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); display: none; }
+  [data-daino-hover] { outline: 1px dashed rgba(108, 191, 141, 0.85) !important; outline-offset: 1px; cursor: move !important; }
+  [data-daino-sel] { outline: 2px solid #6cbf8d !important; outline-offset: 1px; cursor: move !important; }
+  [contenteditable="true"] { outline: 2px solid #8ad6a5 !important; cursor: text !important; }
+  /* While a drag is live the whole page shows the move cursor and the lifted
+     element dims and floats, so the gesture reads as "picked up". */
+  [data-daino-dragging], [data-daino-dragging] * { cursor: grabbing !important; }
+  [data-daino-dragging] { user-select: none !important; }
+  [data-daino-drag] { opacity: .75 !important; box-shadow: 0 8px 26px rgba(0,0,0,.35) !important;
+    transition: opacity .08s ease; }
+  .daino-drop-line { position: fixed; height: 3px; background: #6cbf8d; border-radius: 2px;
+    z-index: 2147483647; pointer-events: none;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 0 8px rgba(108, 191, 141, 0.7); display: none; }
+  .daino-menu { position: fixed !important; z-index: 2147483647 !important; min-width: 168px;
+    background: #1b1f1d !important; color: #e8efe9 !important; border: 1px solid rgba(255,255,255,.14) !important;
+    border-radius: 8px !important; padding: 4px !important; margin: 0 !important;
+    box-shadow: 0 10px 34px rgba(0,0,0,.55) !important;
+    font: 13px/1.45 system-ui, -apple-system, sans-serif !important; }
+  .daino-menu-item { display: block !important; width: 100% !important; box-sizing: border-box !important;
+    text-align: left !important; background: transparent !important; border: 0 !important; color: inherit !important;
+    padding: 6px 12px !important; border-radius: 5px !important; cursor: pointer !important;
+    font: inherit !important; letter-spacing: 0 !important; }
+  .daino-menu-item:hover { background: rgba(108,191,141,.20) !important; }
+  .daino-menu-item.danger { color: #ff9b9b !important; }
+  .daino-menu-sep { height: 1px !important; background: rgba(255,255,255,.12) !important; margin: 4px 2px !important; }
 `;
 
 /**

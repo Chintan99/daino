@@ -215,6 +215,43 @@ export const COMPONENTS: ComponentDef[] = [
     icon: "▂",
     html: `<footer style="padding:32px 24px;border-top:1px solid rgba(127,127,127,.25);display:flex;gap:16px;align-items:center">\n  <span style="opacity:.7">© 2026 Your project</span>\n  <a href="#" style="margin-left:auto">Privacy</a>\n  <a href="#">Terms</a>\n</footer>`,
   },
+
+  // ---- Sections ----
+  {
+    id: "stats",
+    group: "Sections",
+    label: "Stat band",
+    icon: "◫",
+    html: `<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:24px;padding:56px 24px;text-align:center">\n  <div><div style="font-size:40px;font-weight:700">10k+</div><div style="opacity:.7">Users</div></div>\n  <div><div style="font-size:40px;font-weight:700">99.9%</div><div style="opacity:.7">Uptime</div></div>\n  <div><div style="font-size:40px;font-weight:700">24/7</div><div style="opacity:.7">Support</div></div>\n</section>`,
+  },
+  {
+    id: "pricing",
+    group: "Sections",
+    label: "Pricing",
+    icon: "▤",
+    html: `<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px;padding:56px 24px">\n  <div style="border:1px solid rgba(127,127,127,.28);border-radius:12px;padding:24px">\n    <h3 style="margin:0 0 4px">Starter</h3>\n    <div style="font-size:32px;font-weight:700;margin:0 0 12px">$0</div>\n    <ul style="margin:0 0 20px;padding-left:18px;opacity:.8"><li>One project</li><li>Community support</li></ul>\n    <a href="#" style="display:inline-block;padding:10px 18px;border-radius:8px;border:1px solid currentColor;text-decoration:none">Choose</a>\n  </div>\n  <div style="border:2px solid currentColor;border-radius:12px;padding:24px">\n    <h3 style="margin:0 0 4px">Pro</h3>\n    <div style="font-size:32px;font-weight:700;margin:0 0 12px">$19</div>\n    <ul style="margin:0 0 20px;padding-left:18px;opacity:.8"><li>Unlimited projects</li><li>Priority support</li></ul>\n    <a href="#" style="display:inline-block;padding:10px 18px;border-radius:8px;border:1px solid currentColor;text-decoration:none">Choose</a>\n  </div>\n</section>`,
+  },
+  {
+    id: "testimonial",
+    group: "Sections",
+    label: "Testimonial",
+    icon: "❞",
+    html: `<section style="padding:64px 24px;text-align:center;max-width:720px;margin:0 auto">\n  <blockquote style="font-size:24px;line-height:1.4;margin:0 0 20px">“This is the quote that convinces the next person to try it.”</blockquote>\n  <div style="opacity:.75">Alex Rivera · Head of Product</div>\n</section>`,
+  },
+  {
+    id: "faq",
+    group: "Sections",
+    label: "FAQ",
+    icon: "?",
+    html: `<section style="padding:56px 24px;max-width:720px;margin:0 auto">\n  <h2 style="margin:0 0 24px">Questions</h2>\n  <details style="border-bottom:1px solid rgba(127,127,127,.25);padding:12px 0"><summary style="cursor:pointer;font-weight:600">Is it free?</summary><p style="opacity:.8;margin:8px 0 0">Yes, the starter plan is free forever.</p></details>\n  <details style="border-bottom:1px solid rgba(127,127,127,.25);padding:12px 0"><summary style="cursor:pointer;font-weight:600">Can I self-host?</summary><p style="opacity:.8;margin:8px 0 0">Absolutely — it runs entirely on your machine.</p></details>\n</section>`,
+  },
+  {
+    id: "gallery",
+    group: "Sections",
+    label: "Gallery",
+    icon: "▨",
+    html: `<section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;padding:48px 24px">\n  <div style="aspect-ratio:4/3;background:rgba(127,127,127,.18);border-radius:10px"></div>\n  <div style="aspect-ratio:4/3;background:rgba(127,127,127,.18);border-radius:10px"></div>\n  <div style="aspect-ratio:4/3;background:rgba(127,127,127,.18);border-radius:10px"></div>\n  <div style="aspect-ratio:4/3;background:rgba(127,127,127,.18);border-radius:10px"></div>\n</section>`,
+  },
 ];
 
 export const COMPONENT_GROUPS = [
@@ -223,4 +260,5 @@ export const COMPONENT_GROUPS = [
   "Media",
   "Interactive",
   "Blocks",
+  "Sections",
 ];

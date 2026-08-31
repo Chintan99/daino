@@ -225,8 +225,15 @@ export function useSessionSocket(target: string = "latest") {
         case "DesignUpdated":
         case "DesignCreated": {
           const designId = str(event.design_id);
-          const active = useDesignStore.getState().activeDesignId;
-          if (designId && designId === active) {
+          const store = useDesignStore.getState();
+          // While the agent is drawing, follow the canvas it touches so the
+          // user watches it build live instead of hunting for it in the list.
+          // Off-turn (e.g. a background sync) we only refresh the open canvas.
+          const follow = designId && useAgentStore.getState().turnRunning;
+          if (follow && designId !== store.activeDesignId) {
+            store.setActiveDesign(designId);
+          }
+          if (designId && (follow || designId === store.activeDesignId)) {
             qc.invalidateQueries({ queryKey: qk.design(designId) });
           }
           qc.invalidateQueries({ queryKey: qk.designs });

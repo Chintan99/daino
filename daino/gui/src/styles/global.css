@@ -1786,6 +1786,79 @@ select.input {
 .design-inspector .pad {
   padding: 12px;
 }
+.design-sidebar {
+  width: 232px;
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-1);
+  overflow: hidden;
+}
+.design-sidebar .panel {
+  border: 0;
+}
+/* Canvases take their content height; files get the rest and scroll. */
+.design-sidebar .design-files {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+.design-sidebar .design-files .panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.canvas-title {
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.canvas-list {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 4px 6px 8px;
+}
+.canvas-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-13);
+  text-align: left;
+  cursor: pointer;
+}
+.canvas-row:hover {
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+.canvas-row.active {
+  background: var(--accent-soft);
+  color: var(--accent-bright);
+}
+.canvas-name {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.canvas-meta {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
 .canvas-hint {
   position: absolute;
   inset: 0;
@@ -3200,6 +3273,47 @@ a.btn.icon {
 }
 .ve-inspector .pad {
   padding: 10px 12px 20px;
+}
+/* Widen the inspector a touch to fit the richer style controls. */
+.ve-inspector {
+  width: 264px;
+}
+.ve-inspector .grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.ve-inspector .grid-2 .field {
+  margin-bottom: 0;
+}
+.ve-inspector .spacing-box {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+.ve-inspector .input.sm {
+  padding: 3px 5px;
+  text-align: center;
+  min-width: 0;
+}
+.ve-inspector .swatch {
+  width: 30px;
+  height: 26px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.ve-inspector .section-title {
+  margin: 14px 0 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-11);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
 }
 .ve-grid {
   display: grid;

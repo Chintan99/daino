@@ -16,11 +16,14 @@ export function useVisualEditor(
   frameRef: React.RefObject<HTMLIFrameElement | null>,
   enabled: boolean,
   onChange: (html: string) => void,
+  history?: { onUndo: () => void; onRedo: () => void },
 ) {
   const [selection, setSelection] = useState<ElementInfo | null>(null);
   const [ready, setReady] = useState(false);
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
+  const historyRef = useRef(history);
+  historyRef.current = history;
   const selectionRef = useRef<ElementInfo | null>(null);
   selectionRef.current = selection;
 
@@ -49,6 +52,8 @@ export function useVisualEditor(
       else if (msg.t === "selected") setSelection(msg.node);
       else if (msg.t === "deselected") setSelection(null);
       else if (msg.t === "changed") changeRef.current(msg.html);
+      else if (msg.t === "undo") historyRef.current?.onUndo();
+      else if (msg.t === "redo") historyRef.current?.onRedo();
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);

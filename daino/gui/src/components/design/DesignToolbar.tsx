@@ -99,22 +99,13 @@ export function DesignToolbar({
 
   return (
     <div className="design-toolbar">
-      <select
-        className="model-picker"
-        value={designId ?? ""}
-        onChange={(e) => setActive(e.target.value || null)}
-        title="Canvas"
+      <span
+        className="canvas-title"
+        title={design?.name ?? "Canvas"}
         style={{ maxWidth: 220 }}
       >
-        {(designs?.designs.length ?? 0) === 0 && (
-          <option value="">no canvases yet</option>
-        )}
-        {designs?.designs.map((d) => (
-          <option key={d.id} value={d.id}>
-            {d.name}
-          </option>
-        ))}
-      </select>
+        {design?.name ?? "No canvas"}
+      </span>
       <button className="btn" disabled={busy} onClick={() => void newCanvas()}>
         + Canvas
       </button>
