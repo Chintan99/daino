@@ -173,6 +173,21 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
                     )
                     attention.completed(_turn_summary(outcome))
                     await connection.send({"type": "turn_complete", "session_id": session_id})
+                except asyncio.CancelledError:
+                    # The user pressed Stop. `CancelledError` is a BaseException,
+                    # so without this it slipped past the handlers below and the
+                    # browser was never told the turn ended — the runner spun
+                    # forever. Tell it, then let the cancellation propagate. The
+                    # notice is shielded so it is not cancelled with this task.
+                    attention.failed("Stopped by user")
+                    notice = asyncio.ensure_future(
+                        connection.send(
+                            {"type": "turn_stopped", "session_id": session_id}
+                        )
+                    )
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(notice)
+                    raise
                 except DainoError as exc:
                     attention.failed(str(exc))
                     await connection.send({"type": "error", "message": str(exc)})

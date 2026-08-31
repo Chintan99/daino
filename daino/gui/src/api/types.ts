@@ -261,6 +261,7 @@ export type ServerSessionMessage =
   | { type: "event"; event: WsEvent }
   | { type: "approval_request"; id: string; command: string; reason: string }
   | { type: "turn_complete"; session_id: string }
+  | { type: "turn_stopped"; session_id: string }
   | { type: "error"; message: string }
   | { type: "pong" };
 

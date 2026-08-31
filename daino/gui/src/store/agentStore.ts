@@ -69,6 +69,8 @@ interface AgentState {
   sessionId: string | null;
   wsStatus: WsStatus;
   turnRunning: boolean;
+  /** True from pressing Stop until the server confirms the turn stopped. */
+  stopping: boolean;
 
   events: LiveEvent[];
   liveStart: number; // index into events where the current turn began
@@ -99,6 +101,10 @@ interface AgentState {
   setTurnRunning: (v: boolean) => void;
   beginTurn: (userText: string) => void;
   endTurn: () => void;
+  /** Ask the running turn to stop, with immediate "stopping…" feedback. */
+  requestStop: () => void;
+  /** The server confirmed the turn stopped: settle the UI as stopped. */
+  stoppedTurn: () => void;
   /** Re-enter the running state for a turn this client did not start. */
   resumeTurn: () => void;
   /** Drop everything that belonged to the conversation being left. */
@@ -123,6 +129,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   sessionId: null,
   wsStatus: "connecting",
   turnRunning: false,
+  stopping: false,
 
   events: [],
   liveStart: 0,
@@ -164,6 +171,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   beginTurn: (userText) =>
     set((s) => ({
       turnRunning: true,
+      stopping: false,
       pendingUser: userText,
       liveStart: s.events.length,
       thinking: "",
@@ -188,6 +196,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         ? {}
         : {
             turnRunning: true,
+            stopping: false,
             liveStart: s.events.length,
             activity: { state: "working", detail: "resumed after reload" },
           },
@@ -195,19 +204,42 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   endTurn: () =>
     set((s) => ({
       turnRunning: false,
+      stopping: false,
       pendingUser: null,
       thinking: "",
       streaming: "",
-      // A turn that ended after a failure keeps the failure visible; anything
-      // else reads as complete until the next turn starts.
+      // A turn that ended after a failure keeps the failure visible; a turn the
+      // user stopped reads as stopped; anything else reads as complete.
       activity:
         s.activity.state === "failed"
           ? s.activity
-          : { state: "completed", detail: s.activity.detail },
+          : s.stopping
+            ? { state: "stopped", detail: "stopped by you" }
+            : { state: "completed", detail: s.activity.detail },
       // The checklist belongs to the turn that made it. Keeping it afterwards
       // left a stale, permanently half-finished plan on screen.
       todos: [],
     })),
+
+  requestStop: () => {
+    const s = get();
+    if (!s.turnRunning || s.stopping) return;
+    // Ask the server to cancel, and reflect it immediately so the button and
+    // status change the instant it is pressed.
+    s.send?.({ type: "cancel" });
+    set({ stopping: true, activity: { state: "stopping", detail: "stopping…" } });
+  },
+
+  stoppedTurn: () =>
+    set({
+      turnRunning: false,
+      stopping: false,
+      pendingUser: null,
+      thinking: "",
+      streaming: "",
+      activity: { state: "stopped", detail: "stopped by you" },
+      todos: [],
+    }),
   setLatestTests: (latestTests) => set({ latestTests }),
   /**
    * The invariant the runner depends on: a running state requires a live turn.
@@ -275,6 +307,7 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       todos: [],
       chips: [],
       turnRunning: false,
+      stopping: false,
       // A fresh conversation starts on Auto. Carrying the previous session's
       // pinned profile over is how a brand-new session ended up pinned — and a
       // pinned session is excluded from escalation, so a stalled turn there has
@@ -284,7 +317,11 @@ export const useAgentStore = create<AgentState>((set, get) => ({
 
   setActivity: (state, detail = "") =>
     set((s) =>
-      !s.turnRunning && RUNNING_STATES.has(state) ? {} : { activity: { state, detail } },
+      // Ignore "still working" updates once the turn is over or being stopped,
+      // so a late event cannot revive the runner or undo the "stopping…" label.
+      (s.stopping || !s.turnRunning) && RUNNING_STATES.has(state)
+        ? {}
+        : { activity: { state, detail } },
     ),
 
   addApproval: (a) =>

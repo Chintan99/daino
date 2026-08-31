@@ -40,7 +40,7 @@ the same without moving orchestration logic.
 ## Browser IDE server
 
 ```text
-D[Ai]NO CORE (agent · LLM · tools · fs · shell · git · MCP · memory · sessions)
+D[Ai]NO CORE (agent · LLM · tools · fs · shell · git · memory · sessions)
    -> EventBus (structured, serializable events)
       -> D[Ai]NO TUI  (Textual)
       -> Local API    (FastAPI, 127.0.0.1)  -> WebSocket -> React GUI (daino/gui)

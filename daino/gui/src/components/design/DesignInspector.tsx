@@ -3,6 +3,7 @@ import Editor from "@monaco-editor/react";
 import { useDesign, useDesignMutations } from "../../api/hooks";
 import { api, ApiError } from "../../api/client";
 import { useDesignStore } from "../../store/designStore";
+import { promptFor } from "../../store/dialogStore";
 import { useAgentStore } from "../../store/agentStore";
 import { sendChatMessage } from "../../lib/agent";
 import { exportArtifact } from "../../lib/exportDesign";
@@ -88,7 +89,12 @@ export function DesignInspector({
   const saveToProject = async () => {
     if (!selected) return;
     const suggested = String(data.filename || `${selected.label || "artifact"}.html`);
-    const path = window.prompt("Save to project path:", suggested);
+    const path = await promptFor({
+      title: "Save to project",
+      hint: "Path relative to the project root",
+      initial: suggested,
+      confirmLabel: "Save",
+    });
     if (!path?.trim()) return;
     try {
       try {

@@ -35,3 +35,24 @@ npm run build      # type-check + build to daino/gui/dist (served by the API)
 
 Run the backend it talks to with `daino <path> --gui` in another terminal. Backend GUI tests live in
 `tests/integration/test_gui_server.py` (FastAPI `TestClient`, no browser needed).
+
+## Documentation site
+
+The public documentation is a dependency-free single-page site in `docs/index.html`. Preview and
+validate it locally:
+
+```bash
+python -m http.server 8000 --directory docs
+# open http://127.0.0.1:8000
+
+python scripts/validate_docs_site.py
+```
+
+Keep the site styles in `docs/styles.css` and its small interactive layer in `docs/script.js`.
+Check the default dark-green palette, the light-theme toggle, installation tabs, copy buttons,
+anchor navigation, keyboard controls, and narrow-screen layout. The Markdown files remain the
+detailed source for D[Ai]NO's in-app documentation reader.
+
+The `Documentation` GitHub Actions workflow validates pull requests and deploys the `docs/`
+directory on pushes to `v2`. For the first deployment, a repository administrator must select
+**GitHub Actions** under **Settings → Pages → Build and deployment → Source**.

@@ -142,6 +142,8 @@ KNOWN_SUBCOMMANDS = frozenset(
         "deploy",
         "playbooks",
         "infra",
+        "ps",
+        "kill",
     }
 )
 
@@ -158,7 +160,7 @@ def main(
         bool, typer.Option("--gui", help="Launch the local browser IDE instead of the TUI.")
     ] = False,
     tui: Annotated[
-        bool, typer.Option("--tui", help="Explicitly launch the terminal UI (the default).")
+        bool, typer.Option("--tui", help="Launch the terminal UI workspace.")
     ] = False,
     host: Annotated[
         str, typer.Option("--host", help="Host to bind the GUI server to.")
@@ -168,6 +170,18 @@ def main(
     ] = 4173,
     no_browser: Annotated[
         bool, typer.Option("--no-browser", help="Do not open a browser for --gui.")
+    ] = False,
+    foreground: Annotated[
+        bool,
+        typer.Option(
+            "--foreground",
+            "-f",
+            help="Keep the GUI server attached to this terminal (default is background).",
+        ),
+    ] = False,
+    serve: Annotated[
+        bool,
+        typer.Option("--serve", hidden=True, help="Internal: run the detached GUI server."),
     ] = False,
 ) -> None:
     """Open the interactive workspace, or run an automation-friendly subcommand."""
@@ -183,14 +197,32 @@ def main(
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         if gui:
-            from daino.server.launch import run_gui
+            if serve:
+                # The detached server process the background launcher spawned.
+                from daino.server.launch import serve_gui
 
-            run_gui(_active_project, host=host, port=port, open_browser=not no_browser)
+                serve_gui(_active_project, host=host, port=port)
+                return
+            if foreground:
+                from daino.server.launch import run_gui
+
+                run_gui(_active_project, host=host, port=port, open_browser=not no_browser)
+                return
+            # Default: detach so the terminal stays free (daino ps / daino kill).
+            from daino.server.launch import launch_gui_background
+
+            launch_gui_background(
+                _active_project, host=host, port=port, open_browser=not no_browser
+            )
             return
-        del tui  # the TUI is the default; the flag exists for symmetry/explicitness
-        from daino.tui import run_tui
+        if tui:
+            from daino.tui import run_tui
 
-        run_tui(_active_project)
+            run_tui(_active_project)
+            return
+        # No interactive flag and no subcommand: show the command list, so `daino`
+        # is discoverable. Launch an interface explicitly with `--tui` or `--gui`.
+        console.print(ctx.get_help())
 
 
 def _rewrite_leading_path(argv: list[str]) -> list[str]:
@@ -228,6 +260,85 @@ def legacy_main() -> None:
         "Please use `daino` instead."
     )
     run_cli()
+
+
+@app.command("ps")
+def gui_ps() -> None:
+    """List the D[Ai]NO GUI servers running in the background."""
+    from datetime import datetime
+
+    from daino.server.launch import list_servers
+
+    servers = list_servers()
+    if not servers:
+        console.print(f"No {branding.NAME} GUI servers are running.")
+        return
+
+    def parse(iso: str) -> datetime | None:
+        try:
+            return datetime.fromisoformat(iso)
+        except ValueError:
+            return None
+
+    def when(dt: datetime | None) -> str:
+        if dt is None:
+            return "—"
+        return dt.astimezone().strftime("%b %d %H:%M")
+
+    def uptime(dt: datetime | None) -> str:
+        if dt is None:
+            return "—"
+        now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+        secs = max(0, int((now - dt).total_seconds()))
+        if secs < 60:
+            return f"{secs}s"
+        if secs < 3600:
+            return f"{secs // 60}m"
+        if secs < 86400:
+            return f"{secs // 3600}h {secs % 3600 // 60}m"
+        return f"{secs // 86400}d {secs % 86400 // 3600}h"
+
+    table = Table(title=f"{branding.NAME} GUI servers", box=None, pad_edge=False)
+    table.add_column("SESSION", style="bold")
+    table.add_column("URL")
+    table.add_column("PROJECT")
+    table.add_column("PID", justify="right")
+    table.add_column("STARTED")
+    table.add_column("UPTIME", justify="right")
+    for server in servers:
+        started = parse(str(server.get("started", "")))
+        table.add_row(
+            str(server.get("id", "?")),
+            str(server.get("url", "")),
+            str(server.get("dir", "")),
+            str(server.get("pid", "")),
+            when(started),
+            uptime(started),
+        )
+    console.print(table)
+
+
+@app.command("kill")
+def gui_kill(
+    target: Annotated[
+        str | None,
+        typer.Argument(
+            help="Session id or project directory. Defaults to the current directory.",
+        ),
+    ] = None,
+) -> None:
+    """Stop a background D[Ai]NO GUI server (by session id or directory)."""
+    from daino.server.launch import kill_server
+
+    killed = kill_server(target)
+    if killed:
+        console.print(
+            f"Stopped {branding.NAME} GUI session "
+            f"[bold]{killed['id']}[/bold] ({killed['url']})."
+        )
+    else:
+        where = target or "the current directory"
+        console.print(f"[yellow]No running {branding.NAME} GUI server matched {where}.[/yellow]")
 
 
 @app.command("tui")

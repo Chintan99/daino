@@ -25,17 +25,22 @@ router = APIRouter(prefix="/api/docs", tags=["docs"])
 #: alphabetically, so a new page shows up without editing this list.
 _ORDER = (
     "installation",
+    "getting-started",
+    "features",
     "tui",
     "gui",
+    "cli-reference",
     "configuration",
     "providers",
     "model-routing",
     "memory",
     "repository-intelligence",
+    "missions",
     "playbooks",
     "runtimes",
     "security",
     "deployment",
+    "infrastructure",
     "architecture",
     "contributing",
 )
@@ -43,18 +48,23 @@ _ORDER = (
 #: Grouping shown in the sidebar.
 _SECTIONS: dict[str, str] = {
     "installation": "Getting started",
+    "getting-started": "Getting started",
+    "features": "Getting started",
     "tui": "Getting started",
     "gui": "Getting started",
+    "cli-reference": "Reference",
     "configuration": "Configuration",
     "providers": "Configuration",
     "model-routing": "Configuration",
     "runtimes": "Configuration",
     "memory": "How it works",
     "repository-intelligence": "How it works",
+    "missions": "How it works",
     "playbooks": "How it works",
     "architecture": "How it works",
     "security": "Operations",
     "deployment": "Operations",
+    "infrastructure": "Operations",
     "contributing": "Operations",
 }
 

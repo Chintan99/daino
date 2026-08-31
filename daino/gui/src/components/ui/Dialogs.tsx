@@ -1,12 +1,56 @@
 import { useEffect, useState } from "react";
-import { useDialogStore, type PromptRequest, type InfoRequest } from "../../store/dialogStore";
+import {
+  useDialogStore,
+  type PromptRequest,
+  type InfoRequest,
+  type ConfirmRequest,
+} from "../../store/dialogStore";
 
 /** Host for the app's single dialog slot; mounted once by the shell. */
 export function Dialogs() {
   const request = useDialogStore((s) => s.request);
   if (!request) return null;
   if (request.kind === "prompt") return <PromptDialog request={request} />;
+  if (request.kind === "confirm") return <ConfirmDialog request={request} />;
   return <InfoDialog request={request} />;
+}
+
+function ConfirmDialog({ request }: { request: ConfirmRequest }) {
+  const close = useDialogStore((s) => s.close);
+  const finish = (ok: boolean) => {
+    request.resolve(ok);
+    close();
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") finish(false);
+      if (e.key === "Enter") finish(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request]);
+
+  return (
+    <div className="dialog-backdrop" onMouseDown={() => finish(false)}>
+      <div className="dialog" onMouseDown={(e) => e.stopPropagation()}>
+        <h3>{request.title}</h3>
+        {request.message && <div className="muted">{request.message}</div>}
+        <div className="actions">
+          <button className="btn subtle" autoFocus onClick={() => finish(false)}>
+            {request.cancelLabel ?? "Cancel"}
+          </button>
+          <button
+            className={`btn ${request.danger ? "danger" : "primary"}`}
+            onClick={() => finish(true)}
+          >
+            {request.confirmLabel ?? "Confirm"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function PromptDialog({ request }: { request: PromptRequest }) {

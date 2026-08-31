@@ -24,6 +24,27 @@ NAME = "D[Ai]NO"
 NAME_MARKUP = NAME.replace("[", "\\[")
 
 
+#: The dinosaur shown while the browser IDE builds. Raw strings so the
+#: backslashes in the art are taken literally.
+DINO_ART = (
+    r"               __",
+    r"              / _)",
+    r"     _/\/\/\_/ /",
+    r"   _|         /",
+    r" _|  (  | (  |",
+    r"/__.-'|_|--|_|  ",
+)
+
+
+def dino_banner(*, color: bool = True) -> str:
+    """The dinosaur plus the wordmark, for the one-time GUI build."""
+    green = "\033[32m" if color else ""
+    bold = "\033[1m" if color else ""
+    reset = "\033[0m" if color else ""
+    art = "\n".join(f"{green}{line}{reset}" for line in DINO_ART)
+    return f"\n{art}\n\n    {bold}{NAME}{reset} — building the browser IDE\n"
+
+
 def escape_markup(text: str) -> str:
     """Escape ``text`` so console markup renders every bracket literally.
 
@@ -37,4 +58,4 @@ def escape_markup(text: str) -> str:
     return text.replace("[", "\\[")
 
 
-__all__ = ["NAME", "NAME_MARKUP", "escape_markup"]
+__all__ = ["NAME", "NAME_MARKUP", "DINO_ART", "dino_banner", "escape_markup"]

@@ -177,6 +177,13 @@ export function useSessionSocket(target: string = "latest") {
           qc.invalidateQueries({ queryKey: qk.gitStatus });
           break;
         }
+        case "turn_stopped": {
+          s.stoppedTurn();
+          const id = sessionIdRef.current;
+          if (id) qc.invalidateQueries({ queryKey: qk.sessionMessages(id) });
+          qc.invalidateQueries({ queryKey: qk.gitStatus });
+          break;
+        }
         case "error": {
           s.pushEvent({ kind: "error", message: msg.message });
           s.setActivity("failed", msg.message.slice(0, 60));

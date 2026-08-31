@@ -333,7 +333,17 @@ def test_documentation_is_served_to_the_gui(client: TestClient) -> None:
     index = client.get("/api/docs").json()
     assert index["available"] is True
     slugs = {item["slug"] for item in index["pages"]}
-    assert {"installation", "gui", "configuration"} <= slugs
+    assert {
+        "installation",
+        "getting-started",
+        "features",
+        "gui",
+        "cli-reference",
+        "configuration",
+        "missions",
+        "infrastructure",
+    } <= slugs
+    assert "index" not in slugs
     # Getting-started pages lead, and every page is grouped for the sidebar.
     assert index["pages"][0]["slug"] == "installation"
     assert all(item["section"] and item["title"] for item in index["pages"])

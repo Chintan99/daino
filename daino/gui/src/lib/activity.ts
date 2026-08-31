@@ -15,7 +15,9 @@ export type ActivityState =
   | "building"
   | "verifying"
   | "completed"
-  | "failed";
+  | "failed"
+  | "stopping"
+  | "stopped";
 
 export const ACTIVITY_LABELS: Record<ActivityState, string> = {
   idle: "READY",
@@ -27,6 +29,8 @@ export const ACTIVITY_LABELS: Record<ActivityState, string> = {
   verifying: "VERIFYING",
   completed: "TASK COMPLETED",
   failed: "ERROR",
+  stopping: "STOPPING…",
+  stopped: "STOPPED",
 };
 
 /** The states during which the runner actually runs. */
@@ -52,6 +56,8 @@ export const ACTIVITY_COLOR: Record<ActivityState, string> = {
   verifying: "var(--yellow)",
   completed: "var(--green)",
   failed: "var(--red)",
+  stopping: "var(--yellow)",
+  stopped: "var(--text-3)",
 };
 
 const ROLE_ACTIVITY: Record<string, ActivityState> = {

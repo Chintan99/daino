@@ -21,6 +21,8 @@ export interface ElementInfo {
   crumbs: { tag: string; path: number[] }[];
   canMoveUp: boolean;
   canMoveDown: boolean;
+  /** The element's cleaned outerHTML (capped), for handing to the agent. */
+  html: string;
 }
 
 export type FrameMessage =
@@ -28,6 +30,9 @@ export type FrameMessage =
   | { t: "selected"; node: ElementInfo }
   | { t: "deselected" }
   | { t: "changed"; html: string }
+  // A block from the palette was just inserted; carries the new element so the
+  // host can offer to auto-match its style.
+  | { t: "inserted"; node: ElementInfo }
   // The frame cannot own the history stack (a reload would wipe it), so
   // Cmd+Z / Cmd+Shift+Z inside the page ask the host to step it instead.
   | { t: "undo" }
@@ -46,7 +51,11 @@ export type HostMessage =
   | { t: "setAttr"; path: number[]; name: string; value: string }
   | { t: "setStyle"; path: number[]; prop: string; value: string }
   | { t: "dragBegin"; html: string }
-  | { t: "dragEnd" };
+  | { t: "dragEnd" }
+  // A palette drag can't cross into the sandboxed frame, so the host tracks it
+  // over an overlay and forwards the frame-space position here instead.
+  | { t: "hostDragOver"; x: number; y: number }
+  | { t: "hostDrop"; x: number; y: number };
 
 /** True when the source is a bare fragment rather than a whole document. */
 export function isFragment(html: string): boolean {
@@ -78,6 +87,23 @@ const RUNTIME = `
 
   function isChrome(el) {
     return !el || el.nodeType !== 1 || !!el.closest('[data-daino-ui]');
+  }
+
+  /** outerHTML with every editor trace removed, for handing to the agent. */
+  function cleanOuterHTML(el) {
+    var c = el.cloneNode(true);
+    var traces = c.querySelectorAll('[data-daino-sel],[data-daino-hover],[data-daino-drag],[contenteditable]');
+    for (var i = 0; i < traces.length; i++) {
+      traces[i].removeAttribute('data-daino-sel');
+      traces[i].removeAttribute('data-daino-hover');
+      traces[i].removeAttribute('data-daino-drag');
+      traces[i].removeAttribute('contenteditable');
+    }
+    c.removeAttribute('data-daino-sel');
+    c.removeAttribute('data-daino-hover');
+    c.removeAttribute('data-daino-drag');
+    var html = c.outerHTML || '';
+    return html.length > 20000 ? html.slice(0, 20000) + '\\n<!-- …truncated -->' : html;
   }
 
   function selectable(el) {
@@ -200,7 +226,8 @@ const RUNTIME = `
       },
       crumbs: crumbs.slice(-7),
       canMoveUp: !!el.previousElementSibling,
-      canMoveDown: !!el.nextElementSibling
+      canMoveDown: !!el.nextElementSibling,
+      html: cleanOuterHTML(el)
     };
   }
 
@@ -653,7 +680,7 @@ const RUNTIME = `
     if (!place(built.frag) && DOC.body) DOC.body.appendChild(built.frag);
     pendingInsert = null;
     hideLine();
-    if (first) select(first);
+    if (first) { select(first); post({ t: 'inserted', node: describe(first) }); }
     changed();
   }, true);
 
@@ -671,6 +698,27 @@ const RUNTIME = `
     if (msg.t === 'dragBegin') { pendingInsert = msg.html; return; }
     if (msg.t === 'dragEnd') { pendingInsert = null; hideLine(); return; }
 
+    // Host-forwarded palette drag (coords already in this frame's space).
+    if (msg.t === 'hostDragOver') {
+      if (pendingInsert) updateDrop(msg.x, msg.y);
+      return;
+    }
+    if (msg.t === 'hostDrop') {
+      if (!pendingInsert) return;
+      updateDrop(msg.x, msg.y);
+      var dropped = fromHTML(pendingInsert);
+      var droppedFirst = dropped.first;
+      if (!place(dropped.frag) && DOC.body) DOC.body.appendChild(dropped.frag);
+      pendingInsert = null;
+      hideLine();
+      if (droppedFirst) {
+        select(droppedFirst);
+        post({ t: 'inserted', node: describe(droppedFirst) });
+      }
+      changed();
+      return;
+    }
+
     if (msg.t === 'insert') {
       var built = fromHTML(msg.html);
       var first = built.first;
@@ -684,7 +732,7 @@ const RUNTIME = `
       } else {
         anchor.parentNode.insertBefore(built.frag, anchor.nextSibling);
       }
-      if (first) select(first);
+      if (first) { select(first); post({ t: 'inserted', node: describe(first) }); }
       changed();
       return;
     }

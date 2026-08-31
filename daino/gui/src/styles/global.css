@@ -1306,6 +1306,57 @@ select.input {
   display: flex;
   gap: 8px;
   align-items: flex-end;
+  position: relative;
+}
+/* Slash-command dropdown, floating above the composer. */
+.slash-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  z-index: 30;
+  padding: 4px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 -10px 34px rgba(0, 0, 0, 0.45);
+}
+.slash-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 1px 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 9px;
+  cursor: pointer;
+  color: var(--text-2);
+}
+.slash-item.active,
+.slash-item:hover {
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+.slash-name {
+  font-family: var(--mono);
+  font-size: var(--fs-12);
+  color: var(--accent-bright);
+}
+.slash-usage {
+  font-family: var(--mono);
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  justify-self: start;
+}
+.slash-desc {
+  grid-column: 1 / -1;
+  font-size: var(--fs-11);
+  color: var(--text-3);
 }
 .composer-input {
   flex: 1;
@@ -3115,6 +3166,73 @@ select.input {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+/* "Work in progress" veil while the agent rewrites the open page. The editing
+   surface (canvas/HTML preview, blocks, inspector) is blurred directly — a CSS
+   filter on the container reliably blurs iframe content, which backdrop-filter
+   does not always do — and this overlay carries the message on top, unblurred. */
+.viewer-body.wip .viewer-stage,
+.viewer-body.wip .ve-palette,
+.viewer-body.wip .ve-inspector {
+  filter: blur(5px) saturate(0.9);
+  pointer-events: none;
+  user-select: none;
+  transition: filter 0.15s ease;
+}
+.ve-wip {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: progress;
+  background: color-mix(in srgb, var(--bg-0) 35%, transparent);
+  animation: ve-wip-in 0.15s ease;
+}
+@keyframes ve-wip-in {
+  from {
+    opacity: 0;
+  }
+}
+.ve-wip-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border: 1px solid var(--accent-line);
+  border-radius: 12px;
+  background: var(--bg-1);
+  box-shadow: var(--lift-2);
+  max-width: 80%;
+}
+.ve-wip-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ve-wip-text strong {
+  color: var(--accent-bright);
+  font-size: var(--fs-13);
+}
+.ve-wip-text span {
+  color: var(--text-3);
+  font-size: var(--fs-11);
+}
+.ve-wip-spinner {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border: 2px solid var(--accent-line);
+  border-top-color: var(--accent-bright);
+  border-radius: 50%;
+  animation: ve-wip-spin 0.8s linear infinite;
+}
+@keyframes ve-wip-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .viewer-body.split .viewer-stage {
   flex: 1 1 58%;
@@ -3172,6 +3290,17 @@ select.input {
   display: block;
   background: #fff;
   flex: 1;
+}
+/* Catches a palette block dragged over the sandboxed frame; only present while
+   a block is in flight, so it never blocks normal editing. */
+.ve-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  cursor: copy;
+  background: rgba(108, 191, 141, 0.06);
+  outline: 2px dashed rgba(108, 191, 141, 0.55);
+  outline-offset: -2px;
 }
 .viewer-frame .image-host {
   flex: 1;
@@ -3266,6 +3395,56 @@ a.btn.icon {
   width: 172px;
   border-right: 1px solid var(--border);
 }
+.ve-automatch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 7px;
+  border: 1px solid var(--accent-line);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-bright);
+  font-size: var(--fs-11);
+  cursor: pointer;
+  user-select: none;
+}
+.ve-automatch input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+/* Hover preview: shows what a block actually looks like before you add it. */
+.ve-block-preview {
+  position: fixed;
+  z-index: 60;
+  width: 296px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  pointer-events: none;
+}
+.ve-block-preview-title {
+  padding: 7px 10px;
+  font-size: var(--fs-12);
+  font-weight: 600;
+  color: var(--text-1);
+  border-bottom: 1px solid var(--border);
+}
+.ve-block-preview-stage {
+  height: 200px;
+  overflow: hidden;
+  background: #ffffff;
+  padding: 8px;
+}
+/* The block renders as if on a real light page, so it reads truthfully. */
+.ve-block-preview-page {
+  transform-origin: top left;
+  color: #111827;
+  font-family: system-ui, -apple-system, sans-serif;
+  line-height: 1.4;
+}
 .ve-inspector {
   width: 236px;
   border-left: 1px solid var(--border);
@@ -3314,6 +3493,19 @@ a.btn.icon {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-3);
+}
+.ve-inspector .ve-ai {
+  margin: 4px 0 8px;
+  padding: 8px;
+  border: 1px solid var(--accent-line);
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+.ve-inspector .ve-ai .section-title {
+  margin: 0 0 6px;
+  padding-top: 0;
+  border-top: 0;
+  color: var(--accent-bright);
 }
 .ve-grid {
   display: grid;

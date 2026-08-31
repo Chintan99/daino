@@ -1679,7 +1679,7 @@ class WorkspaceScreen(Screen[None]):
             return
         self.provider_health_status[item.name] = bool(item.connected)
         if models:
-            view.set_openrouter_models(models, selected=item.model)
+            view.set_catalog_models(models, selected=item.model)
         view.provider_saved(item)
         view.clear_secret()
         view.refresh_data()

@@ -56,8 +56,16 @@ def _wire_message(message: Message) -> dict[str, Any]:
         ]
         if not message.content:
             wire["content"] = None
-    if message.role == "tool" and message.tool_call_id:
-        wire["tool_call_id"] = message.tool_call_id
+    if message.role == "tool":
+        if message.tool_call_id:
+            wire["tool_call_id"] = message.tool_call_id
+        else:
+            # A prompted (JSON-action) observation has no native tool call to
+            # reference. OpenAI-compatible APIs reject a `tool` message without a
+            # `tool_call_id` (OpenRouter answers HTTP 400 "missing field
+            # tool_call_id"), so deliver the observation as a user turn instead —
+            # the model still sees it, and the request stays valid.
+            wire["role"] = "user"
     return wire
 
 

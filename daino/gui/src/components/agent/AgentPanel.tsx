@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
-import { useSessionMessages } from "../../api/hooks";
+import { qk, useSessionMessages, useQueryClient } from "../../api/hooks";
+import { api } from "../../api/client";
 import { useAgentStore } from "../../store/agentStore";
 import { useUIStore } from "../../store/uiStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { sendChatMessage } from "../../lib/agent";
+import {
+  SLASH_COMMANDS,
+  runGuiSlashCommand,
+  type SlashCommand,
+} from "../../lib/slashCommands";
+import { SlashMenu } from "./SlashMenu";
 import { AgentMessage } from "./AgentMessage";
 import { ToolEventCard } from "./ToolEventCard";
 import { ApprovalCard } from "./ApprovalCard";
@@ -26,6 +33,7 @@ export function AgentPanel() {
   const sessionId = useAgentStore((s) => s.sessionId);
   const wsStatus = useAgentStore((s) => s.wsStatus);
   const turnRunning = useAgentStore((s) => s.turnRunning);
+  const stopping = useAgentStore((s) => s.stopping);
   const pendingUser = useAgentStore((s) => s.pendingUser);
   const thinking = useAgentStore((s) => s.thinking);
   const streaming = useAgentStore((s) => s.streaming);
@@ -37,12 +45,47 @@ export function AgentPanel() {
   const agentView = useUIStore((s) => s.agentView);
   const showThinking = useSettingsStore((s) => s.showThinking);
 
+  const setSessionTarget = useUIStore((s) => s.setSessionTarget);
+  const qc = useQueryClient();
+
   const { data } = useSessionMessages(sessionId);
   const [input, setInput] = useState("");
   const [dragging, setDragging] = useState(false);
   const [attachError, setAttachError] = useState("");
+  const [notice, setNotice] = useState("");
+  // Slash-command dropdown: which item is highlighted, and whether it was
+  // dismissed (Escape) for the current query.
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashClosed, setSlashClosed] = useState(false);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Command name still being typed (no space yet) → suggest commands.
+  const commandMatches = useMemo<SlashCommand[]>(() => {
+    if (!input.startsWith("/") || input.includes(" ")) return [];
+    const q = input.toLowerCase();
+    return SLASH_COMMANDS.filter((c) => c.name.startsWith(q));
+  }, [input]);
+
+  // "/cmd <partial>" where the command takes enum values → suggest those values.
+  const argCommand = useMemo<SlashCommand | null>(() => {
+    if (!input.startsWith("/") || !input.includes(" ")) return null;
+    const name = "/" + input.slice(1).split(/\s+/)[0].toLowerCase();
+    const cmd = SLASH_COMMANDS.find((c) => c.name === name);
+    return cmd?.options ? cmd : null;
+  }, [input]);
+  const argValue = argCommand
+    ? input.slice(input.indexOf(" ") + 1).trim().toLowerCase()
+    : "";
+
+  const menuItems = useMemo<SlashCommand[]>(() => {
+    if (argCommand)
+      return argCommand
+        .options!.filter((o) => o.startsWith(argValue))
+        .map((o) => ({ name: o, description: "" }));
+    return commandMatches;
+  }, [argCommand, argValue, commandMatches]);
+  const slashOpen = !slashClosed && menuItems.length > 0;
 
   /**
    * Take files from a drop, a paste, or the picker.
@@ -77,8 +120,105 @@ export function AgentPanel() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, liveEvents.length, thinking, streaming, pendingUser, approvals]);
 
+  const startNew = async () => {
+    try {
+      const created = await api.createSession("");
+      await qc.invalidateQueries({ queryKey: qk.sessions });
+      setSessionTarget(created.id);
+    } catch (err) {
+      setAttachError(
+        `Could not start a session: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  // Apply a value-taking command (/effort, /mode, /verbose) to the session.
+  const applyValue = async (cmd: SlashCommand, value: string) => {
+    setInput("");
+    setSlashClosed(true);
+    setSlashIndex(0);
+    if (!sessionId) return;
+    try {
+      let label = value;
+      if (cmd.name === "/effort") {
+        await api.setEffort(sessionId, value);
+        label = `Reasoning effort → ${value}`;
+      } else if (cmd.name === "/mode") {
+        await api.setAutonomy(sessionId, value);
+        label = `Autonomy → ${value}`;
+      } else if (cmd.name === "/verbose") {
+        await api.setVerbose(sessionId, value === "on");
+        label = `Verbose progress ${value === "on" ? "on" : "off"}`;
+      }
+      await qc.invalidateQueries({ queryKey: qk.agentConfig(sessionId) });
+      setNotice(label);
+      window.setTimeout(() => setNotice(""), 2500);
+    } catch (err) {
+      setAttachError(
+        `Could not apply ${cmd.name} ${value}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
+
+  // Carry out a slash command: value commands apply, browser-native ones act
+  // here, the rest go to the agent as an instruction (e.g. /build, /test).
+  const runCommand = (raw: string) => {
+    const parts = raw.trim().split(/\s+/);
+    const name = parts[0].toLowerCase();
+    const value = parts.slice(1).join(" ").toLowerCase();
+    const cmd = SLASH_COMMANDS.find((c) => c.name === name);
+    if (cmd?.options && value) {
+      void applyValue(cmd, value);
+      return;
+    }
+    if (name === "/new") {
+      void startNew();
+      setInput("");
+      return;
+    }
+    if (runGuiSlashCommand(raw)) {
+      setInput("");
+      return;
+    }
+    if (sendChatMessage(raw)) setInput("");
+  };
+
   const submit = () => {
+    const text = input.trim();
+    if (text.startsWith("/")) {
+      runCommand(text);
+      return;
+    }
     if (sendChatMessage(input)) setInput("");
+  };
+
+  // An item chosen from the dropdown — either a command or, in value mode, a
+  // value for the active command.
+  const onPickItem = (item: SlashCommand) => {
+    setSlashIndex(0);
+    if (argCommand) {
+      void applyValue(argCommand, item.name);
+      return;
+    }
+    if (item.options) {
+      // Step into value selection: show the command's values next.
+      setSlashClosed(false);
+      setInput(item.name + " ");
+      return;
+    }
+    // A required argument (<...>) waits to be typed; the rest run.
+    if (item.usage?.startsWith("<")) {
+      setSlashClosed(true);
+      setInput(item.name + " ");
+    } else {
+      runCommand(item.name);
+    }
+  };
+
+  const onComposerChange = (value: string) => {
+    setInput(value);
+    setSlashClosed(false);
+    setSlashIndex(0);
   };
 
   // Settings take over the column; the conversation is one click away.
@@ -106,10 +246,11 @@ export function AgentPanel() {
         {turnRunning && (
           <button
             className="btn subtle sm"
-            onClick={() => useAgentStore.getState().send?.({ type: "cancel" })}
+            disabled={stopping}
+            onClick={() => useAgentStore.getState().requestStop()}
             title="Stop the running turn"
           >
-            Stop
+            {stopping ? "Stopping…" : "Stop"}
           </button>
         )}
         <button
@@ -192,17 +333,26 @@ export function AgentPanel() {
             </button>
           </div>
         )}
+        {notice && <div className="composer-note">✓ {notice}</div>}
         <div className="composer-row">
+          {slashOpen && (
+            <SlashMenu
+              items={menuItems}
+              index={slashIndex}
+              onPick={onPickItem}
+              onHover={setSlashIndex}
+            />
+          )}
           <textarea
             className="composer-input"
             placeholder={
               turnRunning
-                ? `${BRAND} is working…`
-                : `Message ${BRAND}…  (Enter to send, drop or paste files)`
+                ? `${BRAND} is working…  (type / for commands)`
+                : `Message ${BRAND}…  (Enter to send, / for commands)`
             }
             value={input}
             disabled={wsStatus !== "open"}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => onComposerChange(e.target.value)}
             onPaste={(e) => {
               const files = [...e.clipboardData.files];
               if (!files.length) return;
@@ -211,6 +361,29 @@ export function AgentPanel() {
               void takeFiles(files);
             }}
             onKeyDown={(e) => {
+              // While the command dropdown is open it owns the arrows and Enter.
+              if (slashOpen) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setSlashIndex((i) => (i + 1) % menuItems.length);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setSlashIndex((i) => (i - 1 + menuItems.length) % menuItems.length);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setSlashClosed(true);
+                  return;
+                }
+                if (e.key === "Enter" || e.key === "Tab") {
+                  e.preventDefault();
+                  onPickItem(menuItems[slashIndex]);
+                  return;
+                }
+              }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 submit();

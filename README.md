@@ -28,7 +28,8 @@ Python 3.12 or newer and Git. Docker is optional.
 ```bash
 ./scripts/install.sh
 cd /path/to/your/repository
-daino
+daino init
+daino . --tui
 ```
 
 This installs `daino` as a managed user application (normally `~/.local/bin/daino`). It works
@@ -98,8 +99,7 @@ D[Ai]NO also ships a local, VS Code-style browser IDE driven by the **same** age
 terminal. Nothing runs in the cloud; the server binds to `127.0.0.1` only.
 
 ```bash
-daino .          # terminal UI (the default)
-daino . --tui    # terminal UI, explicit
+daino . --tui    # terminal UI
 daino . --gui    # browser IDE at http://127.0.0.1:4173
 daino . --gui --port 5000
 ```
@@ -207,7 +207,7 @@ daemon is actually reachable; otherwise the local subprocess runtime is used, so
 of the box rather than failing on a container that was never available.
 
 ```bash
-daino config set runtime.default local   # or docker, ssh
+daino config set runtime.default local   # or docker
 daino doctor                             # what works here, and why not
 ```
 
@@ -317,15 +317,23 @@ Existing projects and sessions are detected automatically from legacy locations 
 
 ## Documentation
 
+- [Documentation home](docs/index.html)
+- [Installation](docs/installation.md)
+- [Getting started](docs/getting-started.md)
+- [Feature overview](docs/features.md)
+- [CLI reference](docs/cli-reference.md)
 - [Architecture](docs/architecture.md)
 - [Interactive TUI](docs/tui.md)
 - [Browser IDE (GUI)](docs/gui.md)
 - [Configuration](docs/configuration.md)
 - [Providers](docs/providers.md)
 - [Model routing](docs/model-routing.md)
+- [Memory and DAINO.md](docs/memory.md)
 - [Repository intelligence](docs/repository-intelligence.md)
 - [Runtimes](docs/runtimes.md)
+- [Missions](docs/missions.md)
 - [Deployment](docs/deployment.md)
+- [Infrastructure as code](docs/infrastructure.md)
 - [Playbooks](docs/playbooks.md)
 - [Security](docs/security.md)
 - [Contributing](docs/contributing.md)

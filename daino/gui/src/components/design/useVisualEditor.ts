@@ -17,11 +17,14 @@ export function useVisualEditor(
   enabled: boolean,
   onChange: (html: string) => void,
   history?: { onUndo: () => void; onRedo: () => void },
+  onInserted?: (node: ElementInfo) => void,
 ) {
   const [selection, setSelection] = useState<ElementInfo | null>(null);
   const [ready, setReady] = useState(false);
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
+  const insertedRef = useRef(onInserted);
+  insertedRef.current = onInserted;
   const historyRef = useRef(history);
   historyRef.current = history;
   const selectionRef = useRef<ElementInfo | null>(null);
@@ -54,6 +57,7 @@ export function useVisualEditor(
       else if (msg.t === "changed") changeRef.current(msg.html);
       else if (msg.t === "undo") historyRef.current?.onUndo();
       else if (msg.t === "redo") historyRef.current?.onRedo();
+      else if (msg.t === "inserted") insertedRef.current?.(msg.node);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);

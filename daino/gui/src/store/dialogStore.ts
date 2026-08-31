@@ -32,7 +32,17 @@ export interface InfoRequest {
   sections: InfoSection[];
 }
 
-export type DialogRequest = PromptRequest | InfoRequest;
+export interface ConfirmRequest {
+  kind: "confirm";
+  title: string;
+  message?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+  resolve: (ok: boolean) => void;
+}
+
+export type DialogRequest = PromptRequest | InfoRequest | ConfirmRequest;
 
 interface DialogState {
   request: DialogRequest | null;
@@ -65,6 +75,30 @@ export function promptFor(options: {
       initial: options.initial ?? "",
       placeholder: options.placeholder,
       confirmLabel: options.confirmLabel,
+      resolve,
+    });
+  });
+}
+
+/** Ask the user to confirm an action. Resolves false when cancelled. */
+export function confirmFor(options: {
+  title: string;
+  message?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    const state = useDialogStore.getState();
+    if (state.request?.kind === "prompt") state.request.resolve(null);
+    if (state.request?.kind === "confirm") state.request.resolve(false);
+    state.open({
+      kind: "confirm",
+      title: options.title,
+      message: options.message,
+      confirmLabel: options.confirmLabel,
+      cancelLabel: options.cancelLabel,
+      danger: options.danger,
       resolve,
     });
   });

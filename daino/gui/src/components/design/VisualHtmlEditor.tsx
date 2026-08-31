@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import ReactMarkdown from "react-markdown";
 import { useEditorOptions, useMonacoTheme } from "../../lib/editorPrefs";
-import { buildFrameDoc } from "../../lib/visualEditor";
+import { buildFrameDoc, type ElementInfo } from "../../lib/visualEditor";
 import { Menu, type MenuItem } from "../ui/Menu";
 import { useAgentStore, type ChipKind } from "../../store/agentStore";
+import { promptFor } from "../../store/dialogStore";
 import { useVisualEditor } from "./useVisualEditor";
 import { ComponentPalette } from "./ComponentPalette";
 import { ElementInspector } from "./ElementInspector";
@@ -67,6 +68,8 @@ export function VisualHtmlEditor({
   onNotice,
   chip,
   exportItems,
+  onElementAsk,
+  onPageAsk,
 }: {
   /** Changing this resets all editing state (a different page was opened). */
   sourceKey: string;
@@ -82,8 +85,26 @@ export function VisualHtmlEditor({
   onNotice: (message: string) => void;
   chip?: EditorChip | null;
   exportItems: (draft: string) => MenuItem[];
+  /** Hand a scoped task about the selected element to the agent, if supported. */
+  onElementAsk?: (
+    kind: "match" | "improve" | "responsive" | "fill" | "ask",
+    selection: ElementInfo,
+    freeText?: string,
+  ) => void;
+  /** Hand a whole-page task to the agent (polish, responsive, theme, …). */
+  onPageAsk?: (
+    kind: "polish" | "responsive" | "theme" | "a11y" | "generate",
+    freeText?: string,
+    anchorHtml?: string,
+  ) => void;
 }) {
   const monacoTheme = useMonacoTheme();
+  const turnRunning = useAgentStore((s) => s.turnRunning);
+  const [autoMatch, setAutoMatch] = useState(false);
+  const [draggingBlock, setDraggingBlock] = useState(false);
+  // True from when the user hands an edit to the agent until its result lands,
+  // so the surface can blur with a "work in progress" veil until it refreshes.
+  const [agentEditing, setAgentEditing] = useState(false);
   const editorOptions = useEditorOptions({ minimap: { enabled: false } });
   const [mode, setMode] = useState<Mode>("preview");
   const [viewport, setViewport] = useState<Viewport>(VIEWPORTS[0]);
@@ -100,6 +121,12 @@ export function VisualHtmlEditor({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const syncedRef = useRef(saved);
+  // Set when the user asks the agent to change the open page, so the result is
+  // adopted straight away rather than held behind the "load version" banner.
+  const expectAgentEditRef = useRef(false);
+  // Persists the latest draft immediately (assigned once refs below exist), so
+  // the agent always reads the current content rather than a debounced-away one.
+  const flushRef = useRef<() => void>(() => {});
 
   const addChip = useAgentStore((s) => s.addChip);
   const removeChip = useAgentStore((s) => s.removeChip);
@@ -114,6 +141,7 @@ export function VisualHtmlEditor({
     setPreview(saved);
     syncedRef.current = saved;
     setIncoming(null);
+    setAgentEditing(false);
     historyRef.current = [saved];
     histIndexRef.current = 0;
     syncHistoryFlags();
@@ -131,15 +159,38 @@ export function VisualHtmlEditor({
     }
     const hasLocalEdits = draft !== previous;
     syncedRef.current = saved;
-    if (hasLocalEdits || designing) {
+    // A change the user explicitly requested is adopted immediately, even in
+    // Edit mode (the frame rebuilds from the new source).
+    if (expectAgentEditRef.current) {
+      expectAgentEditRef.current = false;
+      setDraft(saved);
+      setPreview(saved);
+      setAgentEdited(true);
+      setReloadKey((n) => n + 1);
+      setAgentEditing(false); // the result landed — lift the veil and refresh
+      return;
+    }
+    // Protect genuinely unsaved local edits behind a banner; otherwise adopt the
+    // agent's change live (rebuilding the frame in Edit mode) so the view just
+    // refreshes — including for edits the user asked for in the chat, not a ✨
+    // button.
+    if (hasLocalEdits) {
       setIncoming(saved);
       return;
     }
     setDraft(saved);
     setPreview(saved);
     setAgentEdited(true);
+    if (designing) setReloadKey((n) => n + 1);
+    setAgentEditing(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saved]);
+
+  // If the turn ends without an adopted change (the agent failed, or edited
+  // something else), don't leave the surface veiled.
+  useEffect(() => {
+    if (!turnRunning) setAgentEditing(false);
+  }, [turnRunning]);
 
   useEffect(() => {
     if (!agentEdited) return;
@@ -263,10 +314,62 @@ export function VisualHtmlEditor({
     [],
   );
 
-  const { selection, send } = useVisualEditor(frameRef, designing, onVisualChange, {
-    onUndo: undo,
-    onRedo: redo,
-  });
+  const { selection, send } = useVisualEditor(
+    frameRef,
+    designing,
+    onVisualChange,
+    { onUndo: undo, onRedo: redo },
+    // Auto-match: a freshly added block is handed to the agent to fit the page.
+    (node) => {
+      if (autoMatch && onElementAsk) {
+        expectAgentEditRef.current = true;
+        setAgentEditing(true);
+        // Let the insert's change land and persist first, then ask the agent so
+        // it reads a page that already contains the new block.
+        window.setTimeout(() => {
+          flushRef.current();
+          onElementAsk("match", node);
+        }, 150);
+      }
+    },
+  );
+
+  // A scoped element task: save first so the agent reads the current element.
+  const askElement = (
+    kind: "match" | "improve" | "responsive" | "fill" | "ask",
+    free?: string,
+  ) => {
+    if (!selection || !onElementAsk) return;
+    flushRef.current();
+    expectAgentEditRef.current = true;
+    setAgentEditing(true);
+    onElementAsk(kind, selection, free);
+  };
+
+  // Map a host drag event over the overlay into the frame's own coordinate
+  // space (undoing the preview zoom) and forward it to the editor runtime.
+  const forwardBlockDrag = (
+    e: React.DragEvent,
+    kind: "hostDragOver" | "hostDrop",
+  ) => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const rect = frame.getBoundingClientRect();
+    const z = geometry.zoom || 1;
+    send({ t: kind, x: (e.clientX - rect.left) / z, y: (e.clientY - rect.top) / z });
+  };
+
+  // Whole-page action, with the current selection as an optional anchor.
+  const askPage = (
+    kind: "polish" | "responsive" | "theme" | "a11y" | "generate",
+    freeText?: string,
+  ) => {
+    if (!onPageAsk) return;
+    flushRef.current();
+    expectAgentEditRef.current = true;
+    setAgentEditing(true);
+    onPageAsk(kind, freeText, selection?.html);
+  };
 
   const PAD = 20;
   const geometry = useMemo(() => {
@@ -308,6 +411,13 @@ export function VisualHtmlEditor({
 
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  flushRef.current = () => {
+    if (saveTimer.current) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    persist(draftRef.current);
+  };
   const frameDoc = useMemo(
     () =>
       designing
@@ -363,6 +473,61 @@ export function VisualHtmlEditor({
               ↷
             </button>
           </div>
+        )}
+
+        {designing && onPageAsk && (
+          <Menu
+            label={`✨ ${actorLabel}`}
+            title={`Ask ${actorLabel} to work on the whole page`}
+            items={[
+              {
+                label: "Polish this page",
+                hint: "Spacing, hierarchy, and consistency",
+                disabled: turnRunning,
+                onSelect: () => askPage("polish"),
+              },
+              {
+                label: "Make responsive",
+                disabled: turnRunning,
+                onSelect: () => askPage("responsive"),
+              },
+              {
+                label: "Apply a theme…",
+                hint: "e.g. dark with indigo accents",
+                disabled: turnRunning,
+                onSelect: async () => {
+                  const t = await promptFor({
+                    title: "Apply a theme",
+                    hint: "Describe the colours, mood, and style",
+                    placeholder: "e.g. dark with indigo accents",
+                    confirmLabel: "Apply",
+                  });
+                  if (t?.trim()) askPage("theme", t.trim());
+                },
+              },
+              {
+                label: "Improve accessibility",
+                disabled: turnRunning,
+                onSelect: () => askPage("a11y"),
+              },
+              {
+                label: "Generate a section…",
+                hint: selection ? "Inserted after the selection" : "Added to the page",
+                disabled: turnRunning,
+                onSelect: async () => {
+                  const d = await promptFor({
+                    title: "Generate a section",
+                    hint: selection
+                      ? "It will be inserted after the selected element"
+                      : "It will be added to the end of the page",
+                    placeholder: "e.g. a pricing section with 3 tiers",
+                    confirmLabel: "Generate",
+                  });
+                  if (d?.trim()) askPage("generate", d.trim());
+                },
+              },
+            ]}
+          />
         )}
 
         {kind !== "image" && (
@@ -462,13 +627,27 @@ export function VisualHtmlEditor({
         </div>
       )}
 
-      <div className={`viewer-body ${mode}`}>
+      <div className={`viewer-body ${mode} ${agentEditing || turnRunning ? "wip" : ""}`}>
+        {(agentEditing || turnRunning) && (
+          <div className="ve-wip" aria-live="polite">
+            <div className="ve-wip-card">
+              <span className="ve-wip-spinner" />
+              <div className="ve-wip-text">
+                <strong>{actorLabel} is working on this page…</strong>
+                <span>Work in progress — the view refreshes when it’s done.</span>
+              </div>
+            </div>
+          </div>
+        )}
         {designing &&
           (railOpen ? (
             <ComponentPalette
               send={send}
               hasSelection={!!selection}
               onCollapse={() => setRailOpen(false)}
+              autoMatch={onElementAsk ? autoMatch : undefined}
+              onToggleAutoMatch={onElementAsk ? setAutoMatch : undefined}
+              onDragActive={setDraggingBlock}
             />
           ) : (
             <button className="ve-rail-tab" title="Show the blocks rail" onClick={() => setRailOpen(true)}>
@@ -497,6 +676,23 @@ export function VisualHtmlEditor({
                     srcDoc={frameDoc}
                   />
                 )}
+                {/* A palette drag can't cross into the sandboxed frame, so this
+                    host overlay catches it and forwards the position inside. */}
+                {framed && designing && draggingBlock && (
+                  <div
+                    className="ve-drop-overlay"
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "copy";
+                      forwardBlockDrag(e, "hostDragOver");
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      forwardBlockDrag(e, "hostDrop");
+                      setDraggingBlock(false);
+                    }}
+                  />
+                )}
                 {kind === "image" && (
                   <div className="image-host">
                     <img src={imageSrc ?? ""} alt={title || "image"} />
@@ -513,7 +709,14 @@ export function VisualHtmlEditor({
           </div>
         )}
 
-        {designing && <ElementInspector selection={selection} send={send} />}
+        {designing && (
+          <ElementInspector
+            selection={selection}
+            send={send}
+            agentBusy={turnRunning}
+            onAsk={onElementAsk ? (kind, free) => askElement(kind, free) : undefined}
+          />
+        )}
 
         {showCode && (
           <div className="viewer-code">

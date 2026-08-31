@@ -1,7 +1,7 @@
 # Runtimes
 
 `Runtime` exposes prepare, execute, file transfer, service control, inspection, checkpoints, and
-cleanup.
+cleanup. Coding turns and missions use either the local or Docker runtime.
 
 - `LocalRuntime` is the default for new projects. It runs policy-gated argument vectors without a
   shell and exposes the host's complete language toolchain.
@@ -11,7 +11,8 @@ cleanup.
   client because nesting them in the sandbox would hide the daemon and fail with `docker: not
   found`.
 - `RemoteSSHRuntime` uses AsyncSSH, agent/key-path authentication, host verification, timeouts,
-  SFTP, output redaction, and a complete command result.
+  SFTP, output redaction, and a complete command result for deployment operations. SSH is not a
+  coding-mission runtime; source changes run locally or in Docker before deployment.
 
 Local and Docker coding runtimes put the mission worktree's `src` directory first on
 `PYTHONPATH`. This prevents an editable environment created for the original checkout from testing
@@ -24,7 +25,23 @@ tools.
 Set the coding runtime with:
 
 ```bash
-daino config set runtime.default docker
+daino config set runtime.default local    # host toolchain
+daino config set runtime.default docker   # isolated container
 daino config set runtime.docker_image your-project-test-image
 daino config set runtime.network_access restricted
 ```
+
+`daino init` probes the Docker daemon once. It records Docker when the daemon is reachable and
+falls back to local execution otherwise. Confirm the active prerequisites with:
+
+```bash
+daino doctor
+daino config show
+```
+
+Both coding runtimes enforce the same command policy and timeout. Docker adds isolation; local mode
+has immediate access to the repository's installed language toolchains. Configure an image that
+contains your project's tools before selecting Docker for Node.js, Go, Rust, or polyglot checks.
+
+Remote Compose targets are configured separately under `deployment.targets`; see
+[Deployment](deployment.md).

@@ -1,117 +1,176 @@
-# Install D[Ai]NO as an application
+# Installation
 
-D[Ai]NO should be installed as a command-line application, not into a repository's development
-virtual environment. The application install creates a private, managed Python environment and
-places a `daino` launcher in the user's command path. It never needs to be activated.
+Install D[Ai]NO as a managed command-line application. This gives it an isolated Python
+environment and a `daino` command that works from every project—no virtual environment activation
+required.
 
-Python 3.12 or newer and Git are required. Docker is recommended for isolated mission execution.
+## Requirements
 
-## Install from a checkout
+| Requirement | Version or purpose |
+|---|---|
+| Python | 3.12 or newer |
+| Git | Required for checkpoints, diffs, and mission worktrees |
+| `uv` or `pipx` | Creates the isolated application environment |
+| Docker | Optional; provides isolated command execution when its daemon is available |
+| Node.js | Optional, version 18 or newer; needed to build the browser IDE on first use |
 
-The included installer uses `uv tool` when available and falls back to `pipx`:
+The terminal UI and local runtime work without Docker or Node.js.
+
+## Recommended installation
+
+Clone the repository and run the included installer:
 
 ```bash
-git clone <daino-repository-url>
+git clone https://github.com/Chintan99/daino.git
 cd daino
 ./scripts/install.sh
 ```
 
-The equivalent direct command is:
+The installer prefers `uv tool`, falls back to `pipx`, verifies the installed version, and prints
+the exact launcher path. It does not modify a project's Python dependencies.
+
+If neither application manager is installed, install `uv` and run the script again:
 
 ```bash
-uv tool install .
+python3 -m pip install --user uv
+./scripts/install.sh
 ```
 
-By default, uv places the launcher in `~/.local/bin/daino`. If that directory is not already in
-the shell's `PATH`, run `uv tool update-shell` once and open a new terminal.
+!!! note "macOS and Linux"
 
-Verify the installation from outside the source checkout:
+    The shell installer is the simplest route. On Windows, use the direct `uv tool install .`
+    command from PowerShell after cloning the repository.
+
+## Install directly with uv or pipx
+
+From the cloned D[Ai]NO source directory:
+
+=== "uv"
+
+    ```bash
+    uv tool install .
+    uv tool update-shell
+    ```
+
+=== "pipx"
+
+    ```bash
+    pipx install .
+    pipx ensurepath
+    ```
+
+Open a new terminal after updating `PATH`. The usual uv launcher location on macOS and Linux is
+`~/.local/bin/daino`.
+
+## Verify the installation
+
+Run these commands outside the source checkout:
 
 ```bash
 cd /tmp
 daino --version
+daino --help
 ```
 
-Then open any project:
+The first command should print the installed D[Ai]NO version. Next, initialize a project:
 
 ```bash
-cd /path/to/project
-daino
+cd /path/to/your/project
+daino init
+daino doctor
 ```
 
-D[Ai]NO keeps project state in that project's `.daino` directory. Provider credentials remain in
-environment variables; saved configuration contains only secret references such as
-`env://OPENROUTER_API_KEY`.
+Continue with [Getting started](getting-started.md) to connect a hosted or local model and complete
+your first task.
 
-Running `daino init` in a greenfield directory also initializes Git and creates the first baseline
-commit. Existing repositories and their history are left intact. This gives direct edits an
-immediate pre-change checkpoint and gives worktree missions a valid starting revision.
+## Browser IDE installation
 
-The deprecated `vasuki` command still works as an alias and prints a one-time notice; use `daino`.
-
-## Browser IDE (optional)
-
-`daino .` opens the terminal UI. To open the local browser IDE instead:
+The browser IDE is optional. On its first launch, D[Ai]NO builds the React frontend automatically
+when Node.js 18 or newer and npm are available:
 
 ```bash
-daino . --gui            # http://127.0.0.1:4173
-daino . --gui --port 5000
+cd /path/to/your/project
+daino . --gui
 ```
 
-The first `daino . --gui` builds the React frontend automatically when Node.js 18+ is installed (a
-one-time step; later launches are instant). If Node isn't present, `--gui` still starts the API and
-the page at `/` explains how to build it manually:
+If Node.js is unavailable, the local API still starts and its home page explains what is missing.
+After installing Node.js, build the frontend manually from the D[Ai]NO source checkout if needed:
 
 ```bash
 cd daino/gui
 npm install
-npm run build            # emits daino/gui/dist, served by the API at /
+npm run build
 ```
 
-See the [browser IDE guide](gui.md).
+Later GUI launches reuse the built assets. See the [Browser IDE guide](gui.md) for port, browser,
+foreground, and development options.
 
-## Upgrade
+## PATH troubleshooting
 
-Pull or download the newer D[Ai]NO source and run the installer again:
-
-```bash
-./scripts/install.sh
-```
-
-The managed application and launcher are replaced without affecting any project's `.daino`
-configuration or history.
-
-## Confirm which installation is running
-
-The installer prints both the installed version and launcher path. If an existing terminal still
-appears to run an older release, clear its command cache and inspect every matching launcher:
+If installation succeeds but `daino` is not found, open a new terminal and inspect the launcher:
 
 ```bash
 hash -r
 which -a daino
-daino --version
 ```
 
-For a uv installation, `~/.local/bin/daino` should resolve into
-`~/.local/share/uv/tools/daino`, not the source checkout's `.venv`.
+For a uv installation, run:
+
+```bash
+uv tool update-shell
+uv tool dir --bin
+```
+
+The second command prints the directory that must be on `PATH`. A normal uv launcher resolves into
+the managed tool directory, not the source checkout's `.venv`.
+
+On Windows PowerShell, use `Get-Command daino -All` instead of `which -a daino`, then restart
+PowerShell after `uv tool update-shell` or `pipx ensurepath`.
+
+## Upgrade
+
+Update the source checkout and rerun the installer:
+
+```bash
+cd /path/to/daino
+git pull --ff-only
+./scripts/install.sh
+```
+
+Or reinstall directly with the manager you chose:
+
+```bash
+uv tool install --force --reinstall-package daino .
+```
+
+Upgrading the application leaves every project's `.daino` state and the global configuration
+untouched.
 
 ## Uninstall
 
-Use the manager that installed the application:
+Use the manager that installed D[Ai]NO:
 
-```bash
-uv tool uninstall daino
-```
+=== "uv"
 
-or:
+    ```bash
+    uv tool uninstall daino
+    ```
 
-```bash
-pipx uninstall daino
-```
+=== "pipx"
 
-Uninstalling the command does not remove `.daino` directories from projects.
+    ```bash
+    pipx uninstall daino
+    ```
 
-## Development setup
+Uninstalling the command does not remove `.daino` directories, project history, or global settings.
+Delete those separately only when you intentionally want to remove their saved sessions and
+state.
 
-Only contributors working on D[Ai]NO itself need an editable virtual environment. See
-[Contributing](contributing.md) for that workflow.
+## Development installation
+
+Contributors who are modifying D[Ai]NO itself need an editable environment instead of the
+application-style install. Follow [Contributing](contributing.md) for the backend, frontend, test,
+lint, and documentation commands.
+
+The deprecated `vasuki` launcher remains as a compatibility alias and prints a migration notice;
+new scripts and documentation should use `daino`.

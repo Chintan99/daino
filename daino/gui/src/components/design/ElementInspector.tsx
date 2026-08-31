@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ElementInfo, HostMessage } from "../../lib/visualEditor";
+import { BRAND } from "../../lib/branding";
 
 const ALIGNMENTS = ["left", "center", "right"];
 const DISPLAYS = ["", "block", "flex", "inline-block", "inline", "grid", "none"];
@@ -31,12 +32,21 @@ function toHex(value: string): string {
 export function ElementInspector({
   selection,
   send,
+  onAsk,
+  agentBusy,
 }: {
   selection: ElementInfo | null;
   send: (message: HostMessage) => void;
+  /** Hand a scoped task about the selected element to the agent, if wired. */
+  onAsk?: (
+    kind: "match" | "improve" | "responsive" | "fill" | "ask",
+    freeText?: string,
+  ) => void;
+  agentBusy?: boolean;
 }) {
   const [text, setText] = useState("");
   const [className, setClassName] = useState("");
+  const [ask, setAsk] = useState("");
 
   const selKey = selection?.path.join(".") ?? "";
   useEffect(() => {
@@ -247,6 +257,79 @@ export function ElementInspector({
             Delete
           </button>
         </div>
+
+        {onAsk && (
+          <div className="ve-ai">
+            <div className="section-title" style={{ marginTop: 6 }}>
+              ✨ {BRAND}
+            </div>
+            <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+              <button
+                className="btn sm"
+                disabled={agentBusy}
+                title="Restyle this element to match the rest of the page"
+                onClick={() => onAsk("match")}
+              >
+                Match page style
+              </button>
+              <button
+                className="btn sm"
+                disabled={agentBusy}
+                title="Improve this component's design and UX"
+                onClick={() => onAsk("improve")}
+              >
+                Improve
+              </button>
+              <button
+                className="btn sm"
+                disabled={agentBusy}
+                title="Make this element responsive"
+                onClick={() => onAsk("responsive")}
+              >
+                Responsive
+              </button>
+              <button
+                className="btn sm"
+                disabled={agentBusy}
+                title="Replace placeholder text and images with real content"
+                onClick={() => onAsk("fill")}
+              >
+                Fill content
+              </button>
+            </div>
+            <div className="row" style={{ gap: 6 }}>
+              <input
+                className="input"
+                style={{ flex: 1 }}
+                placeholder={`Ask ${BRAND} about this…`}
+                value={ask}
+                disabled={agentBusy}
+                onChange={(e) => setAsk(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && ask.trim()) {
+                    onAsk("ask", ask.trim());
+                    setAsk("");
+                  }
+                }}
+              />
+              <button
+                className="btn sm"
+                disabled={agentBusy || !ask.trim()}
+                onClick={() => {
+                  onAsk("ask", ask.trim());
+                  setAsk("");
+                }}
+              >
+                Send
+              </button>
+            </div>
+            {agentBusy && (
+              <div className="muted" style={{ fontSize: "var(--fs-11)", marginTop: 4 }}>
+                {BRAND} is working…
+              </div>
+            )}
+          </div>
+        )}
 
         {selection.editableText && (
           <div className="field">

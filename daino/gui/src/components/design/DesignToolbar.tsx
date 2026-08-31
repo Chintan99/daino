@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { qk, useDesign, useDesignMutations, useDesigns } from "../../api/hooks";
 import { api } from "../../api/client";
 import { useDesignStore } from "../../store/designStore";
+import { confirmFor } from "../../store/dialogStore";
 import {
   exportHTML,
   exportJSON,
@@ -56,8 +57,13 @@ export function DesignToolbar({
   const remove = async () => {
     if (!designId || !design) return;
     // CONFIRM: deleting a canvas removes its artifacts too.
-    if (!window.confirm(`Delete the canvas "${design.name}" and everything on it?`))
-      return;
+    const ok = await confirmFor({
+      title: "Delete canvas",
+      message: `Delete the canvas "${design.name}" and everything on it? This cannot be undone.`,
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     await api.deleteDesign(designId);
     setActive(null);
     await qc.invalidateQueries({ queryKey: qk.designs });
