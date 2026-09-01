@@ -9,6 +9,7 @@ and mutation, preview detection, terminal lifecycle, and event streaming.
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -865,3 +866,169 @@ def test_a_new_session_starts_without_the_old_one_s_history(client: TestClient) 
         client.get("/api/agent/config", params={"session_id": fresh}).json()["autonomy"]["mode"]
         == "ask"
     )
+
+
+# ------------------------------------------------------------------ workspaces
+
+
+def test_a_workspace_is_created_as_real_files_the_other_tabs_can_see(
+    client: TestClient,
+) -> None:
+    """The WORKSPACE tab writes into the project, not into a private store."""
+    created = client.post(
+        "/api/workspaces",
+        json={"name": "Q3 pricing", "goal": "Compare three vendors", "kind": "research"},
+    ).json()
+
+    assert created["folder"] == "workspace/q3-pricing"
+    assert created["goal"] == "Compare three vendors"
+    assert [item["path"] for item in created["artifacts"]] == ["findings.md"]
+    assert len(created["tasks"]) == 5
+
+    # The same file is reachable through the ordinary file API the CODE tab uses.
+    read = client.get("/api/files/read", params={"path": "workspace/q3-pricing/findings.md"})
+    assert read.status_code == 200
+    assert "## Question" in read.json()["content"]
+
+
+def test_the_workspace_lifecycle_round_trips_over_the_api(client: TestClient) -> None:
+    workspace = client.post("/api/workspaces", json={"name": "Onboarding"}).json()
+    identifier = workspace["id"]
+
+    client.put(
+        f"/api/workspaces/{identifier}/artifact",
+        json={"path": "notes.md", "content": "# Notes\n\nFirst pass.\n"},
+    )
+    task = client.post(
+        f"/api/workspaces/{identifier}/tasks", json={"content": "Draft the guide"}
+    ).json()
+    client.patch(f"/api/workspaces/{identifier}/tasks/{task['id']}", json={"status": "completed"})
+    client.patch(f"/api/workspaces/{identifier}", json={"goal": "Rewrite onboarding"})
+
+    reloaded = client.get(f"/api/workspaces/{identifier}").json()
+
+    assert reloaded["goal"] == "Rewrite onboarding"
+    assert {item["path"] for item in reloaded["artifacts"]} == {"notes.md"}
+    completed = [item for item in reloaded["tasks"] if item["id"] == task["id"]]
+    assert completed[0]["status"] == "completed"
+    summary = next(
+        item
+        for item in client.get("/api/workspaces").json()["workspaces"]
+        if item["id"] == identifier
+    )
+    assert summary["done_count"] == 1
+
+
+def test_an_upload_is_stored_and_extracted_for_the_agent(client: TestClient) -> None:
+    workspace = client.post("/api/workspaces", json={"name": "Analysis"}).json()
+    identifier = workspace["id"]
+
+    uploaded = client.post(
+        f"/api/workspaces/{identifier}/uploads",
+        json={"name": "churn.csv", "content_base64": base64.b64encode(b"a,b\n1,2\n").decode()},
+    ).json()
+
+    assert uploaded["path"] == "uploads/churn.csv"
+    assert uploaded["extracted_path"].endswith("uploads/.extracted/churn.md")
+    assert uploaded["warning"] == ""
+    listed = client.get(f"/api/workspaces/{identifier}/artifacts").json()
+    # An upload is not a deliverable, so it is listed separately.
+    assert [item["path"] for item in listed["uploads"]] == ["uploads/churn.csv"]
+    assert "uploads/churn.csv" not in {item["path"] for item in listed["artifacts"]}
+
+
+def test_an_oversized_upload_is_refused(client: TestClient) -> None:
+    workspace = client.post("/api/workspaces", json={"name": "Analysis"}).json()
+
+    response = client.post(
+        f"/api/workspaces/{workspace['id']}/uploads",
+        json={
+            "name": "huge.bin",
+            "content_base64": base64.b64encode(b"x" * 8_000_001).decode(),
+        },
+    )
+
+    assert response.status_code == 413
+
+
+def test_artifact_history_is_recorded_and_restorable(client: TestClient) -> None:
+    """The case that matters: an agent rewriting something you had edited."""
+    workspace = client.post("/api/workspaces", json={"name": "Pricing"}).json()
+    identifier = workspace["id"]
+    path = {"path": "findings.md"}
+
+    client.put(
+        f"/api/workspaces/{identifier}/artifact",
+        json={"path": "findings.md", "content": "my version", "author": "user"},
+    )
+    client.put(
+        f"/api/workspaces/{identifier}/artifact",
+        json={"path": "findings.md", "content": "agent version", "author": "agent"},
+    )
+
+    revisions = client.get(f"/api/workspaces/{identifier}/revisions", params=path).json()
+    assert [(item["version"], item["author"]) for item in revisions["revisions"]] == [
+        (2, "agent"),
+        (1, "user"),
+    ]
+
+    client.post(f"/api/workspaces/{identifier}/revision/restore", params={**path, "version": 1})
+    restored = client.get(f"/api/workspaces/{identifier}/artifact", params=path).json()
+    assert restored["content"] == "my version"
+
+
+def test_a_traversing_path_is_refused(client: TestClient) -> None:
+    workspace = client.post("/api/workspaces", json={"name": "Pricing"}).json()
+    identifier = workspace["id"]
+    before = client.get("/api/files/read", params={"path": "README.md"}).json()["content"]
+
+    for attempt in ("../../etc/passwd", "../../../README.md", "notes/../../../README.md"):
+        assert (
+            client.get(
+                f"/api/workspaces/{identifier}/artifact", params={"path": attempt}
+            ).status_code
+            == 404
+        )
+        assert (
+            client.put(
+                f"/api/workspaces/{identifier}/artifact",
+                json={"path": attempt, "content": "owned"},
+            ).status_code
+            == 404
+        )
+
+    after = client.get("/api/files/read", params={"path": "README.md"}).json()["content"]
+    assert after == before
+    assert client.get("/api/workspaces/ws-nope").status_code == 404
+
+
+def test_an_absolute_path_is_normalised_into_the_workspace(client: TestClient) -> None:
+    """It is contained, not escaped — the property that actually matters.
+
+    Leading slashes are stripped rather than rejected, matching
+    ``EditTools.normalize``: models write ``notes.md``, ``./notes.md`` and
+    ``/notes.md`` interchangeably, and one rule for agent-supplied paths is
+    better than two. What must never happen is a write landing outside the
+    folder, which is what this asserts.
+    """
+    workspace = client.post("/api/workspaces", json={"name": "Pricing"}).json()
+    identifier = workspace["id"]
+
+    written = client.put(
+        f"/api/workspaces/{identifier}/artifact",
+        json={"path": "/etc/passwd", "content": "contained"},
+    ).json()
+
+    assert written["repo_path"] == "workspace/pricing/etc/passwd"
+    landed = client.get("/api/files/read", params={"path": "workspace/pricing/etc/passwd"})
+    assert landed.status_code == 200 and landed.json()["content"] == "contained"
+
+
+def test_deleting_a_workspace_leaves_its_files_unless_asked(client: TestClient) -> None:
+    workspace = client.post("/api/workspaces", json={"name": "Kept"}).json()
+
+    client.delete(f"/api/workspaces/{workspace['id']}")
+
+    assert client.get(f"/api/workspaces/{workspace['id']}").status_code == 404
+    still_there = client.get("/api/files/read", params={"path": "workspace/kept/workspace.json"})
+    assert still_there.status_code == 200

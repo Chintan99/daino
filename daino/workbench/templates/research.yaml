@@ -1,0 +1,24 @@
+name: research
+title: Research
+purpose: Investigate a question and write up what the evidence actually supports.
+starter_tasks:
+  - Write the question precisely enough to be answerable
+  - Identify the sources worth reading
+  - Read and take notes, one source at a time
+  - Reconcile the disagreements between sources
+  - Write the findings, separating evidence from inference
+starter_artifacts:
+  - title: Findings
+    filename: findings.md
+    outline:
+      - Question
+      - What the evidence shows
+      - Where sources disagree
+      - What is still unknown
+      - Sources
+preamble: |
+  Research work. Cite every factual claim with a footnote pointing at the source
+  that supports it, and say plainly when a source is the only one making a claim.
+  Distinguish three things throughout: what a source states, what you infer from
+  it, and what nobody has established. A confident summary of thin evidence is
+  the failure mode here.

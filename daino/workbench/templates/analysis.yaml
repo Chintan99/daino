@@ -1,0 +1,23 @@
+name: analysis
+title: Data analysis
+purpose: Work through a dataset and write up what it supports.
+starter_tasks:
+  - State the question the data is meant to answer
+  - Inspect the data and record its shape and gaps
+  - Run the analysis
+  - Write the conclusions with their caveats
+starter_artifacts:
+  - title: Analysis
+    filename: analysis.md
+    outline:
+      - Question
+      - The data
+      - Method
+      - Results
+      - Caveats
+preamble: |
+  Data analysis over the uploads in this workspace. Spreadsheets and CSVs are
+  extracted to markdown tables, so read the extraction rather than the original.
+  Report the shape of the data before its conclusions: row counts, date ranges,
+  and missing values change how much any result is worth. Never round a caveat
+  away to make a finding cleaner.

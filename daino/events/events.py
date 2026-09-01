@@ -281,6 +281,25 @@ class DesignUpdated(MissionEvent):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class WorkspaceCreated(MissionEvent):
+    workspace_id: str
+    name: str
+    kind: str = "general"
+    folder: str = ""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class WorkspaceUpdated(MissionEvent):
+    """A workspace's goal, tasks, artifacts, or sources changed."""
+
+    workspace_id: str
+    #: Coarse description of the mutation, e.g. "tasks"/"artifact"/"source".
+    change: str = ""
+    #: The artifact involved, repository-relative, when the change names one.
+    path: str = ""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GitChanged(MissionEvent):
     """The working tree changed (an edit, write, or delete) so clients refresh."""
 

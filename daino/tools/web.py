@@ -8,6 +8,7 @@ import socket
 from collections.abc import Awaitable, Callable
 from html.parser import HTMLParser
 from time import monotonic
+from typing import Protocol, runtime_checkable
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
@@ -239,6 +240,20 @@ def _search_result_url(value: str) -> str:
             value = unquote(redirected[0])
             parsed = urlparse(value)
     return value if parsed.scheme in {"http", "https"} else ""
+
+
+@runtime_checkable
+class WebResearch(Protocol):
+    """What a caller needs from web research: search, and fetch.
+
+    Named as a protocol so a workspace can wrap the real tool to record its
+    sources without subclassing it — the SSRF checks, redirect revalidation and
+    byte ceilings below stay the single implementation everything goes through.
+    """
+
+    async def search(self, query: str, *, max_results: int = ...) -> ToolResult: ...
+
+    async def fetch(self, url: str, *, max_chars: int = ...) -> ToolResult: ...
 
 
 class WebResearchTool:

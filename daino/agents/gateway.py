@@ -298,12 +298,10 @@ class ModelGateway:
                             selection_reason=selection.reason,
                             included_files=included_files or [],
                             input_tokens=(
-                                usage.input_tokens
-                                or (response.input_tokens if response else 0)
+                                usage.input_tokens or (response.input_tokens if response else 0)
                             ),
                             output_tokens=(
-                                usage.output_tokens
-                                or (response.output_tokens if response else 0)
+                                usage.output_tokens or (response.output_tokens if response else 0)
                             ),
                             latency_ms=response.latency_ms if response else 0,
                             # This column predates provider-side accounting. When

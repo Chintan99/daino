@@ -45,6 +45,7 @@ from daino.schemas import (
 )
 from daino.tools import ActionExecutor, EditTools
 from daino.tools.editing import patterns_overlap
+from daino.tools.web import WebResearch
 
 #: Ceiling on roster size. Every member costs a full conversation, so this is
 #: mostly a guard against a model inventing work rather than dividing it. The
@@ -209,6 +210,7 @@ class TeamRunner:
         memory: MemoryManager | None = None,
         memory_task_id: str | None = None,
         memory_session_id: str | None = None,
+        web: WebResearch | None = None,
     ) -> None:
         self.gateway = gateway
         self.root = root
@@ -220,6 +222,10 @@ class TeamRunner:
         self.memory = memory
         self.memory_task_id = memory_task_id
         self.memory_session_id = memory_session_id
+        #: Attached when members are allowed to research. Absent for rosters
+        #: that must stay inside the repository — code review, QA — where an
+        #: outbound request is not part of the job.
+        self.web = web
 
     async def run(
         self,
@@ -290,6 +296,7 @@ class TeamRunner:
             ModelRole(member.role),
             ActionExecutor(
                 editor,
+                web=self.web,
                 memory=self.memory,
                 memory_task_id=self.memory_task_id,
                 memory_session_id=self.memory_session_id,

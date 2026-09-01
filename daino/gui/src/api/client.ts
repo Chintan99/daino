@@ -45,6 +45,15 @@ import type {
   TerminalCreated,
   TerminalList,
   Workspace,
+  WorkspaceSummary,
+  WorkspaceTask,
+  WorkspaceTemplate,
+  Artifact,
+  ArtifactContent,
+  ArtifactRevision,
+  CreateWorkspaceRequest,
+  ProjectInfo,
+  ResearchSource,
 } from "./types";
 
 export class ApiError extends Error {
@@ -107,7 +116,7 @@ function qs(params: Record<string, string | number | boolean | undefined>): stri
 export const api = {
   // Health & workspace
   health: () => request<Health>("GET", "/api/health"),
-  workspace: () => request<Workspace>("GET", "/api/workspace"),
+  projectInfo: () => request<ProjectInfo>("GET", "/api/workspace"),
 
   // Sessions
   listSessions: () => request<SessionList>("GET", "/api/sessions"),
@@ -391,6 +400,121 @@ export const api = {
     request<ProviderTestResult>("POST", "/api/settings/providers/test", body),
   providerCatalog: (body: ProviderForm) =>
     request<{ models: CatalogModel[] }>("POST", "/api/settings/providers/catalog", body),
+
+  // Workspaces (the WORKSPACE tab)
+  //
+  // Artifact paths travel as query parameters rather than path segments: a
+  // nested document needs no encoding gymnastics, and a traversal attempt
+  // reaches the server's containment check as data rather than as a URL.
+  workspaces: (includeArchived = false) =>
+    request<{ workspaces: WorkspaceSummary[] }>(
+      "GET",
+      `/api/workspaces${qs({ include_archived: includeArchived || undefined })}`,
+    ),
+  workspace: (id: string) =>
+    request<Workspace>("GET", `/api/workspaces/${encodeURIComponent(id)}`),
+  createWorkspace: (body: Partial<CreateWorkspaceRequest>) =>
+    request<Workspace>("POST", "/api/workspaces", {
+      name: body.name ?? "Untitled workspace",
+      goal: body.goal ?? "",
+      kind: body.kind ?? "general",
+      folder: body.folder ?? "",
+    }),
+  updateWorkspace: (
+    id: string,
+    body: Partial<Pick<Workspace, "name" | "goal" | "kind" | "status">>,
+  ) => request<Workspace>("PATCH", `/api/workspaces/${encodeURIComponent(id)}`, body),
+  deleteWorkspace: (id: string, removeFiles = false) =>
+    request<{ deleted: string; files_removed: boolean }>(
+      "DELETE",
+      `/api/workspaces/${encodeURIComponent(id)}${qs({
+        remove_files: removeFiles || undefined,
+      })}`,
+    ),
+  workspaceTemplates: () =>
+    request<{ templates: WorkspaceTemplate[] }>("GET", "/api/workspaces/templates"),
+  attachWorkspaceSession: (id: string, sessionId: string) =>
+    request<{ workspace_id: string; session_id: string }>(
+      "POST",
+      `/api/workspaces/${encodeURIComponent(id)}/session`,
+      { session_id: sessionId },
+    ),
+
+  readArtifact: (id: string, path: string) =>
+    request<ArtifactContent>(
+      "GET",
+      `/api/workspaces/${encodeURIComponent(id)}/artifact${qs({ path })}`,
+    ),
+  writeArtifact: (id: string, path: string, content: string) =>
+    request<Artifact>("PUT", `/api/workspaces/${encodeURIComponent(id)}/artifact`, {
+      path,
+      content,
+      author: "user",
+    }),
+  deleteArtifact: (id: string, path: string) =>
+    request<{ deleted: string }>(
+      "DELETE",
+      `/api/workspaces/${encodeURIComponent(id)}/artifact${qs({ path })}`,
+    ),
+  artifactRevisions: (id: string, path: string) =>
+    request<{ path: string; revisions: ArtifactRevision[] }>(
+      "GET",
+      `/api/workspaces/${encodeURIComponent(id)}/revisions${qs({ path })}`,
+    ),
+  artifactRevision: (id: string, path: string, version: number) =>
+    request<{ path: string; version: number; content: string }>(
+      "GET",
+      `/api/workspaces/${encodeURIComponent(id)}/revision${qs({ path, version })}`,
+    ),
+  restoreArtifactRevision: (id: string, path: string, version: number) =>
+    request<Artifact>(
+      "POST",
+      `/api/workspaces/${encodeURIComponent(id)}/revision/restore${qs({ path, version })}`,
+      {},
+    ),
+
+  setWorkspaceTasks: (id: string, tasks: string[]) =>
+    request<{ tasks: WorkspaceTask[] }>(
+      "PUT",
+      `/api/workspaces/${encodeURIComponent(id)}/tasks`,
+      { tasks },
+    ),
+  addWorkspaceTask: (id: string, content: string) =>
+    request<WorkspaceTask>("POST", `/api/workspaces/${encodeURIComponent(id)}/tasks`, {
+      content,
+    }),
+  updateWorkspaceTask: (
+    id: string,
+    taskId: string,
+    body: Partial<Pick<WorkspaceTask, "content" | "status" | "notes" | "artifact_path">>,
+  ) =>
+    request<WorkspaceTask>(
+      "PATCH",
+      `/api/workspaces/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`,
+      body,
+    ),
+  reorderWorkspaceTasks: (id: string, taskIds: string[]) =>
+    request<{ tasks: WorkspaceTask[] }>(
+      "POST",
+      `/api/workspaces/${encodeURIComponent(id)}/tasks/reorder`,
+      { task_ids: taskIds },
+    ),
+  deleteWorkspaceTask: (id: string, taskId: string) =>
+    request<{ deleted: string }>(
+      "DELETE",
+      `/api/workspaces/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`,
+    ),
+
+  workspaceSources: (id: string) =>
+    request<{ sources: ResearchSource[] }>(
+      "GET",
+      `/api/workspaces/${encodeURIComponent(id)}/sources`,
+    ),
+  uploadToWorkspace: (id: string, name: string, contentBase64: string) =>
+    request<Artifact>("POST", `/api/workspaces/${encodeURIComponent(id)}/uploads`, {
+      name,
+      content_base64: contentBase64,
+    }),
 
   // Terminals
   createTerminal: () => request<TerminalCreated>("POST", "/api/terminals", {}),

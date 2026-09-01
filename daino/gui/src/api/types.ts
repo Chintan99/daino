@@ -6,7 +6,7 @@ export interface Health {
   project: string;
 }
 
-export interface Workspace {
+export interface ProjectInfo {
   name: string;
   root: string;
   runtime: string;
@@ -249,7 +249,9 @@ export type WsEventKind =
   | "DesignUpdated"
   | "GitChanged"
   | "PreviewStarted"
-  | "PreviewStopped";
+  | "PreviewStopped"
+  | "WorkspaceCreated"
+  | "WorkspaceUpdated";
 
 export interface WsEvent {
   kind: WsEventKind | string;
@@ -725,3 +727,125 @@ export interface EffectiveInstructions {
   sources: string[];
   scopes: Record<string, string[]>;
 }
+
+// ---- Workspaces (the WORKSPACE tab) ----
+//
+// A workspace is a named body of knowledge work: a goal, a real folder in the
+// project, the documents in it, a plan, and the sources behind it.
+
+export type WorkspaceTaskStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "failed";
+
+export type ArtifactKind = "document" | "note" | "data" | "upload";
+
+export interface WorkspaceTask {
+  id: string;
+  content: string;
+  status: WorkspaceTaskStatus;
+  position: number;
+  notes: string;
+  artifact_path: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Artifact {
+  /** Relative to the workspace folder, e.g. "findings.md". */
+  path: string;
+  /** Relative to the repository root — what the file APIs accept. */
+  repo_path: string;
+  title: string;
+  kind: ArtifactKind;
+  suffix: string;
+  bytes: number;
+  updated_at: string;
+  preview: string;
+  revisions: number;
+  /** Set on an upload that needed a parser: where its markdown ended up. */
+  extracted_path: string;
+  /** Why an upload is unreadable, when it is. */
+  warning: string;
+}
+
+export interface ArtifactContent {
+  artifact: Artifact;
+  content: string;
+  readable: boolean;
+}
+
+export interface ArtifactRevision {
+  version: number;
+  path: string;
+  author: "user" | "agent" | "unknown";
+  bytes: number;
+  saved_at: string;
+}
+
+export interface ResearchSource {
+  id: string;
+  url: string;
+  title: string;
+  snippet: string;
+  cache_path: string;
+  retrieved_at: string;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  slug: string;
+  goal: string;
+  kind: string;
+  folder: string;
+  status: "active" | "archived";
+  tasks: WorkspaceTask[];
+  artifacts: Artifact[];
+  uploads: Artifact[];
+  sources: ResearchSource[];
+  /** The conversation attached, so the agent panel can follow this workspace. */
+  session_id: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceSummary {
+  id: string;
+  name: string;
+  slug: string;
+  goal: string;
+  kind: string;
+  folder: string;
+  status: "active" | "archived";
+  artifact_count: number;
+  upload_count: number;
+  task_count: number;
+  done_count: number;
+  updated_at: string;
+}
+
+export interface StarterArtifact {
+  title: string;
+  filename: string;
+  outline: string[];
+}
+
+export interface WorkspaceTemplate {
+  name: string;
+  title: string;
+  purpose: string;
+  starter_tasks: string[];
+  starter_artifacts: StarterArtifact[];
+  preamble: string;
+}
+
+export interface CreateWorkspaceRequest {
+  name: string;
+  goal: string;
+  kind: string;
+  folder: string;
+}
+

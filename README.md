@@ -113,6 +113,11 @@ D[Ai]NO agent and one session:
 - **Design** — structured, AI-editable diagrams (architecture, flowchart, database, API flow) on a
   React Flow canvas you can also edit by hand, plus HTML/React prototypes. Design never writes
   production code directly; use **Implement Design** to generate a plan first.
+- **Workspace** — the work that is not code. Give Daino a goal, upload the files it needs (PDF,
+  Word, Excel and PowerPoint are extracted to text), and the documents it writes land in your
+  project as ordinary files — greppable, diffable, and openable in the editor. Research is cited
+  from a recorded source list, the plan is editable by both of you, and every version of a document
+  is recoverable.
 - **Inspector** — the pre-push check. **Scan** runs end-to-end QA and a vulnerability assessment —
   a built-in offline audit for secrets, insecure code, and weak configuration; the project's own
   lint/type/test commands; whichever security scanners the host has; and a non-destructive probe of

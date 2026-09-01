@@ -41,6 +41,8 @@ from daino.events.events import (
     ToolFailed,
     ToolProgress,
     ToolStarted,
+    WorkspaceCreated,
+    WorkspaceUpdated,
 )
 
 __all__ = [
@@ -85,4 +87,6 @@ __all__ = [
     "ToolFailed",
     "ToolProgress",
     "ToolStarted",
+    "WorkspaceCreated",
+    "WorkspaceUpdated",
 ]

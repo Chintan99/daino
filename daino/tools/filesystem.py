@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from daino.schemas import ToolResult
 
@@ -27,6 +27,35 @@ _IGNORED_DIRS = frozenset(
         ".tox",
     }
 )
+
+
+def _undecodable(relative: str) -> str:
+    """Explain a failed decode in terms of what to do about it.
+
+    A bare ``UnicodeDecodeError`` tells a model nothing actionable, and models
+    respond to it by retrying the same read. Workspace uploads are extracted to
+    markdown beside the original, so for a document format the useful answer is
+    the path of that extraction rather than the error.
+    """
+    from daino.workbench.extraction import (
+        CONVERTIBLE_SUFFIXES,
+        DOCUMENT_SUFFIXES,
+        extracted_path,
+    )
+
+    path = PurePosixPath(relative)
+    suffix = path.suffix.casefold()
+    if suffix in DOCUMENT_SUFFIXES:
+        return (
+            f"{relative} is a {suffix} document, not text. Read "
+            f"{extracted_path(path).as_posix()} instead — Daino extracts uploads to markdown."
+        )
+    if suffix in CONVERTIBLE_SUFFIXES:
+        return (
+            f"{relative} is a legacy binary format. Re-save it as "
+            f"{CONVERTIBLE_SUFFIXES[suffix]} and it can be read."
+        )
+    return f"{relative} is not UTF-8 text and cannot be read."
 
 
 class FileTools:
@@ -82,7 +111,9 @@ class FileTools:
                 },
                 duration_seconds=time.monotonic() - started,
             )
-        except (OSError, UnicodeError, ValueError) as exc:
+        except UnicodeError:
+            return ToolResult(tool="read_file", success=False, error=_undecodable(relative))
+        except (OSError, ValueError) as exc:
             return ToolResult(tool="read_file", success=False, error=str(exc))
 
     def write_file(self, relative: str, content: str, *, create: bool = False) -> ToolResult:

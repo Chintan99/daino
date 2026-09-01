@@ -26,9 +26,11 @@ from daino.server.routes import (
     preview,
     settings,
     terminal,
+    workbench,
 )
 from daino.server.security import DEV_ORIGINS, OriginPolicy
 from daino.server.state import GuiState
+from daino.workbench.service import WorkbenchError
 
 #: Built React assets, when present, are served from here in production.
 _DIST_DIR = Path(__file__).resolve().parent.parent / "gui" / "dist"
@@ -65,6 +67,7 @@ def create_app(context: ProjectContext, *, host: str = "127.0.0.1") -> FastAPI:
         redoc_url="/api-redoc",
     )
     app.state.gui = GuiState.from_context(context)
+    app.state.gui.start_watchers()
     app.state.origins = OriginPolicy.for_host(host)
 
     # Local-only: the Vite dev server (5173) may call the API during development.
@@ -101,9 +104,20 @@ def create_app(context: ProjectContext, *, host: str = "127.0.0.1") -> FastAPI:
         docs,
         settings,
         customization,
+        workbench,
     ):
         app.include_router(module.router)
     app.include_router(websocket.router)
+
+    @app.exception_handler(WorkbenchError)
+    async def workbench_error(_: Request, exc: Exception) -> JSONResponse:
+        """An unknown workspace, or a path that escapes one, is a 404.
+
+        Registered once rather than wrapped around each of the workspace
+        routes: a decorator would erase the signatures FastAPI reads to build
+        their request models.
+        """
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
 
     @app.get("/api/health")
     def health() -> dict:

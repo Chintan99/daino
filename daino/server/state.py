@@ -20,6 +20,7 @@ from daino.observability import AuditLog
 from daino.schemas import QAReport
 from daino.services import PreviewManager, TerminalManager
 from daino.tools.filesystem import FileTools
+from daino.workbench.service import WorkbenchService
 
 
 @dataclass
@@ -44,6 +45,8 @@ class GuiState:
     execution_map: ExecutionMapApplicationService
     checkpoints: CheckpointApplicationService
     repository: RepositoryApplicationService
+    #: Knowledge-work workspaces: goals, documents, tasks, and their sources.
+    workbench: WorkbenchService
     #: Provider/model routing and validated configuration writes — the same
     #: services the TUI's providers and settings screens drive.
     providers: ProviderApplicationService
@@ -81,10 +84,21 @@ class GuiState:
             execution_map=ExecutionMapApplicationService(context),
             checkpoints=CheckpointApplicationService(context),
             repository=RepositoryApplicationService(context),
+            workbench=WorkbenchService(context.root, context.database, events=context.events),
             providers=ProviderApplicationService(context),
             settings=SettingsApplicationService(context),
             audit=AuditLog(context.root),
         )
+
+    def start_watchers(self) -> None:
+        """Attach the long-lived subscriptions this project needs.
+
+        Separate from construction because a subscription outlives a request and
+        must be attached exactly once: ``WorkbenchService`` is also built
+        per-turn inside a chat, and every one of those must not add its own
+        revision recorder.
+        """
+        self.workbench.watch_file_changes(self.context.events)
 
     def shutdown(self) -> None:
         self.terminals.close_all()

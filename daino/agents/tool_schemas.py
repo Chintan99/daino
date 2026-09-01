@@ -468,13 +468,81 @@ _DESIGN_TOOLS = [
     ),
 ]
 
+#: Workspace tools. Deliberately only three: a workspace's documents are real
+#: files in the repository, so ``read_file``, ``write``, ``replace`` and ``grep``
+#: already cover writing them. What a file cannot express is what the workspace
+#: holds and what the plan is, and that is all these add.
+_WORKSPACE_TOOLS = [
+    _tool(
+        "workspace_read",
+        "Read the current workspace: its goal, plan, documents, uploaded files, "
+        "and the sources already consulted. Document bodies are summarised, not "
+        "included — read the ones you need with read_file. Call this first when "
+        "working in a workspace so you build on what is there.",
+        {
+            "workspace_id": {
+                "type": "string",
+                "description": "Defaults to the workspace the user has open.",
+            }
+        },
+        [],
+    ),
+    _tool(
+        "workspace_plan",
+        "Replace the workspace's visible plan. Unlike the per-turn todo list, "
+        "this persists across sessions and the user can edit it, so restate the "
+        "whole plan including steps already done — their status is preserved by "
+        "matching the text.",
+        {
+            "workspace_id": {"type": "string"},
+            "plan_steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Every step, in order.",
+            },
+        },
+        ["plan_steps"],
+    ),
+    _tool(
+        "workspace_task",
+        "Update one step of the plan as you start and finish it, so the user can "
+        "see where the work is. Task ids come from workspace_read.",
+        {
+            "workspace_id": {"type": "string"},
+            "task_id": {"type": "string"},
+            "task_status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "completed", "failed"],
+            },
+            "content": {
+                "type": "string",
+                "description": "New wording for the step, when it needs correcting.",
+            },
+        },
+        ["task_id"],
+    ),
+]
+
 CHAT_TOOL_SPECS: list[dict[str, Any]] = [
     *AGENT_TOOL_SPECS,
     _WEB_SEARCH,
     _FETCH_URL,
     *_MEMORY_TOOLS,
     *_DESIGN_TOOLS,
+    *_WORKSPACE_TOOLS,
     _RESPOND,
+]
+
+#: What a parallel researcher gets: read what is here, read what is out there,
+#: and report. No edit tools at all — the synthesis step writes the document, so
+#: several researchers can run at once without a scope conflict to arbitrate.
+_RESEARCH_ACTIONS = frozenset(
+    {"read_file", "search_text", "glob", "grep", "list_directory", "finish"}
+)
+RESEARCH_TOOL_SPECS: list[dict[str, Any]] = [
+    *(spec for spec in AGENT_TOOL_SPECS if spec["function"]["name"] in _RESEARCH_ACTIONS),
+    _WEB_SEARCH,
+    _FETCH_URL,
 ]
 
 #: Read-only evidence-gathering surface used by QA specialists. Omitting edit,

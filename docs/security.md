@@ -58,6 +58,21 @@ caller asserts ownership, and that assertion is written to the audit log as
 `InspectionRemoteTargetAuthorized`. Every request it makes is listed in the check's own output, so
 what was probed is reviewable after the fact.
 
+A Workspace is a boundary rather than a hint. Every path that reaches it — from the browser and
+from the agent — is resolved and checked for containment before anything touches the disk, so a
+traversing path is refused; an absolute path is normalised into the folder, matching how `EditTools`
+treats agent-supplied paths, and the guarantee is that a write never lands outside. Uploads reuse
+the attachment path's hardening (name sanitisation, an 8 MB ceiling, never overwriting), and
+document extraction parses rather than executes. The parsers are an optional extra, so a base
+install has no additional attack surface from formats it cannot read. Deleting a workspace removes
+its entry and leaves the files alone unless the caller asks for both, which is a second explicit
+decision because written work is not recoverable from a list.
+
+Research inside a workspace goes through the same hardened web tool as everywhere else; the
+workspace only records what came back, caching each page's text so a cited claim stays checkable.
+Parallel researchers are read-only by construction — no edit tools in their surface and no write
+scope in their roster — which is why several can run at once with nothing to arbitrate.
+
 QA sub-agents are read-only by construction. Their action schema exposes only repository reads,
 search, globbing, directory listing, and finish operations, while `EditTools` also enforces
 read-only mode underneath. Automated QA commands are selected by D[Ai]NO rather than the model and

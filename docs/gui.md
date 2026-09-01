@@ -31,7 +31,7 @@ the terminal client, so the two read as one product.
 |---|---|
 | **File** | New file/folder, open by path, save, save all, revert, close editors, copy path, re-read config, new conversation |
 | **Edit** | Undo/redo, find, replace, find in files, toggle comment, format, fold/unfold, select all |
-| **Go** | Go to file/line/symbol, next/previous editor, Explorer, Search, Source Control, execution map, inspection report |
+| **Go** | Go to file/line/symbol, next/previous editor, Explorer, Search, Source Control, execution map, workspaces, inspection report |
 | **View** | Switch workspace, toggle sidebar/panel/agent, choose panel view, interface zoom |
 | **Run** | Start/stop the app, run/cancel an inspection, index the repository, stop the running agent turn |
 | **Terminal** | New terminal, clear, switch shell, kill one or all, show panel |
@@ -48,6 +48,10 @@ Items grey out when they cannot act rather than failing after the click.
   there; architecture diagrams (nodes and edges) share the same sheet. A **left panel lists canvases
   and the folder's files**. Manual and agent edits mutate the same document under
   `.daino/designs/<id>/design.json`. See [the visual editor](#the-visual-html-editor).
+- **Workspace** — the work that is not code: documents, research, planning, and analysis. A
+  workspace is a goal plus a real folder in your project (`workspace/<name>/`), so its documents are
+  greppable, diffable, and openable in CODE like anything else. See
+  [Workspace](workspace.md).
 - **Inspector** — the pre-production check, in two views. **Scan** runs end-to-end QA and a
   vulnerability assessment and answers one question: can this be pushed? **Live app** runs your
   project's dev server (detected from `package.json` / `pyproject.toml` / `compose.yaml`, started
@@ -317,6 +321,7 @@ menu. Commands that map to a browser action open the matching view:
 | `/diff` | Code workspace ▸ Source Control |
 | `/logs`, `/map` | Insights ▸ logs / execution map |
 | `/qa`, `/inspect` | Inspector ▸ Scan |
+| `/workspace` | Workspaces |
 | `/missions`, `/checkpoints` | Insights ▸ the matching view |
 
 Everything else — `/ask`, `/plan`, `/build`, `/run`, `/team`, `/review`, `/test`, `/index`,

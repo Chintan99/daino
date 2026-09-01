@@ -33,6 +33,9 @@ commands. The table below is a map of the complete feature set and where to lear
 | Isolated missions | Compiles requirements, asks for plan approval, edits a Git worktree, verifies, reviews, and records evidence | [Missions](missions.md) |
 | Parallel sub-agents | Splits work into dependency waves with non-overlapping write scopes and read-only specialist roles | [TUI: teams](tui.md#teams-of-sub-agents) |
 | Project QA | Combines deterministic tests, linters, browser tests, dependency scans, and parallel read-only specialists | [TUI: QA](tui.md#quality-assurance) |
+| Knowledge workspaces | A goal, uploaded files, documents, a plan, and research — continuing across many sessions, stored as real files in the project | [Workspace](workspace.md) |
+| Document extraction | PDF, Word, Excel, and PowerPoint uploads become markdown the agent can read | [Workspace: uploads](workspace.md#uploads) |
+| Cited research | Every page the agent fetches is recorded as a source and cached, so a claim stays checkable | [Workspace: research](workspace.md#research-and-sources) |
 | Vulnerability assessment | Offline audit for secrets, insecure code, and weak configuration; installed SAST and dependency scanners; a non-destructive probe of the running app | [GUI: the Inspector](gui.md#the-inspector) |
 | Release gate | One deterministic verdict — safe to push, review first, or do not push — with every reason it depended on | [GUI: the verdict](gui.md#the-verdict) |
 | Sessions | Persists conversation history, selected context, current plans, model choice, and events per repository | [TUI: sessions](tui.md#sessions-and-context), [GUI: sessions](gui.md#sessions) |

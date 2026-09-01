@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { qk } from "../api/hooks";
 import { useAgentStore } from "../store/agentStore";
 import { useDesignStore } from "../store/designStore";
+import { useUIStore } from "../store/uiStore";
 import type {
   ClientSessionMessage,
   ServerSessionMessage,
@@ -244,6 +245,30 @@ export function useSessionSocket(target: string = "latest") {
             qc.invalidateQueries({ queryKey: qk.design(designId) });
           }
           qc.invalidateQueries({ queryKey: qk.designs });
+          break;
+        }
+        case "WorkspaceCreated":
+        case "WorkspaceUpdated": {
+          const workspaceId = str(event.workspace_id);
+          // While the agent is writing, follow the workspace it touches so the
+          // user watches the document appear rather than hunting for it.
+          const open = useUIStore.getState().activeWorkspaceId;
+          const follow = workspaceId && useAgentStore.getState().turnRunning;
+          if (follow && !open) {
+            useUIStore.getState().setActiveWorkspaceId(workspaceId);
+          }
+          if (workspaceId) {
+            qc.invalidateQueries({ queryKey: qk.workspaceItem(workspaceId) });
+            const path = str(event.path);
+            if (path) {
+              // The event carries a repository-relative path; the artifact
+              // queries are keyed on the workspace-relative one, so refresh the
+              // whole family rather than guessing the key.
+              qc.invalidateQueries({ queryKey: ["workspaces", workspaceId, "artifact"] });
+              qc.invalidateQueries({ queryKey: ["workspaces", workspaceId, "revisions"] });
+            }
+          }
+          qc.invalidateQueries({ queryKey: qk.workspaces });
           break;
         }
         case "FileChanged":

@@ -1,0 +1,25 @@
+name: incident-review
+title: Incident review
+purpose: Reconstruct what happened and what should change, without blame.
+starter_tasks:
+  - Build the timeline from the evidence
+  - Establish the impact and its duration
+  - Work back to the contributing causes
+  - Decide what would have caught this earlier
+  - Write the follow-up actions
+starter_artifacts:
+  - title: Review
+    filename: review.md
+    outline:
+      - Summary
+      - Impact
+      - Timeline
+      - Contributing causes
+      - What went well
+      - Follow-up actions
+preamble: |
+  An incident review. Write causes as conditions of the system, never as
+  people's mistakes: "the deploy had no staged rollout" rather than "someone
+  deployed carelessly". Anchor the timeline in timestamped evidence and mark
+  anything reconstructed from memory as such. Each follow-up action needs to
+  name the specific failure it would have caught.

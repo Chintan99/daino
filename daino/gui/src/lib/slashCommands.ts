@@ -50,6 +50,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     usage: "[run]",
   },
   { name: "/inspect", description: "Open the Inspector's pre-push scan" },
+  {
+    name: "/workspace",
+    description: "Open Workspaces — documents, research, planning, and analysis",
+  },
   { name: "/status", description: "Show active project and mission status" },
   { name: "/missions", description: "Open the mission browser" },
   { name: "/tasks", description: "List crash-safe unfinished tasks" },
@@ -141,6 +145,10 @@ export function runGuiSlashCommand(raw: string): boolean {
       return true;
     case "/map":
       insights("map");
+      return true;
+    case "/workspace":
+    case "/workspaces":
+      ui.setActiveWorkspaceTab("workspace");
       return true;
     case "/qa":
     case "/inspect":

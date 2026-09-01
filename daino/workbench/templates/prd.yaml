@@ -1,0 +1,24 @@
+name: prd
+title: Product requirements
+purpose: Turn a rough idea into a requirements document someone can build from.
+starter_tasks:
+  - Describe the problem and who has it
+  - Establish how success will be measured
+  - Survey what exists today, in the product and outside it
+  - Write the requirements
+  - List what is explicitly out of scope
+starter_artifacts:
+  - title: Requirements
+    filename: requirements.md
+    outline:
+      - Problem
+      - Who this is for
+      - Goals and non-goals
+      - Requirements
+      - Open questions
+      - Out of scope
+preamble: |
+  A requirements document. Write requirements as observable outcomes, not as
+  implementation. Every requirement needs a reason a reader can evaluate. Record
+  open questions as open rather than resolving them by assumption — an
+  unanswered question in the document is useful, and a guessed answer is not.

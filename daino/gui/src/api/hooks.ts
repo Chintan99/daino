@@ -10,7 +10,7 @@ import type { Design } from "./types";
 
 export const qk = {
   health: ["health"] as const,
-  workspace: ["workspace"] as const,
+  projectInfo: ["project"] as const,
   sessions: ["sessions"] as const,
   sessionMessages: (id: string) => ["session", id, "messages"] as const,
   fileTree: (path: string) => ["files", "tree", path] as const,
@@ -40,10 +40,17 @@ export const qk = {
   agentConfig: (sessionId: string) => ["agent", "config", sessionId] as const,
   memory: (key: string) => ["agent", "memory", key] as const,
   providerHealth: ["settings", "providers", "health"] as const,
+  workspaces: ["workspaces"] as const,
+  workspaceItem: (id: string) => ["workspaces", id] as const,
+  workspaceArtifact: (id: string, path: string) =>
+    ["workspaces", id, "artifact", path] as const,
+  workspaceRevisions: (id: string, path: string) =>
+    ["workspaces", id, "revisions", path] as const,
+  workspaceTemplates: ["workspaces", "templates"] as const,
 };
 
-export function useWorkspace() {
-  return useQuery({ queryKey: qk.workspace, queryFn: api.workspace });
+export function useProjectInfo() {
+  return useQuery({ queryKey: qk.projectInfo, queryFn: api.projectInfo });
 }
 
 export function useSessions() {
@@ -217,7 +224,7 @@ export function useSettingsMutation() {
     onSuccess: (data) => {
       qc.setQueryData(qk.settings, data);
       // Routing changes which model answers the next turn.
-      qc.invalidateQueries({ queryKey: qk.workspace });
+      qc.invalidateQueries({ queryKey: qk.projectInfo });
     },
   });
 }
@@ -291,3 +298,46 @@ export function useDesignMutations(designId: string | null) {
 }
 
 export { useQueryClient };
+
+// ---- Workspaces ----
+
+export function useWorkspaces(includeArchived = false) {
+  return useQuery({
+    queryKey: qk.workspaces,
+    queryFn: () => api.workspaces(includeArchived),
+  });
+}
+
+export function useWorkspaceItem(id: string | null) {
+  return useQuery({
+    queryKey: qk.workspaceItem(id ?? ""),
+    queryFn: () => api.workspace(id as string),
+    enabled: !!id,
+  });
+}
+
+export function useArtifact(workspaceId: string | null, path: string | null) {
+  return useQuery({
+    queryKey: qk.workspaceArtifact(workspaceId ?? "", path ?? ""),
+    queryFn: () => api.readArtifact(workspaceId as string, path as string),
+    enabled: !!workspaceId && !!path,
+  });
+}
+
+export function useArtifactRevisions(workspaceId: string | null, path: string | null) {
+  return useQuery({
+    queryKey: qk.workspaceRevisions(workspaceId ?? "", path ?? ""),
+    queryFn: () => api.artifactRevisions(workspaceId as string, path as string),
+    enabled: !!workspaceId && !!path,
+  });
+}
+
+/** The work types a new workspace can start from; they change only on upgrade. */
+export function useWorkspaceTemplates() {
+  return useQuery({
+    queryKey: qk.workspaceTemplates,
+    queryFn: api.workspaceTemplates,
+    staleTime: Infinity,
+  });
+}
+

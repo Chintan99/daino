@@ -195,7 +195,7 @@ export function ProviderPanel() {
     run("save", async () => {
       const answer = await api.saveProvider(form as ProviderForm);
       qc.setQueryData(qk.settings, answer.settings);
-      qc.invalidateQueries({ queryKey: qk.workspace });
+      qc.invalidateQueries({ queryKey: qk.projectInfo });
       setResult(answer.provider);
       setChecks([]);
       setEditing(answer.provider.name);

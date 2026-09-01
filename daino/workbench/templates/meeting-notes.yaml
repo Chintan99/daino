@@ -1,0 +1,21 @@
+name: meeting-notes
+title: Meeting notes
+purpose: Turn a transcript or rough notes into a record with clear actions.
+starter_tasks:
+  - Collect the transcript or raw notes
+  - Write the summary
+  - Extract decisions and their owners
+  - Extract action items
+starter_artifacts:
+  - title: Notes
+    filename: notes.md
+    outline:
+      - Summary
+      - Decisions
+      - Actions
+      - Open threads
+preamble: |
+  A meeting record. Separate what was decided from what was merely discussed —
+  conflating the two is how a record becomes untrustworthy. Attribute an action
+  only when the transcript actually names an owner; otherwise mark it unassigned
+  rather than guessing.

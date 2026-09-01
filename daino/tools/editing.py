@@ -16,7 +16,9 @@ from daino.memory import InstructionResolver, MemoryManager, MemoryScope, Memory
 from daino.schemas import AgentAction, EditSpec, FileModification, TodoItem, ToolResult
 from daino.tools.commands import CommandRunner
 from daino.tools.filesystem import FileTools
-from daino.tools.web import WebResearchTool
+from daino.tools.web import WebResearch
+from daino.workbench.models import Workspace, WorkspaceTask
+from daino.workbench.service import WorkbenchError, WorkbenchService
 
 #: Ordered ``git apply`` strategies. Models routinely emit diffs with miscounted
 #: hunk headers or drifted whitespace; each fallback repairs one of those without
@@ -82,7 +84,6 @@ def patterns_overlap(first: str, second: str) -> bool:
     if not first_prefix or not second_prefix:
         return True
     return scope_matches(first, second_prefix) or scope_matches(second, first_prefix)
-
 
 
 #: Returned by :func:`_tolerant_span` when the relaxed match is not unique.
@@ -208,6 +209,7 @@ def _recovery_hint(text: str, old_string: str) -> str:
         f"Its first line matches line(s) {shown}, so the rest of the anchor differs. "
         "Re-read that region and copy it exactly, including indentation."
     )
+
 
 class EditTools:
     def __init__(
@@ -792,11 +794,13 @@ class ActionExecutor:
         editor: EditTools,
         commands: CommandRunner | None = None,
         *,
-        web: WebResearchTool | None = None,
+        web: WebResearch | None = None,
         memory: MemoryManager | None = None,
         memory_task_id: str | None = None,
         memory_session_id: str | None = None,
         design: DesignService | None = None,
+        workbench: WorkbenchService | None = None,
+        workspace_id: str = "",
     ) -> None:
         self.editor = editor
         #: Attached when the agent is allowed to run commands. Absent for paths
@@ -811,6 +815,12 @@ class ActionExecutor:
         #: Attached when design-workspace tools are available (the GUI, and the
         #: TUI when a project is open). Absent means design actions are refused.
         self.design = design
+        #: Attached when knowledge-work workspaces are available. Absent means
+        #: workspace actions are refused, the same way design actions are.
+        self.workbench = workbench
+        #: The workspace the user has open, so the model does not have to name
+        #: one it was never told about.
+        self.workspace_id = workspace_id
         self.instructions = InstructionResolver(self.editor.root)
         #: The agent's current plan, replaced whenever it emits ``todo``.
         self.todos: list[TodoItem] = []
@@ -870,6 +880,8 @@ class ActionExecutor:
             "disconnect_design_nodes",
         }:
             return self._design_action(action), []
+        if name in {"workspace_read", "workspace_plan", "workspace_task"}:
+            return self._workspace_action(action), []
         if name == "glob":
             return self.editor.files.glob_files(action.pattern or action.query), []
         if name == "grep":
@@ -1085,6 +1097,54 @@ class ActionExecutor:
             summarized.append(payload)
         return summarized
 
+    def _workspace_action(self, action: AgentAction) -> ToolResult:
+        """Read a workspace, and keep its visible plan current.
+
+        Only three operations, because a workspace's documents are ordinary
+        files: the agent already has ``read_file``, ``write`` and ``replace``
+        for those. What a file cannot answer is "what is in this workspace" and
+        "where is the work up to", which is all this covers.
+        """
+        if self.workbench is None:
+            return ToolResult(
+                tool=action.action,
+                success=False,
+                error="No workspace is available in this context.",
+            )
+        workspace_id = action.workspace_id or self.workspace_id
+        if not workspace_id:
+            return ToolResult(
+                tool=action.action,
+                success=False,
+                error=(
+                    "No workspace is open. Ask the user to open one in the "
+                    "WORKSPACE tab, or name it with workspace_id."
+                ),
+            )
+        try:
+            if action.action == "workspace_read":
+                return ToolResult(
+                    tool="workspace_read",
+                    success=True,
+                    data=_workspace_overview(self.workbench.get(workspace_id)),
+                )
+            if action.action == "workspace_plan":
+                tasks = self.workbench.set_tasks(workspace_id, list(action.plan_steps))
+                return ToolResult(
+                    tool="workspace_plan",
+                    success=True,
+                    data={"tasks": [_task_line(item) for item in tasks]},
+                )
+            task = self.workbench.update_task(
+                workspace_id,
+                action.task_id,
+                status=action.task_status,
+                content=action.content or None,
+            )
+            return ToolResult(tool="workspace_task", success=True, data={"task": _task_line(task)})
+        except WorkbenchError as exc:
+            return ToolResult(tool=action.action, success=False, error=str(exc))
+
     def _design_action(self, action: AgentAction) -> ToolResult:
         """Create and granularly edit structured design artifacts.
 
@@ -1238,11 +1298,13 @@ class RecordingActionExecutor(ActionExecutor):
         editor: EditTools,
         commands: CommandRunner | None = None,
         *,
-        web: WebResearchTool | None = None,
+        web: WebResearch | None = None,
         memory: MemoryManager | None = None,
         memory_task_id: str | None = None,
         memory_session_id: str | None = None,
         design: DesignService | None = None,
+        workbench: WorkbenchService | None = None,
+        workspace_id: str = "",
     ) -> None:
         super().__init__(
             editor,
@@ -1252,6 +1314,8 @@ class RecordingActionExecutor(ActionExecutor):
             memory_task_id=memory_task_id,
             memory_session_id=memory_session_id,
             design=design,
+            workbench=workbench,
+            workspace_id=workspace_id,
         )
         #: Relative path -> contents before the agent touched it, or None when
         #: the file did not exist.
@@ -1277,6 +1341,50 @@ class RecordingActionExecutor(ActionExecutor):
 
     def after(self, relative: str) -> str | None:
         return _read_or_none(self.editor.root / relative)
+
+
+def _workspace_overview(workspace: Workspace) -> dict[str, Any]:
+    """What the workspace holds, without its documents' bodies.
+
+    Same discipline as ``_summarize_nodes``: an orientation call must not spend
+    the context window on text the agent may not need. Every document is named
+    with the path that ``read_file`` accepts, so following up is one step.
+    """
+    return {
+        "workspace_id": workspace.id,
+        "name": workspace.name,
+        "goal": workspace.goal,
+        "kind": workspace.kind,
+        "folder": workspace.folder,
+        "plan": [_task_line(item) for item in workspace.tasks],
+        "documents": [
+            {
+                "path": item.repo_path,
+                "title": item.title,
+                # Already bounded by the service; no second clip needed.
+                "preview": item.preview,
+                "bytes": item.bytes,
+            }
+            for item in workspace.artifacts
+        ],
+        "uploads": [
+            {
+                "path": item.repo_path,
+                # The extraction is what is readable; the original usually is not.
+                "read_this_instead": item.extracted_path,
+                "unreadable_because": item.warning,
+            }
+            for item in workspace.uploads
+        ],
+        "sources": [
+            {"url": item.url, "title": item.title, "cached_text": item.cache_path}
+            for item in workspace.sources
+        ],
+    }
+
+
+def _task_line(task: WorkspaceTask) -> dict[str, Any]:
+    return {"task_id": task.id, "content": task.content, "status": task.status}
 
 
 def _read_or_none(path: Path) -> str | None:

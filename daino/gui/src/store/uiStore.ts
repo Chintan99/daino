@@ -14,6 +14,8 @@ export type InsightsView =
   | "repository";
 /** The Inspector's two halves: the pre-push scan, and the app it probes. */
 export type InspectorView = "scan" | "live";
+/** What the Workspace tab is showing about the selected workspace. */
+export type WorkbenchView = "documents" | "tasks" | "uploads" | "sources";
 
 interface UIState {
   activeWorkspaceTab: string; // id from the tab registry
@@ -41,6 +43,20 @@ interface UIState {
 
   inspectorView: InspectorView;
   setInspectorView: (v: InspectorView) => void;
+
+  workbenchView: WorkbenchView;
+  setWorkbenchView: (v: WorkbenchView) => void;
+  /**
+   * The workspace being worked in, or null for the list.
+   *
+   * In the store rather than local state for the same reason as the sub-view
+   * enums above: the menu bar and status bar can then deep-link into one.
+   */
+  activeWorkspaceId: string | null;
+  setActiveWorkspaceId: (id: string | null) => void;
+  /** The document open in the workspace viewer, relative to its folder. */
+  activeArtifactPath: string | null;
+  setActiveArtifactPath: (path: string | null) => void;
 
   /** Path of the diff most recently opened, for the agent's context chips. */
   lastDiffPath: string | null;
@@ -88,6 +104,20 @@ export const useUIStore = create<UIState>((set) => ({
 
   inspectorView: "scan",
   setInspectorView: (inspectorView) => set({ inspectorView }),
+
+  workbenchView: "documents",
+  setWorkbenchView: (workbenchView) => set({ workbenchView }),
+  activeWorkspaceId: null,
+  // Opening a different workspace must not leave the previous one's document
+  // on screen.
+  setActiveWorkspaceId: (activeWorkspaceId) =>
+    set((s) =>
+      s.activeWorkspaceId === activeWorkspaceId
+        ? { activeWorkspaceId }
+        : { activeWorkspaceId, activeArtifactPath: null },
+    ),
+  activeArtifactPath: null,
+  setActiveArtifactPath: (activeArtifactPath) => set({ activeArtifactPath }),
 
   lastDiffPath: null,
   setLastDiffPath: (lastDiffPath) => set({ lastDiffPath }),

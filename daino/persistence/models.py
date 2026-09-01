@@ -73,6 +73,10 @@ class ConversationSession(Base, TimestampMixin):
     context_files: Mapped[list[str]] = mapped_column(JSON, default=list)
     display_mode: Mapped[str] = mapped_column(String(32), default="standard")
     status: Mapped[str] = mapped_column(String(32), default="active")
+    #: The workspace this conversation belongs to, when it belongs to one. This
+    #: single nullable link is what gives knowledge work continuity across many
+    #: sessions; a repository chat simply leaves it null.
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
 
 
 class ConversationState(Base, TimestampMixin):
@@ -359,3 +363,73 @@ class MemoryEpisode(Base, TimestampMixin):
     outcome: Mapped[str] = mapped_column(Text, default="")
     unresolved_work: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+
+
+class Workspace(Base, TimestampMixin):
+    """A named body of knowledge work: a goal, its folder, and its sessions.
+
+    The missing container. ``Project`` is the directory, ``Mission`` is one
+    request bound to a git worktree, and ``ConversationSession`` is one chat.
+    Nothing named a goal that outlives a single conversation, which is what
+    documents, research, and analysis actually need.
+
+    The row is an index, never the source of truth: the artifacts live as real
+    files under ``folder`` so they are greppable, indexable, and diffable like
+    anything else in the repository.
+    """
+
+    __tablename__ = "workspaces"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    slug: Mapped[str] = mapped_column(String(255))
+    goal: Mapped[str] = mapped_column(Text, default="")
+    #: The work-type template this workspace was created from.
+    kind: Mapped[str] = mapped_column(String(32), default="general")
+    #: Repository-relative folder holding uploads, artifacts, and history.
+    folder: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+
+
+class WorkspaceTask(Base, TimestampMixin):
+    """One step of a workspace's plan, editable by both the user and the agent.
+
+    Deliberately not a mission ``Task``: those are terminal on completion, die
+    with their mission, and require acceptance criteria plus runnable
+    verification commands. And deliberately not a session todo: those have no
+    id, no order, and are wiped between turns. This is the durable middle.
+    """
+
+    __tablename__ = "workspace_tasks"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    content: Mapped[str] = mapped_column(Text)
+    #: Shares the vocabulary of ``TodoItem`` so the existing renderers apply,
+    #: but no status here is terminal — a workspace task can be reopened.
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    #: The artifact this task produced, repository-relative, when there is one.
+    artifact_path: Mapped[str] = mapped_column(Text, default="")
+
+
+class WorkspaceSource(Base, TimestampMixin):
+    """One page the agent read while researching, kept so it can be cited.
+
+    Registered automatically whenever a fetch succeeds in a workspace, because
+    a citation the model has to remember to record is a citation that goes
+    missing. The fetched text is cached on disk so a claim stays checkable after
+    the page changes.
+    """
+
+    __tablename__ = "workspace_sources"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    url: Mapped[str] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(String(512), default="")
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    digest: Mapped[str] = mapped_column(String(128), default="")
+    #: Repository-relative path of the cached page text.
+    cache_path: Mapped[str] = mapped_column(Text, default="")
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

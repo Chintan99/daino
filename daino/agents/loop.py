@@ -862,9 +862,7 @@ class ToolLoop:
                 "Do not write it again; move on to the next unfinished step."
                 + (f"\n{detail}" if detail else "")
             )
-        observation = AgentObservation(
-            action=action.action, success=result.success, detail=detail
-        )
+        observation = AgentObservation(action=action.action, success=result.success, detail=detail)
         messages.append(
             Message(
                 role="tool",
@@ -908,8 +906,8 @@ class ToolLoop:
         # counter even when the write changed nothing. An agent that rewrote
         # identical content therefore never tripped the no-progress limit and
         # looped until the user killed it.
-        stalled = not result.success or inert or (
-            signature == self._last_action_signature and not paths
+        stalled = (
+            not result.success or inert or (signature == self._last_action_signature and not paths)
         )
         if stalled:
             self._no_progress_steps += 1

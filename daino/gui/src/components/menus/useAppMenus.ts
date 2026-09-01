@@ -248,6 +248,14 @@ export function useAppMenus(): MenuDefinition[] {
         },
         {
           type: "item",
+          label: "Workspaces",
+          onSelect: () => {
+            cmd.openWorkspace("workspace");
+            ui.setActiveWorkspaceId(null);
+          },
+        },
+        {
+          type: "item",
           label: "Inspection report",
           onSelect: () => {
             cmd.openWorkspace("inspector");

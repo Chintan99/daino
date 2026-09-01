@@ -1,0 +1,11 @@
+name: general
+title: General
+purpose: Open-ended work with no fixed shape.
+starter_tasks:
+  - State the goal in one sentence
+  - Gather the material this needs
+  - Produce the first draft
+preamble: |
+  There is no fixed shape to this work. Ask what the finished thing should look
+  like before producing a lot of it, and keep the task list honest as the shape
+  becomes clear.

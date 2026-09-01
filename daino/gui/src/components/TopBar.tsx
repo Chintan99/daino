@@ -1,4 +1,4 @@
-import { useQALatest, useWorkspace } from "../api/hooks";
+import { useProjectInfo } from "../api/hooks";
 import { useUIStore } from "../store/uiStore";
 import { WORKSPACE_TABS } from "../tabs/registry";
 import { BRAND } from "../lib/branding";
@@ -14,7 +14,7 @@ import { useAppMenus } from "./menus/useAppMenus";
  * INSPECTOR / INSIGHTS, and the tabs are the navigation users reach for most.
  */
 export function TopBar() {
-  const { data: workspace } = useWorkspace();
+  const { data: project } = useProjectInfo();
   const menus = useAppMenus();
   const activeTab = useUIStore((s) => s.activeWorkspaceTab);
   const setActiveTab = useUIStore((s) => s.setActiveWorkspaceTab);
@@ -30,9 +30,9 @@ export function TopBar() {
         </div>
         <MenuBar menus={menus} />
         <span className="spacer" />
-        {workspace && (
-          <div className="project-name" title={workspace.root}>
-            {workspace.name}
+        {project && (
+          <div className="project-name" title={project.root}>
+            {project.name}
           </div>
         )}
         <RuntimeToggle />
@@ -64,35 +64,11 @@ export function TopBar() {
               title={t.hint}
             >
               {t.label}
-              {t.id === "inspector" && <InspectorMark />}
+              {t.mark && <t.mark />}
             </button>
           ))}
         </div>
       </div>
     </>
-  );
-}
-
-/**
- * A dot on the INSPECTOR tab: pulsing while a scan runs, then coloured by the
- * verdict it landed on. The verdict outlives the notification, so the tab keeps
- * showing whether this checkout is currently cleared to push.
- */
-function InspectorMark() {
-  const { data: qa } = useQALatest();
-  if (qa?.running) return <span className="tab-mark running" title="Inspection running" />;
-  const verdict = qa?.report?.verdict;
-  if (!verdict || verdict === "unknown") return null;
-  return (
-    <span
-      className={`tab-mark v-${verdict}`}
-      title={
-        verdict === "pass"
-          ? "Last inspection: safe to push"
-          : verdict === "warn"
-            ? "Last inspection: review before pushing"
-            : "Last inspection: do not push"
-      }
-    />
   );
 }

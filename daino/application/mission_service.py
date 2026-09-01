@@ -54,7 +54,7 @@ from daino.persistence.models import (
     ToolCall,
     VerificationRun,
 )
-from daino.prompts import CHAT_AGENT_SYSTEM
+from daino.prompts import CHAT_AGENT_SYSTEM, WORKSPACE_AGENT_SYSTEM
 from daino.runtimes.base import Runtime
 from daino.runtimes.detect import docker_status
 from daino.schemas import (
@@ -82,6 +82,9 @@ from daino.tools.commands import ApprovalCallback, CommandRunner
 from daino.tools.diffing import render as render_diff
 from daino.utils.ids import new_id
 from daino.verification import missing_executable
+from daino.workbench.models import Workspace, WorkspaceTemplate
+from daino.workbench.research import SourceRecordingWeb
+from daino.workbench.service import WorkbenchError, WorkbenchService
 
 
 def _with_partial_changes(reason: str, diffs: list[FileDiff]) -> str:
@@ -104,6 +107,24 @@ def _with_partial_changes(reason: str, diffs: list[FileDiff]) -> str:
 #: The placeholder a session carries until its first request names it. Every
 #: session used to keep it, which made a session list three identical rows.
 DEFAULT_SESSION_TITLE = "General repository questions"
+
+
+def workspace_system_prompt(workspace: Workspace, template: WorkspaceTemplate) -> str:
+    """The workspace agent's contract, plus this workspace's own context.
+
+    The goal and the work type go in the system prompt rather than the user
+    message because they hold for every turn: the agent should not need the user
+    to restate what the workspace is for each time they ask for something.
+    """
+    parts = [WORKSPACE_AGENT_SYSTEM, "", f"Workspace: {workspace.name}"]
+    if workspace.goal:
+        parts.append(f"Goal: {workspace.goal}")
+    parts.append(f"Folder: {workspace.folder}/ (repository-relative)")
+    if template.preamble.strip():
+        parts.extend(
+            ["", f"This is a {template.title.lower()} workspace.", template.preamble.strip()]
+        )
+    return "\n".join(parts)
 
 
 class MissionApplicationService:
@@ -538,6 +559,21 @@ class MissionApplicationService:
         )
         return mission, requirements, plan
 
+    def workspace_role(self, profile_override: str = "") -> ModelRole:
+        """Pick the role that runs a Workspace turn.
+
+        ``researcher`` exists so a project *can* send knowledge work to a
+        different model than its code — long-context and cheap suits reading
+        documents, and that is rarely the same profile as the builder. It is
+        entirely optional: an unconfigured role falls back to the builder, so no
+        existing configuration has to change and none breaks.
+        """
+        if profile_override:
+            return ModelRole.BUILDER
+        if self.core._role_available(ModelRole.RESEARCHER):
+            return ModelRole.RESEARCHER
+        return ModelRole.BUILDER
+
     def answer_role(self, profile_override: str = "") -> ModelRole:
         """Pick the cheapest configured role able to answer a question.
 
@@ -770,6 +806,25 @@ class MissionApplicationService:
             self._command_gates[session_id] = gate
         return gate
 
+    def _session_workspace(self, session_id: str, workbench: WorkbenchService) -> Workspace | None:
+        """The workspace this conversation belongs to, if it belongs to one.
+
+        This single link is what makes a chat turn knowledge work rather than
+        repository work: it selects the prompt, hands the agent its workspace
+        tools, and files whatever it reads as a source. A repository chat has no
+        workspace and behaves exactly as it always has.
+        """
+        with self.context.database.session() as session:
+            record = session.get(ConversationSession, session_id)
+            workspace_id = record.workspace_id if record is not None else None
+        if not workspace_id:
+            return None
+        try:
+            return workbench.get(workspace_id)
+        except WorkbenchError:
+            # The workspace was deleted while its conversation stayed open.
+            return None
+
     async def _command_runner(
         self, session_id: str, approve: ApprovalCallback | None
     ) -> tuple[Runtime | None, CommandRunner]:
@@ -907,26 +962,43 @@ class MissionApplicationService:
                 ),
                 mission_id=mission.id,
             )
+        workbench = WorkbenchService(
+            self.context.root, self.context.database, events=self.context.events
+        )
+        workspace = self._session_workspace(session_id, workbench)
         executor = RecordingActionExecutor(
             editor,
             runner,
-            web=WebResearchTool(
-                approve=approve,
-                require_approval=self.context.settings.security.require_approval_for_network,
+            web=SourceRecordingWeb(
+                WebResearchTool(
+                    approve=approve,
+                    require_approval=(self.context.settings.security.require_approval_for_network),
+                ),
+                workbench=workbench,
+                workspace_id=workspace.id if workspace else "",
             ),
             memory=self.memory,
             memory_task_id=persistent.task_id if persistent else None,
             memory_session_id=session_id,
             design=DesignService(self.context.root, events=self.context.events),
+            workbench=workbench,
+            workspace_id=workspace.id if workspace else "",
         )
         loop = ToolLoop(
             gateway,
-            ModelRole.BUILDER,
+            self.workspace_role(profile_override) if workspace else ModelRole.BUILDER,
             executor,
             on_action_start=self._record_chat_action_started(mission.id),
-            system=CHAT_AGENT_SYSTEM,
+            # A workspace turn is knowledge work, not repository work, so it gets
+            # its own contract: documents instead of code, and no demand for
+            # verification commands that a written report cannot have.
+            system=(
+                workspace_system_prompt(workspace, workbench.templates.get(workspace.kind))
+                if workspace
+                else CHAT_AGENT_SYSTEM
+            ),
             tools=CHAT_TOOL_SPECS,
-            require_verified_finish=True,
+            require_verified_finish=workspace is None,
             execution_profile=execution_profile,
         )
         diffs: list[FileDiff] = []
@@ -1108,9 +1180,7 @@ class MissionApplicationService:
         removed = sum(int(item["removed"]) for item in files)  # type: ignore[call-overload]
         label = f"Edited {len(files)} file{'s' if len(files) != 1 else ''}"
         lines = [f"{label}  +{added} -{removed}"]
-        lines.extend(
-            f"  {item['path']}  +{item['added']} -{item['removed']}" for item in files
-        )
+        lines.extend(f"  {item['path']}  +{item['added']} -{item['removed']}" for item in files)
         self.add_message(
             session_id,
             kind="changeset",
@@ -1399,9 +1469,7 @@ class MissionApplicationService:
 
         return observe
 
-    def _record_chat_action_started(
-        self, mission_id: str
-    ) -> Callable[[AgentAction], None]:
+    def _record_chat_action_started(self, mission_id: str) -> Callable[[AgentAction], None]:
         """Publish a safe action summary before a chat tool begins executing."""
 
         def started(action: AgentAction) -> None:

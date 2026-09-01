@@ -68,6 +68,7 @@ class Database:
         """
         if self.engine.url.get_backend_name() != "sqlite":
             return
+        self._add_session_workspace_column()
         inspector = inspect(self.engine)
         if "memory_records" not in inspector.get_table_names():
             return
@@ -109,6 +110,25 @@ class Database:
                         "unresolved_questions JSON NOT NULL DEFAULT '[]'"
                     )
                 )
+
+    def _add_session_workspace_column(self) -> None:
+        """Give an existing conversation table its link to a workspace.
+
+        Same reasoning as the memory bridge above: ``create_all`` creates the
+        new ``workspaces`` tables happily but cannot add a column to a table
+        that already exists, and a database predating the 0006 migration would
+        otherwise fail on every session query.
+        """
+        inspector = inspect(self.engine)
+        if "conversation_sessions" not in inspector.get_table_names():
+            return
+        columns = {item["name"] for item in inspector.get_columns("conversation_sessions")}
+        if "workspace_id" in columns:
+            return
+        with self.engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE conversation_sessions ADD COLUMN workspace_id VARCHAR(64)")
+            )
 
     @contextmanager
     def session(self) -> Iterator[Session]:

@@ -17,6 +17,10 @@ class ModelRole(StrEnum):
     DEBUGGER = "debugger"
     TESTER = "tester"
     SUMMARIZER = "summarizer"
+    #: Knowledge work in a Workspace — reading documents, researching, writing.
+    #: Optional: nothing routes to it unless a project configures it, and
+    #: ``MissionApplicationService.workspace_role`` falls back when it does not.
+    RESEARCHER = "researcher"
     DEPLOYER = "deployer"
 
 

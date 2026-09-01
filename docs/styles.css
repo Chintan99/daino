@@ -245,24 +245,21 @@ html[data-theme="dark"] .workflow-section { color: #eff8f2; }
 .interface-card > a span, .text-link span { margin-left: 6px; }
 .workspace-pills { display: flex; gap: 7px; margin-top: 27px; }
 .workspace-pills span { padding: 6px 10px; border: 1px solid var(--line-bright); border-radius: 99px; color: var(--green); background: var(--surface); font-size: 9px; }
-.workspace-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
-.workspace-detail > article { min-height: 660px; padding: 29px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg); }
-.workspace-detail .design-workspace { background: var(--surface-soft); }
-.workspace-heading { display: grid; grid-template-columns: 58px 1fr; gap: 18px; align-items: start; }
-.workspace-heading > span { display: grid; place-items: center; height: 29px; border: 1px solid var(--line-bright); border-radius: 7px; color: var(--green); background: var(--surface); font: 800 8px "SFMono-Regular", monospace; letter-spacing: .08em; }
-.workspace-heading h3 { margin: 0 0 8px; font-size: 24px; line-height: 1.15; letter-spacing: -.035em; }
-.workspace-heading p { margin: 0; color: var(--muted); font-size: 10px; }
+/* One row per GUI tab, so all five get the same weight on the page. */
+.tabs-section { background: var(--bg-deep); }
+.tab-rows { display: grid; gap: 14px; }
+.tab-row { display: grid; grid-template-columns: 292px 1fr; gap: 34px; padding: 28px 30px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg); }
+.tab-row:nth-child(even) { background: var(--surface-soft); }
+.tab-row-intro > span { display: inline-grid; place-items: center; height: 27px; padding: 0 11px; border: 1px solid var(--line-bright); border-radius: 7px; color: var(--green); background: var(--surface); font: 800 8px "SFMono-Regular", monospace; letter-spacing: .1em; }
+.tab-row-intro h3 { margin: 16px 0 9px; font-size: 23px; line-height: 1.15; letter-spacing: -.035em; }
+.tab-row-intro p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.65; }
+.tab-row .workspace-columns { margin-top: 0; }
+.tab-row .workspace-columns > div { min-height: auto; padding: 14px 0; }
+.tab-row .workspace-columns code { color: var(--green); font-size: 9px; }
 .workspace-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; margin-top: 35px; border-top: 1px solid var(--line); }
 .workspace-columns > div { min-height: 190px; padding: 20px 0; border-bottom: 1px solid var(--line); }
 .workspace-columns strong { font-size: 11px; }
 .workspace-columns p { margin: 6px 0 0; color: var(--muted); font-size: 9px; line-height: 1.65; }
-.design-modes { display: flex; gap: 6px; margin: 28px 0 -8px 76px; }
-.design-modes span { padding: 5px 9px; border: 1px solid var(--line-bright); border-radius: 99px; color: var(--green); background: var(--surface); font-size: 8px; }
-.workspace-support { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 14px; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-deep); }
-.workspace-support > div { min-height: 125px; padding: 22px; border-right: 1px solid var(--line); }
-.workspace-support > div:last-child { border: 0; }
-.workspace-support span { color: var(--green); font: 800 8px "SFMono-Regular", monospace; letter-spacing: .1em; }
-.workspace-support p { margin: 10px 0 0; color: var(--muted); font-size: 9px; line-height: 1.6; }
 
 .features-section { background: var(--bg); }
 .feature-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
@@ -340,8 +337,7 @@ html[data-theme="dark"] .workflow-section { color: #eff8f2; }
   .workflow-grid article:nth-child(2) { border-right: 0; }
   .workflow-grid article:nth-child(-n+2) { border-bottom: 1px solid color-mix(in srgb, var(--green-bright) 18%, transparent); }
   .interface-grid, .feature-groups { grid-template-columns: 1fr; }
-  .workspace-detail { grid-template-columns: 1fr; }
-  .workspace-detail > article { min-height: auto; }
+  .tab-row { grid-template-columns: 1fr; gap: 20px; }
   .footer-inner { grid-template-columns: 1fr 1fr; }
   .footer-note { grid-column: 1 / -1; text-align: left; }
 }
@@ -374,15 +370,10 @@ html[data-theme="dark"] .workflow-section { color: #eff8f2; }
   .workflow-grid article:nth-child(2) { border-right: 0; }
   .workflow-grid article:nth-child(-n+2) { border-bottom: 1px solid color-mix(in srgb, var(--green-bright) 18%, transparent); }
   .workflow-grid h3 { margin-top: 50px; }
-  .interface-card, .feature-groups > article, .workspace-detail > article { min-height: auto; padding: 23px; }
-  .workspace-heading { grid-template-columns: 1fr; }
-  .workspace-heading > span { width: 58px; }
+  .interface-card, .feature-groups > article { min-height: auto; padding: 23px; }
+  .tab-row { padding: 23px; }
   .workspace-columns { grid-template-columns: 1fr; }
   .workspace-columns > div { min-height: auto; }
-  .design-modes { flex-wrap: wrap; margin-left: 0; }
-  .workspace-support { grid-template-columns: 1fr; }
-  .workspace-support > div { min-height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-  .workspace-support > div:last-child { border-bottom: 0; }
   .reference-grid { grid-template-columns: 1fr; }
   .reference-grid .reference-more { grid-column: auto; align-items: flex-start; flex-direction: column; }
   .reference-more .button { width: 100%; }

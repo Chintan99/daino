@@ -247,6 +247,9 @@ class AgentAction(StrictModel):
         "delete_design_node",
         "connect_design_nodes",
         "disconnect_design_nodes",
+        "workspace_read",
+        "workspace_plan",
+        "workspace_task",
         "respond",
         "finish",
     ]
@@ -282,6 +285,15 @@ class AgentAction(StrictModel):
     #: ``summary``, which means "what you changed" and is empty when the agent
     #: only answered.
     message: str = ""
+    #: Workspace operations. Documents are ordinary files, so the agent writes
+    #: them with ``write``/``replace``; these cover only what a file cannot say:
+    #: what the workspace holds, and what the plan is.
+    workspace_id: str = ""
+    #: For ``workspace_plan``: the plan, replaced in full each time.
+    plan_steps: list[str] = Field(default_factory=list)
+    #: For ``workspace_task``: which step, and what it becomes.
+    task_id: str = ""
+    task_status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
     #: Controlled memory operations. The database is never exposed to the LLM.
     memory_id: str = ""
     memory_type: str = "semantic"
@@ -352,6 +364,7 @@ class AgentAction(StrictModel):
             "delete_design_node": ("design_id", "node_id"),
             "connect_design_nodes": ("design_id", "source_node", "target_node"),
             "disconnect_design_nodes": ("design_id",),
+            "workspace_task": ("task_id",),
             "respond": ("message",),
             "finish": ("summary",),
         }
@@ -437,6 +450,7 @@ TeamMemberRole = Literal[
     "debugger",
     "tester",
     "summarizer",
+    "researcher",
 ]
 
 
