@@ -1,4 +1,4 @@
-import { useWorkspace } from "../api/hooks";
+import { useQALatest, useWorkspace } from "../api/hooks";
 import { useUIStore } from "../store/uiStore";
 import { WORKSPACE_TABS } from "../tabs/registry";
 import { BRAND } from "../lib/branding";
@@ -11,7 +11,7 @@ import { useAppMenus } from "./menus/useAppMenus";
  *
  * They are two rows rather than one because the menu is not a workspace: a
  * single row made every new menu compete for width with CODE / DESIGN /
- * PREVIEW / INSIGHTS, and the tabs are the navigation users reach for most.
+ * INSPECTOR / INSIGHTS, and the tabs are the navigation users reach for most.
  */
 export function TopBar() {
   const { data: workspace } = useWorkspace();
@@ -64,10 +64,35 @@ export function TopBar() {
               title={t.hint}
             >
               {t.label}
+              {t.id === "inspector" && <InspectorMark />}
             </button>
           ))}
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * A dot on the INSPECTOR tab: pulsing while a scan runs, then coloured by the
+ * verdict it landed on. The verdict outlives the notification, so the tab keeps
+ * showing whether this checkout is currently cleared to push.
+ */
+function InspectorMark() {
+  const { data: qa } = useQALatest();
+  if (qa?.running) return <span className="tab-mark running" title="Inspection running" />;
+  const verdict = qa?.report?.verdict;
+  if (!verdict || verdict === "unknown") return null;
+  return (
+    <span
+      className={`tab-mark v-${verdict}`}
+      title={
+        verdict === "pass"
+          ? "Last inspection: safe to push"
+          : verdict === "warn"
+            ? "Last inspection: review before pushing"
+            : "Last inspection: do not push"
+      }
+    />
   );
 }

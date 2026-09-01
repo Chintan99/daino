@@ -2118,7 +2118,230 @@ select.input {
   letter-spacing: 0.09em;
 }
 
-/* ---- Preview ---- */
+/* ---- Inspector ---- */
+
+/* The verdict leads the report: the decision first, the evidence after. */
+.verdict {
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  background: var(--bg-1);
+}
+.verdict-ok {
+  border-left-color: var(--green);
+}
+.verdict-warn {
+  border-left-color: var(--yellow);
+}
+.verdict-bad {
+  border-left-color: var(--red);
+}
+.verdict-info,
+.verdict-running {
+  border-left-color: var(--cyan);
+}
+.verdict-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.verdict-label {
+  font-size: var(--fs-13);
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  color: var(--text-0);
+}
+.verdict-ok .verdict-label {
+  color: var(--green);
+}
+.verdict-warn .verdict-label {
+  color: var(--yellow);
+}
+.verdict-bad .verdict-label {
+  color: var(--red);
+}
+.verdict-running .verdict-label,
+.verdict-info .verdict-label {
+  color: var(--cyan);
+}
+.verdict-hint {
+  font-size: var(--fs-11-5);
+  color: var(--text-2);
+}
+.verdict-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.verdict-reasons {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+.verdict-reasons li {
+  margin-bottom: 3px;
+}
+
+/* Severity is a single vocabulary: same colour in the banner and the table. */
+.sev {
+  font-size: var(--fs-10);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-1);
+  white-space: nowrap;
+}
+.sev-critical {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+}
+.sev-high {
+  color: var(--orange);
+  border-color: color-mix(in srgb, var(--orange) 45%, transparent);
+  background: color-mix(in srgb, var(--orange) 10%, transparent);
+}
+.sev-medium {
+  color: var(--yellow);
+  border-color: color-mix(in srgb, var(--yellow) 40%, transparent);
+}
+.sev-low {
+  color: var(--cyan);
+  border-color: color-mix(in srgb, var(--cyan) 35%, transparent);
+}
+.sev-info {
+  color: var(--text-2);
+}
+/* A zero count still occupies its slot, so the row does not reflow per scan. */
+.sev.zero {
+  opacity: 0.38;
+  background: transparent;
+}
+
+.findings-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px 8px;
+}
+.finding-detail {
+  padding: 10px 14px 12px 24px;
+  background: var(--bg-0);
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+.finding-detail pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-11-5);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-2);
+}
+.finding-detail p {
+  margin: 0 0 4px;
+}
+
+.verdict-pill {
+  font-size: var(--fs-9-5);
+  letter-spacing: 0.05em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.verdict-pill.v-pass {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+}
+.verdict-pill.v-warn {
+  color: var(--yellow);
+  border-color: color-mix(in srgb, var(--yellow) 40%, transparent);
+}
+.verdict-pill.v-blocked {
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 40%, transparent);
+}
+.verdict-pill.v-unknown {
+  color: var(--text-3);
+}
+
+/* Probing a host outside this machine is a decision, so it is a checkbox. */
+.authorize-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--yellow) 8%, var(--bg-1));
+  font-size: var(--fs-11-5);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.authorize-bar input {
+  margin-top: 2px;
+}
+
+.check-output {
+  margin: 0;
+  padding: 10px 14px;
+  background: var(--bg-0);
+  font-size: var(--fs-11-5);
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--text-2);
+}
+
+/* The verdict outlives its notification, so the tab keeps showing it. */
+.tab-mark {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--text-3);
+}
+.tab-mark.running {
+  background: var(--cyan);
+  animation: tab-mark-pulse 1.4s ease-in-out infinite;
+}
+.tab-mark.v-pass {
+  background: var(--green);
+}
+.tab-mark.v-warn {
+  background: var(--yellow);
+}
+.tab-mark.v-blocked {
+  background: var(--red);
+}
+@keyframes tab-mark-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-mark.running {
+    animation: none;
+  }
+}
+
+/* ---- Live app (the Inspector's run-the-project view) ---- */
 .preview-workspace {
   display: flex;
   flex-direction: column;

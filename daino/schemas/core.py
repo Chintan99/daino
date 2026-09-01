@@ -489,13 +489,61 @@ class TeamOutcome(StrictModel):
 QARunStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 QACheckStatus = Literal["pending", "running", "passed", "failed", "skipped"]
 
+#: What an inspection is asked to cover. "quality" is the historical QA sweep,
+#: "security" is the vulnerability assessment on its own, "full" is both.
+QAScanProfile = Literal["full", "quality", "security"]
+
+#: Ordered worst-first; the release gate reads them in this order.
+QASeverity = Literal["critical", "high", "medium", "low", "info"]
+
+#: The release gate's answer to "is this safe to push?".
+QAVerdict = Literal["unknown", "pass", "warn", "blocked"]
+
+QAFindingCategory = Literal[
+    "secrets",
+    "vulnerability",
+    "dependencies",
+    "configuration",
+    "runtime",
+    "quality",
+    "tests",
+    "browser",
+]
+
+
+class QAFinding(StrictModel):
+    """One issue an inspection can point at, from a scanner or a specialist.
+
+    Findings are what the release gate reasons over. They are deliberately
+    flatter than any scanner's native record: everything that decides whether a
+    push is blocked has to be comparable across a secret scan, a dependency
+    audit, and a live probe.
+    """
+
+    id: str
+    title: str
+    severity: QASeverity = "medium"
+    category: QAFindingCategory = "vulnerability"
+    #: The check id, scanner, or specialist that produced this finding.
+    source: str = ""
+    #: Repository-relative path, or a URL for findings against a live target.
+    location: str = ""
+    line: int | None = None
+    detail: str = ""
+    remediation: str = ""
+    #: CWE identifier ("CWE-798") when the source names one.
+    cwe: str = ""
+    #: Advisory or rule identifier ("GHSA-…", "CVE-…", "B602").
+    reference: str = ""
+    confidence: Literal["high", "medium", "low"] = "medium"
+
 
 class QACheck(StrictModel):
-    """One deterministic quality, browser, or dependency check."""
+    """One deterministic quality, security, browser, or dependency check."""
 
     id: str
     label: str
-    category: Literal["quality", "tests", "browser", "dependencies"]
+    category: Literal["quality", "tests", "browser", "dependencies", "security", "runtime"]
     command: str = ""
     status: QACheckStatus = "pending"
     summary: str = ""
@@ -518,7 +566,7 @@ class QASpecialist(StrictModel):
 
 
 class QAReport(StrictModel):
-    """Persisted result shown in the QA workspace."""
+    """Persisted result shown in the Inspector workspace."""
 
     id: str
     status: QARunStatus = "pending"
@@ -530,6 +578,15 @@ class QAReport(StrictModel):
     specialists: list[QASpecialist] = Field(default_factory=list)
     summary: str = ""
     mission_id: str = ""
+    #: Which half of the inspection was asked for.
+    scan_profile: QAScanProfile = "full"
+    #: The running application the live probe was pointed at, if any.
+    target_url: str = ""
+    #: Deduplicated findings from scanners, parsed tool output, and specialists.
+    findings: list[QAFinding] = Field(default_factory=list)
+    #: The release gate's answer, and the specific reasons behind it.
+    verdict: QAVerdict = "unknown"
+    gate_reasons: list[str] = Field(default_factory=list)
 
 
 class ReviewFinding(StrictModel):

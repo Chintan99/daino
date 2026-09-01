@@ -247,14 +247,15 @@ export function killAllTerminals(): void {
 // --------------------------------------------------------------------- run
 
 /**
- * Start the preview with the first detected command.
+ * Start the app with the first detected command.
  *
- * The Preview workspace is where a command is chosen deliberately; the menu is
- * the one-keystroke path, so it uses detection and then shows that workspace so
+ * The Inspector's Live view is where a command is chosen deliberately; the menu
+ * is the one-keystroke path, so it uses detection and then shows that view so
  * the running command and URL are visible rather than implicit.
  */
 export async function startPreview(): Promise<void> {
-  ui().setActiveWorkspaceTab("preview");
+  ui().setActiveWorkspaceTab("inspector");
+  ui().setInspectorView("live");
   try {
     const detected = await api.previewDetect();
     const first = detected.commands[0];
@@ -278,14 +279,20 @@ export async function stopPreview(): Promise<void> {
   }
 }
 
+/**
+ * Run a full inspection from the menu and show it.
+ *
+ * No target URL is passed: the backend probes whatever app the Live view has
+ * running, which is what the one-keystroke path should mean.
+ */
 export async function runQA(): Promise<void> {
-  ui().setActiveWorkspaceTab("insights");
-  ui().setInsightsView("qa");
+  ui().setActiveWorkspaceTab("inspector");
+  ui().setInspectorView("scan");
   try {
     await api.qaRun();
     await queryClient.invalidateQueries({ queryKey: qk.qaLatest });
   } catch (err) {
-    window.alert(`Could not start the QA scan: ${message(err)}`);
+    window.alert(`Could not start the inspection: ${message(err)}`);
   }
 }
 

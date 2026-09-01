@@ -3,7 +3,7 @@
 import type { ComponentType } from "react";
 import { EditorWorkspace } from "../components/editor/EditorWorkspace";
 import { DesignWorkspace } from "../components/design/DesignWorkspace";
-import { PreviewWorkspace } from "../components/preview/PreviewWorkspace";
+import { InspectorWorkspace } from "../components/inspector/InspectorWorkspace";
 import { InsightsWorkspace } from "../components/insights/InsightsWorkspace";
 
 export interface WorkspaceTab {
@@ -34,17 +34,17 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     showBottomPanel: false,
   },
   {
-    id: "preview",
-    label: "PREVIEW",
-    hint: "Run the project and watch it live",
-    component: PreviewWorkspace,
+    id: "inspector",
+    label: "INSPECTOR",
+    hint: "Pre-push QA and vulnerability assessment, and the running app it probes",
+    component: InspectorWorkspace,
     showSidebar: false,
     showBottomPanel: false,
   },
   {
     id: "insights",
     label: "INSIGHTS",
-    hint: "Execution map, logs, QA, missions, and approvals",
+    hint: "Execution map, logs, missions, checkpoints, and approvals",
     component: InsightsWorkspace,
     showSidebar: false,
     showBottomPanel: false,

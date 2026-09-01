@@ -11,7 +11,7 @@ from daino.application.deployment_service import DeploymentApplicationService
 from daino.application.execution_map_service import ExecutionMapApplicationService
 from daino.application.mission_service import MissionApplicationService
 from daino.application.provider_service import ProviderApplicationService
-from daino.application.qa_service import QAApplicationService
+from daino.application.qa_service import QAApplicationService, severity_counts
 from daino.application.repository_service import RepositoryApplicationService
 from daino.application.settings_service import SettingsApplicationService
 from daino.application.verification_service import VerificationApplicationService
@@ -35,6 +35,7 @@ __all__ = [
     "ProjectContext",
     "ProviderApplicationService",
     "QAApplicationService",
+    "severity_counts",
     "RepositoryApplicationService",
     "SettingsApplicationService",
     "VerificationApplicationService",

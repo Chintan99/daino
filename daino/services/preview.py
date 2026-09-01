@@ -1,6 +1,7 @@
-"""Detect and run a project's development/preview server for the Preview tab.
+"""Detect and run a project's development server for the Inspector's Live view.
 
-This is separate from Design: Preview runs the *actual* project. Candidate
+This is separate from Design: the Live view runs the *actual* project, and the
+URL it lands on is what the Inspector's live probe is pointed at. Candidate
 commands are detected from ``package.json`` / ``pyproject.toml`` /
 ``compose.yaml``; starting one goes through the GUI's normal approval flow
 before this manager launches it. Output is captured (bounded) and the guessed

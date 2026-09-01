@@ -8,11 +8,12 @@ export type BottomTab = "terminal" | "output" | "problems" | "tests";
 export type InsightsView =
   | "map"
   | "logs"
-  | "qa"
   | "missions"
   | "checkpoints"
   | "approvals"
   | "repository";
+/** The Inspector's two halves: the pre-push scan, and the app it probes. */
+export type InspectorView = "scan" | "live";
 
 interface UIState {
   activeWorkspaceTab: string; // id from the tab registry
@@ -37,6 +38,9 @@ interface UIState {
 
   insightsView: InsightsView;
   setInsightsView: (v: InsightsView) => void;
+
+  inspectorView: InspectorView;
+  setInspectorView: (v: InspectorView) => void;
 
   /** Path of the diff most recently opened, for the agent's context chips. */
   lastDiffPath: string | null;
@@ -81,6 +85,9 @@ export const useUIStore = create<UIState>((set) => ({
 
   insightsView: "map",
   setInsightsView: (insightsView) => set({ insightsView }),
+
+  inspectorView: "scan",
+  setInspectorView: (inspectorView) => set({ inspectorView }),
 
   lastDiffPath: null,
   setLastDiffPath: (lastDiffPath) => set({ lastDiffPath }),

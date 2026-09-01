@@ -113,8 +113,12 @@ D[Ai]NO agent and one session:
 - **Design** — structured, AI-editable diagrams (architecture, flowchart, database, API flow) on a
   React Flow canvas you can also edit by hand, plus HTML/React prototypes. Design never writes
   production code directly; use **Implement Design** to generate a plan first.
-- **Preview** — runs your project's dev server (through the normal approval flow) and embeds the
-  running app.
+- **Inspector** — the pre-push check. **Scan** runs end-to-end QA and a vulnerability assessment —
+  a built-in offline audit for secrets, insecure code, and weak configuration; the project's own
+  lint/type/test commands; whichever security scanners the host has; and a non-destructive probe of
+  the running app — then answers with a release-gate verdict: safe to push, review first, or do not
+  push. **Live app** runs your project's dev server (through the normal approval flow), embeds the
+  running app, and becomes what the scan probes.
 
 See [the GUI guide](docs/gui.md) for the full feature tour.
 

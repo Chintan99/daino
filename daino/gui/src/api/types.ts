@@ -373,10 +373,45 @@ export type QAStatus =
   | "completed"
   | "cancelled";
 
+export type QASeverity = "critical" | "high" | "medium" | "low" | "info";
+export type QAVerdict = "unknown" | "pass" | "warn" | "blocked";
+export type QAScanProfile = "full" | "quality" | "security";
+
+export type QAFindingCategory =
+  | "secrets"
+  | "vulnerability"
+  | "dependencies"
+  | "configuration"
+  | "runtime"
+  | "quality"
+  | "tests"
+  | "browser";
+
+export interface QAFinding {
+  id: string;
+  title: string;
+  severity: QASeverity;
+  category: QAFindingCategory;
+  source: string;
+  location: string;
+  line: number | null;
+  detail: string;
+  remediation: string;
+  cwe: string;
+  reference: string;
+  confidence: "high" | "medium" | "low";
+}
+
 export interface QACheck {
   id: string;
   label: string;
-  category: "quality" | "tests" | "browser" | "dependencies";
+  category:
+    | "quality"
+    | "tests"
+    | "browser"
+    | "dependencies"
+    | "security"
+    | "runtime";
   command: string;
   status: QAStatus;
   summary: string;
@@ -407,6 +442,18 @@ export interface QAReport {
   specialists: QASpecialist[];
   summary: string;
   mission_id: string;
+  scan_profile: QAScanProfile;
+  target_url: string;
+  findings: QAFinding[];
+  verdict: QAVerdict;
+  gate_reasons: string[];
+}
+
+/** What the Inspector asks the backend to run. */
+export interface RunInspectionRequest {
+  profile: QAScanProfile;
+  target_url: string;
+  authorize_remote_target: boolean;
 }
 
 export interface QALatest {

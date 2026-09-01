@@ -35,7 +35,9 @@ import type {
   ProviderTestResult,
   QAHistory,
   QALatest,
+  QAScanProfile,
   RepositoryInfo,
+  RunInspectionRequest,
   SearchResult,
   SessionList,
   SessionMessages,
@@ -274,7 +276,16 @@ export const api = {
     request<QAHistory>("GET", `/api/qa/history${qs({ limit })}`),
   qaReport: (id: string) =>
     request<QALatest>("GET", `/api/qa/reports/${encodeURIComponent(id)}`),
-  qaRun: () => request<{ running: boolean }>("POST", "/api/qa/run", {}),
+  qaRun: (options: Partial<RunInspectionRequest> = {}) =>
+    request<{ running: boolean; profile: QAScanProfile; target_url: string }>(
+      "POST",
+      "/api/qa/run",
+      {
+        profile: options.profile ?? "full",
+        target_url: options.target_url ?? "",
+        authorize_remote_target: options.authorize_remote_target ?? false,
+      },
+    ),
   qaCancel: () =>
     request<{ cancelled: boolean }>("POST", "/api/qa/cancel", {}),
   missions: (limit = 100) =>

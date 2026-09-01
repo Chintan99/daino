@@ -45,6 +45,19 @@ local addresses, resolves and checks hostnames before connecting, and revalidate
 Downloads and extracted text are bounded, binary responses are rejected, scripts/styles are
 removed from HTML, and page text is labeled as untrusted data in the model observation.
 
+The Inspector's vulnerability assessment is subject to the same boundaries as everything else. The
+offline audit only reads the working tree — it never executes project code, resolves a name, or
+shells out — and it reports a matched credential with the value masked, so a report shared with a
+teammate does not become the leak. Third-party scanners are run through the same runtime and command
+policy as any other check, and none of them is installed on your behalf.
+
+The live probe is deliberately narrow. It issues only `GET`, `HEAD`, and `OPTIONS`, sends no
+payload, follows no redirect, and reads a bounded prefix of each response. Its target must resolve
+entirely to loopback, private, or link-local address space; anything else is refused until the
+caller asserts ownership, and that assertion is written to the audit log as
+`InspectionRemoteTargetAuthorized`. Every request it makes is listed in the check's own output, so
+what was probed is reviewable after the fact.
+
 QA sub-agents are read-only by construction. Their action schema exposes only repository reads,
 search, globbing, directory listing, and finish operations, while `EditTools` also enforces
 read-only mode underneath. Automated QA commands are selected by D[Ai]NO rather than the model and

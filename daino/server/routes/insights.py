@@ -14,10 +14,14 @@ from dataclasses import asdict
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select
 
+from daino.application.qa_service import severity_counts
 from daino.application.view_models import ExecutionPrompt, ExecutionTrace
+from daino.schemas import QAReport, QAScanProfile
 from daino.security import redact
+from daino.security.probe import target_is_local
 from daino.server.deps import get_state
 from daino.server.state import GuiState
 
@@ -122,6 +126,22 @@ def map_trace(state: Annotated[GuiState, Depends(get_state)], mission_id: str) -
 # ---------------------------------------------------------------------- QA
 
 
+class RunInspectionRequest(BaseModel):
+    """What the Inspector asks for when it starts a scan.
+
+    Every field is optional so an older client (and ``POST /api/qa/run`` with an
+    empty body) still starts the same comprehensive scan it always did.
+    """
+
+    #: "full", "quality", or "security".
+    profile: QAScanProfile = "full"
+    #: A running application to probe. Empty means "static evidence only".
+    target_url: str = ""
+    #: The user's confirmation that a non-loopback target belongs to them.
+    #: Ignored for loopback and private-network addresses, which never need it.
+    authorize_remote_target: bool = False
+
+
 def _qa_running(state: GuiState) -> bool:
     task = state.qa_task
     return isinstance(task, asyncio.Task) and not task.done()
@@ -157,46 +177,94 @@ def qa_report(state: Annotated[GuiState, Depends(get_state)], report_id: str) ->
 
 
 @router.post("/qa/run")
-async def qa_run(state: Annotated[GuiState, Depends(get_state)]) -> dict:
-    """Start a QA scan in the background and return immediately.
+async def qa_run(
+    state: Annotated[GuiState, Depends(get_state)],
+    body: RunInspectionRequest | None = None,
+) -> dict:
+    """Start an inspection in the background and return immediately.
 
-    A scan runs a whole team of reviewers plus the project's own test and audit
-    commands, which is far longer than a request should be held open, so the GUI
-    starts it here and follows along through ``/api/qa/latest``. Checks that
-    would need network approval are skipped rather than silently granted.
+    A scan runs a whole team of reviewers plus the project's own test, audit,
+    and security commands, which is far longer than a request should be held
+    open, so the GUI starts it here and follows along through
+    ``/api/qa/latest``. Checks that would need network approval are skipped
+    rather than silently granted.
+
+    When no target URL is supplied the running preview process is used, so the
+    common case — start the app in the Live view, then inspect — needs no extra
+    input from the user.
     """
     if _qa_running(state):
         raise HTTPException(status_code=409, detail="A QA run is already in progress")
+    request = body or RunInspectionRequest()
+    target_url = request.target_url.strip() or _running_preview_url(state)
+    if target_url and not target_is_local(target_url) and not request.authorize_remote_target:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"{target_url} is not a loopback or private-network address. Confirm you own "
+                "the target before probing it."
+            ),
+        )
+    if target_url and not target_is_local(target_url):
+        # An operator-authorised scan of a remote host is exactly the decision
+        # an audit log exists to record.
+        state.audit.emit("InspectionRemoteTargetAuthorized", target=target_url)
 
-    def on_update(report) -> None:
+    def on_update(report: QAReport) -> None:
         state.qa_live = report
 
     async def run() -> None:
         # A full scan is the longest thing D[Ai]NO does, so it is exactly the
         # work that must not be interrupted by the host sleeping — and exactly
         # the result worth a notification when it lands.
-        async with state.missions.attention.turn("QA scan") as attention:
+        async with state.missions.attention.turn("Inspection") as attention:
             try:
-                report = await state.qa.run(on_update=on_update)
-                state.qa_live = report
-                failed = sum(item.status == "failed" for item in report.checks) + sum(
-                    item.status == "failed" for item in report.specialists
+                report = await state.qa.run(
+                    scan_profile=request.profile,
+                    target_url=target_url,
+                    authorize_remote_target=request.authorize_remote_target,
+                    on_update=on_update,
                 )
-                if failed:
-                    attention.failed(f"QA finished with {failed} failed check(s)")
+                state.qa_live = report
+                headline = _verdict_notification(report)
+                if report.verdict == "blocked":
+                    attention.failed(headline)
                 else:
-                    attention.completed("QA finished with no failed checks")
+                    attention.completed(headline)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - a crashed scan must not kill the server
                 # The service records orchestration failures in the report
                 # itself, so reaching here means something unexpected; keep it
                 # in the audit log.
-                attention.failed(f"QA scan crashed: {type(exc).__name__}")
+                attention.failed(f"Inspection crashed: {type(exc).__name__}")
                 state.audit.emit("QARunCrashed", error=f"{type(exc).__name__}: {exc}")
 
     state.qa_task = asyncio.create_task(run())
-    return {"running": True}
+    return {"running": True, "profile": request.profile, "target_url": target_url}
+
+
+def _running_preview_url(state: GuiState) -> str:
+    """The app the user already started, so the probe needs no second answer."""
+    preview = getattr(state, "preview", None)
+    current = getattr(preview, "current", None) if preview is not None else None
+    if current is None or not getattr(current, "running", False):
+        return ""
+    return str(getattr(current, "url", "") or "")
+
+
+def _verdict_notification(report: QAReport) -> str:
+    """One line that says whether this repository can be pushed."""
+    counts = severity_counts(report.findings)
+    tally = ", ".join(f"{count} {level}" for level, count in counts.items() if count)
+    failed = sum(item.status == "failed" for item in report.checks)
+    if report.verdict == "blocked":
+        return f"Inspection BLOCKED — {tally or f'{failed} failed check(s)'}"
+    if report.verdict == "warn":
+        return f"Inspection needs review — {tally or f'{failed} failed check(s)'}"
+    if report.verdict == "pass":
+        return "Inspection passed — no critical or high findings"
+    return "Inspection finished without a verdict"
 
 
 @router.post("/qa/cancel")

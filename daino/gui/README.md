@@ -49,5 +49,5 @@ npm run preview
 - `src/ws/` — WebSocket hooks: one shared session socket and per-terminal sockets.
 - `src/tabs/` — a tab registry so new workspace tabs (e.g. a future **PLAN** tab)
   can be added without refactoring.
-- `src/components/` — `AppShell` and the CODE / DESIGN / PREVIEW workspaces, the
+- `src/components/` — `AppShell` and the CODE / DESIGN / INSPECTOR / INSIGHTS workspaces, the
   persistent right-side Agent panel, the bottom panel, and the status/top bars.

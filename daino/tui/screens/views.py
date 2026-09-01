@@ -35,6 +35,7 @@ from daino.application import (
     ProviderApplicationService,
     RepositoryApplicationService,
     SettingsApplicationService,
+    severity_counts,
 )
 from daino.application.view_models import (
     ExecutionTrace,
@@ -118,6 +119,15 @@ class MissionsView(ViewPanel):
             screen.set_active_mission(mission_id)
 
 
+#: The release gate, rendered for a terminal that has no banner to put it in.
+_VERDICTS = {
+    "pass": "[green]SAFE TO PUSH[/]",
+    "warn": "[yellow]REVIEW BEFORE PUSH[/]",
+    "blocked": "[red]DO NOT PUSH[/]",
+    "unknown": "[dim]NO VERDICT[/]",
+}
+
+
 class QAView(ViewPanel):
     """Live progress and persisted evidence for a comprehensive QA run."""
 
@@ -188,10 +198,15 @@ class QAView(ViewPanel):
         self.query_one("#run-qa", Button).disabled = report.status == "running"
         failed = sum(item.status == "failed" for item in report.checks)
         skipped = sum(item.status == "skipped" for item in report.checks)
+        # The verdict leads: it is the one line that decides whether to push.
+        counts = severity_counts(report.findings)
+        tally = ", ".join(f"{count} {level}" for level, count in counts.items() if count)
         self.query_one("#qa-state", Static).update(
-            f"{report.id}  •  {report.started_at.strftime('%Y-%m-%d %H:%M')}  •  "
+            f"{_VERDICTS[report.verdict]}  •  {report.id}  •  "
+            f"{report.started_at.strftime('%Y-%m-%d %H:%M')}  •  "
             f"{report.status.replace('_', ' ').title()}  •  "
-            f"{', '.join(report.project_profile)}  •  {failed} failed  •  {skipped} skipped"
+            f"{', '.join(report.project_profile)}  •  {tally or 'no findings'}  •  "
+            f"{failed} failed  •  {skipped} skipped"
         )
         specialists = self.query_one("#qa-specialists", DataTable)
         specialists.clear()

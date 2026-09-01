@@ -25,6 +25,7 @@ from daino.application import (
     RepositoryApplicationService,
     SettingsApplicationService,
     VerificationApplicationService,
+    severity_counts,
 )
 from daino.events import (
     AgentRoleChanged,
@@ -504,9 +505,7 @@ class WorkspaceScreen(Screen[None]):
             self._set_activity(self._tool_activity(event.tool), event.summary)
             if self.verbose:
                 context.add_activity(f"{now}  {event.summary[:30]}")
-                conversation.update_pending(
-                    f"{event.tool.removeprefix('agent.')} {event.summary}"
-                )
+                conversation.update_pending(f"{event.tool.removeprefix('agent.')} {event.summary}")
             else:
                 conversation.update_pending("working")
         elif isinstance(event, ToolProgress):
@@ -1128,9 +1127,7 @@ class WorkspaceScreen(Screen[None]):
                 self.notify(f"Reasoning effort: {self.providers.session_effort(self.session_id)}")
             else:
                 try:
-                    profile, effort = self.providers.set_session_effort(
-                        self.session_id, arguments
-                    )
+                    profile, effort = self.providers.set_session_effort(self.session_id, arguments)
                     self.notify(f"Reasoning effort for {profile}: {effort} (this session)")
                 except ValueError as exc:
                     self.notify(str(exc), severity="warning")
@@ -1316,9 +1313,7 @@ class WorkspaceScreen(Screen[None]):
         self.active_status = "Working"
         self._set_activity("thinking", "understanding request")
         self.request_refresh()
-        await conversation.begin_pending(
-            "understanding request…" if self.verbose else "working…"
-        )
+        await conversation.begin_pending("understanding request…" if self.verbose else "working…")
         started = monotonic()
         try:
             outcome = await self.missions.chat(
@@ -1424,9 +1419,7 @@ class WorkspaceScreen(Screen[None]):
             if self.active_status == "Failed":
                 team_status = "failed"
             await conversation.clear_reasoning()
-            self.query_one("#logs-view", LogsView).finish_activity(
-                f"Team prompt {team_status}"
-            )
+            self.query_one("#logs-view", LogsView).finish_activity(f"Team prompt {team_status}")
             self.request_refresh()
 
     @work(exclusive=True, group="mission")
@@ -1499,9 +1492,7 @@ class WorkspaceScreen(Screen[None]):
             self.active_status = previous_status if self.active_mission_id else "Ready"
             if self.active_mission_id and previous_status in {"Running", "Verifying"}:
                 self._set_activity(*previous_activity)
-            self.query_one("#logs-view", LogsView).finish_activity(
-                f"Answer {answer_status}"
-            )
+            self.query_one("#logs-view", LogsView).finish_activity(f"Answer {answer_status}")
             self.request_refresh()
 
     @work(exclusive=True, group="verification")
@@ -1545,13 +1536,17 @@ class WorkspaceScreen(Screen[None]):
             )
             failed = sum(item.status == "failed" for item in report.checks)
             failed += sum(item.status == "failed" for item in report.specialists)
+            blocked = report.verdict == "blocked"
+            counts = severity_counts(report.findings)
+            tally = ", ".join(f"{count} {level}" for level, count in counts.items() if count)
             self.notify(
-                f"QA completed with {failed} failed check(s)." if failed else "QA completed.",
-                severity="warning" if failed else "information",
+                f"Inspection {report.verdict.upper()}"
+                + (f" — {tally}." if tally else f" — {failed} failed check(s)."),
+                severity="error" if blocked else ("warning" if failed else "information"),
             )
             self._set_activity(
-                "failed" if failed else "completed",
-                f"{failed} failed checks" if failed else "QA complete",
+                "failed" if blocked or failed else "completed",
+                f"verdict {report.verdict}" + (f", {tally}" if tally else ""),
             )
         except asyncio.CancelledError:
             self.notify("QA cancelled; completed evidence was preserved.", severity="warning")

@@ -3,7 +3,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { usePreviewDetect, usePreviewStatus, qk } from "../../api/hooks";
 import { api, ApiError } from "../../api/client";
 
-export function PreviewWorkspace() {
+/**
+ * Runs the project and shows it, as the Preview workspace used to.
+ *
+ * It lives under the Inspector because a running app is the other half of an
+ * end-to-end inspection: the Scan view's live probe points at whatever this
+ * view started, so "see it working" and "check what it exposes" are the same
+ * two clicks instead of two unrelated workspaces.
+ */
+export function LiveAppView() {
   const qc = useQueryClient();
   const { data: detect } = usePreviewDetect();
   const { data: status } = usePreviewStatus(2000);
@@ -37,10 +45,10 @@ export function PreviewWorkspace() {
       await qc.invalidateQueries({ queryKey: qk.previewStatus });
     } catch (err) {
       if (err instanceof ApiError && err.status === 403)
-        window.alert("Preview command was denied by the backend policy.");
+        window.alert("The command was denied by the backend policy.");
       else
         window.alert(
-          `Failed to start preview: ${err instanceof Error ? err.message : String(err)}`,
+          `Failed to start the app: ${err instanceof Error ? err.message : String(err)}`,
         );
     } finally {
       setBusy(false);
@@ -73,7 +81,9 @@ export function PreviewWorkspace() {
           style={{ maxWidth: 260 }}
           disabled={running}
         >
-          {commands.length === 0 && <option value="">no commands detected</option>}
+          {commands.length === 0 && (
+            <option value="">no commands detected</option>
+          )}
           {commands.map((c) => (
             <option key={c.command} value={c.command}>
               {c.label}
@@ -117,6 +127,11 @@ export function PreviewWorkspace() {
           ↗
         </button>
         <span className="grow" />
+        {running && (
+          <span className="muted" style={{ fontSize: "var(--fs-11)" }}>
+            SCAN will probe this URL
+          </span>
+        )}
         <span className="badge">{running ? "running" : "stopped"}</span>
       </div>
 
@@ -125,13 +140,13 @@ export function PreviewWorkspace() {
           key={reloadKey}
           className="preview-frame"
           src={url}
-          title="Preview"
+          title="Live app"
         />
       ) : (
         <div className="empty" style={{ margin: "auto" }}>
           {commands.length === 0
-            ? "No runnable commands were detected for this project."
-            : "Choose a command and press Start to preview your app."}
+            ? "No runnable command was detected for this project."
+            : "Choose a command and press Start. The running app becomes the Scan view's live target."}
         </div>
       )}
 

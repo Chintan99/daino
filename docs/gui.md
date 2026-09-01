@@ -31,9 +31,9 @@ the terminal client, so the two read as one product.
 |---|---|
 | **File** | New file/folder, open by path, save, save all, revert, close editors, copy path, re-read config, new conversation |
 | **Edit** | Undo/redo, find, replace, find in files, toggle comment, format, fold/unfold, select all |
-| **Go** | Go to file/line/symbol, next/previous editor, Explorer, Search, Source Control, execution map, QA |
+| **Go** | Go to file/line/symbol, next/previous editor, Explorer, Search, Source Control, execution map, inspection report |
 | **View** | Switch workspace, toggle sidebar/panel/agent, choose panel view, interface zoom |
-| **Run** | Start/stop preview, run/cancel QA, index the repository, stop the running agent turn |
+| **Run** | Start/stop the app, run/cancel an inspection, index the repository, stop the running agent turn |
 | **Terminal** | New terminal, clear, switch shell, kill one or all, show panel |
 | **Settings** | Preferences and project/agent configuration (below) |
 | **Help** | Documentation, API reference, keyboard shortcuts, about |
@@ -48,11 +48,14 @@ Items grey out when they cannot act rather than failing after the click.
   there; architecture diagrams (nodes and edges) share the same sheet. A **left panel lists canvases
   and the folder's files**. Manual and agent edits mutate the same document under
   `.daino/designs/<id>/design.json`. See [the visual editor](#the-visual-html-editor).
-- **Preview** — runs your project's dev server (detected from `package.json` / `pyproject.toml` /
-  `compose.yaml`, started through the approval flow) and embeds the running app.
+- **Inspector** — the pre-production check, in two views. **Scan** runs end-to-end QA and a
+  vulnerability assessment and answers one question: can this be pushed? **Live app** runs your
+  project's dev server (detected from `package.json` / `pyproject.toml` / `compose.yaml`, started
+  through the approval flow), embeds the running app, and becomes the scan's live target. See
+  [the Inspector](#the-inspector).
 - **Insights** — the browser counterpart of the TUI's views behind one segmented control: per-prompt
-  **execution map** (models, tools, tests, timing, tokens, cost), live and recorded **logs**, **QA**
-  scans, **missions** and evidence, **checkpoints**, **approvals**, and **repository** intelligence.
+  **execution map** (models, tools, tests, timing, tokens, cost), live and recorded **logs**,
+  **missions** and evidence, **checkpoints**, **approvals**, and **repository** intelligence.
 
 ## The agent panel
 
@@ -112,6 +115,69 @@ The filename opens the file, **diff** opens that file's diff beside the code, **
 them, and files past the first three collapse behind *Show N more*. A file edited twice is one row
 with totals summed; a turn whose verification failed is marked `unverified`. This is the same summary
 the TUI prints, so the clients never disagree.
+
+## The Inspector
+
+The Inspector answers the question you ask before a production push: *is this safe to ship?* It runs
+without a model configured — the offline audit, the project's own commands, and the live probe are
+all deterministic — and uses one when you have one, for the reviewer specialists.
+
+### Scan
+
+Pick a profile, optionally give it a live target, and press **Run inspection**.
+
+| Profile | What it runs |
+|---|---|
+| **Full** | Everything below |
+| **Quality** | Lint, types, tests, Playwright, and the architecture / code-quality / frontend / backend reviewers |
+| **Security** | The vulnerability assessment only: built-in audit, SAST, dependency and secret scanners, live probe, and the security / threat-model / supply-chain reviewers |
+
+Evidence comes from four places, and each appears in the report as its own check:
+
+- **Built-in security audit** — no tools required. Reads the working tree once and applies a fixed
+  rule table: credential shapes (with placeholders and environment lookups discarded), insecure code
+  patterns per language (shell injection, unsafe deserialization, disabled TLS verification, dynamic
+  evaluation, string-built SQL, DOM injection), and weak configuration (container privilege, root
+  images, open ingress CIDRs, public buckets, CI workflows that mix untrusted input with secrets).
+- **The project's own commands** — lint, types, tests, build, Playwright.
+- **Installed scanners** — `bandit`, `gitleaks`, `semgrep`, `osv-scanner`, `trivy`, `pip-audit`,
+  `npm audit`, `cargo-audit`, `govulncheck`. None is a dependency of Daino: whichever are on the
+  host are run, and the rest are listed as skipped so the report never implies coverage it lacks.
+- **The live probe** — `GET`/`HEAD`/`OPTIONS` against a running app. Security headers, cookie flags,
+  exposed paths (`/.env`, `/.git/config`, `/actuator/env`, …), error pages that leak stack traces,
+  reflected-origin CORS, and advertised HTTP methods. It never sends a payload and never mutates
+  state.
+
+Everything they produce is normalised into one **findings** list — severity, CWE, location,
+remediation, and the source that reported it. One weakness seen by two sources is merged into one
+row that credits both.
+
+### The verdict
+
+The report leads with a release gate, and states every reason behind it:
+
+| Verdict | When |
+|---|---|
+| **Safe to push** | No confirmed critical or high finding, and no failing test or quality check |
+| **Review before push** | High or medium findings to triage, failing quality checks, or security evidence that could not be collected |
+| **Do not push** | A confirmed critical finding, a failing test, or a cluster of high findings |
+
+The gate is deterministic — it reads findings and checks, never a model's opinion — so the same
+evidence always produces the same answer. Low-confidence findings (a credential shape inside a test
+fixture, for instance) stay in the report but can never be what blocks a release.
+
+When the scan lands, your desktop gets a notification carrying the verdict, the browser tab is
+marked if you are looking elsewhere, and the **INSPECTOR** tab keeps a coloured dot showing whether
+this checkout is currently cleared to push.
+
+### Live app
+
+Detects runnable commands from `package.json`, `pyproject.toml`, and `compose.yaml`, starts one
+through the normal approval flow, and embeds it. While it runs, its URL prefills the scan's live
+target, so "see it working" and "check what it exposes" are the same two clicks.
+
+Probing is limited to loopback and private-network addresses. Anything else has to be confirmed as
+yours before the button will run, and the confirmation is audited.
 
 ## The visual HTML editor
 
@@ -250,7 +316,8 @@ menu. Commands that map to a browser action open the matching view:
 | `/files` | Code workspace ▸ Explorer |
 | `/diff` | Code workspace ▸ Source Control |
 | `/logs`, `/map` | Insights ▸ logs / execution map |
-| `/qa`, `/missions`, `/checkpoints` | Insights ▸ the matching view |
+| `/qa`, `/inspect` | Inspector ▸ Scan |
+| `/missions`, `/checkpoints` | Insights ▸ the matching view |
 
 Everything else — `/ask`, `/plan`, `/build`, `/run`, `/team`, `/review`, `/test`, `/index`,
 `/playbooks`, `/deploy`, `/status`, `/tasks`, `/resume`, `/checkpoint`, `/restore`, `/new` — is sent
@@ -324,8 +391,10 @@ changeset still reports everything (it is built server-side).
 - **Terminals are reaped** — a shell unattached for ten minutes is closed, and a project is capped at
   24.
 - File writes use optimistic concurrency (content hash) and reject stale writes with a conflict
-  warning. QA scans started from the browser skip network-approval checks rather than silently
-  granting them. Everything Insights shows is built from redacted, structured audit records.
+  warning. Inspections started from the browser skip network-approval checks rather than silently
+  granting them, and the live probe refuses any target outside loopback or private address space
+  until you confirm you own it — a confirmation that is written to the audit log. Everything
+  Insights shows is built from redacted, structured audit records.
 
 ## Documentation and API reference
 

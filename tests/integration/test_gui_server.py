@@ -243,6 +243,21 @@ def test_insight_views_are_served(client: TestClient) -> None:
     assert client.post("/api/qa/cancel").json() == {"cancelled": False}
 
 
+def test_the_inspector_refuses_to_probe_a_host_the_user_has_not_claimed(
+    client: TestClient,
+) -> None:
+    """Pointing the live probe at someone else's server takes a deliberate act."""
+    refused = client.post(
+        "/api/qa/run",
+        json={"profile": "security", "target_url": "https://example.com"},
+    )
+
+    assert refused.status_code == 403
+    assert "loopback" in refused.json()["detail"]
+    # Refusing must not have started anything.
+    assert client.get("/api/qa/latest").json()["running"] is False
+
+
 def test_execution_map_records_a_prompt(client: TestClient) -> None:
     """A mission shows up in the map index and resolves to a trace."""
     from daino.schemas import ProjectMode
@@ -401,9 +416,7 @@ def test_settings_read_and_patch(client: TestClient) -> None:
     settings.models["strong-cloud"] = ModelProfileConfig(
         provider="local-ollama", model="anthropic/claude-sonnet-4"
     )
-    single = client.patch(
-        "/api/settings", json={"routing": {"debugger": "strong-cloud"}}
-    ).json()
+    single = client.patch("/api/settings", json={"routing": {"debugger": "strong-cloud"}}).json()
     assert single["routing"]["debugger"] == "strong-cloud"
     assert single["routing"]["builder"] == "local-ollama"
 
@@ -431,13 +444,9 @@ def test_settings_read_and_patch(client: TestClient) -> None:
 
     # Unknown names are rejected rather than written.
     assert client.patch("/api/settings", json={"default_provider": "nope"}).status_code == 400
+    assert client.patch("/api/settings", json={"routing": {"architect": "nope"}}).status_code == 400
     assert (
-        client.patch("/api/settings", json={"routing": {"architect": "nope"}}).status_code
-        == 400
-    )
-    assert (
-        client.patch("/api/settings", json={"routing": {"nope": "local-ollama"}}).status_code
-        == 400
+        client.patch("/api/settings", json={"routing": {"nope": "local-ollama"}}).status_code == 400
     )
     assert client.patch("/api/settings", json={"runtime": "vm"}).status_code == 422
 
@@ -467,9 +476,7 @@ def test_foreign_origin_is_refused_everywhere(client: TestClient) -> None:
     created = client.post("/api/terminals", json={}).json()
     for path in ("/ws/session/latest", f"/ws/terminal/{created['id']}"):
         with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(
-                path, headers={"host": LOCAL_HOST, **evil}
-            ):
+            with client.websocket_connect(path, headers={"host": LOCAL_HOST, **evil}):
                 pass  # pragma: no cover - the handshake never completes
 
     # The IDE's own page, and non-browser clients, are unaffected.
@@ -477,8 +484,7 @@ def test_foreign_origin_is_refused_everywhere(client: TestClient) -> None:
     assert client.get("/api/workspace").status_code == 200
     # The Vite dev server is allowed, so `npm run dev` still works.
     assert (
-        client.get("/api/workspace", headers={"origin": "http://localhost:5173"}).status_code
-        == 200
+        client.get("/api/workspace", headers={"origin": "http://localhost:5173"}).status_code == 200
     )
 
 
@@ -574,8 +580,7 @@ def test_provider_form_test_and_save(client: TestClient) -> None:
 
     # A nameless provider is refused before anything is written.
     assert (
-        client.post("/api/settings/providers", json={**unreachable, "name": " "}).status_code
-        == 400
+        client.post("/api/settings/providers", json={**unreachable, "name": " "}).status_code == 400
     )
 
 
@@ -694,8 +699,7 @@ def test_the_browser_can_leave_the_session_unpinned(client: TestClient) -> None:
     assert providers.session_profile(session) == ""
 
     assert (
-        client.post(f"/api/sessions/{session}/model", json={"profile": "nope"}).status_code
-        == 400
+        client.post(f"/api/sessions/{session}/model", json={"profile": "nope"}).status_code == 400
     )
 
 

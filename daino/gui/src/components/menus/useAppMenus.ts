@@ -248,10 +248,10 @@ export function useAppMenus(): MenuDefinition[] {
         },
         {
           type: "item",
-          label: "QA report",
+          label: "Inspection report",
           onSelect: () => {
-            cmd.openWorkspace("insights");
-            ui.setInsightsView("qa");
+            cmd.openWorkspace("inspector");
+            ui.setInspectorView("scan");
           },
         },
       ],
@@ -327,19 +327,19 @@ export function useAppMenus(): MenuDefinition[] {
       items: [
         {
           type: "item",
-          label: "Start preview",
+          label: "Start app",
           hint: "Uses the first detected run command",
           onSelect: () => void cmd.startPreview(),
         },
-        { type: "item", label: "Stop preview", onSelect: () => void cmd.stopPreview() },
+        { type: "item", label: "Stop app", onSelect: () => void cmd.stopPreview() },
         sep,
         {
           type: "item",
-          label: "Run QA scan",
-          hint: "Architecture, security, quality, tests, dependencies",
+          label: "Run inspection",
+          hint: "QA, vulnerability assessment, and a pre-push verdict",
           onSelect: () => void cmd.runQA(),
         },
-        { type: "item", label: "Cancel QA scan", onSelect: () => void cmd.cancelQA() },
+        { type: "item", label: "Cancel inspection", onSelect: () => void cmd.cancelQA() },
         sep,
         {
           type: "item",

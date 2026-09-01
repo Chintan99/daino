@@ -1,4 +1,4 @@
-"""Preview (dev-server) detection and lifecycle for the Preview workspace."""
+"""Dev-server detection and lifecycle for the Inspector's Live app view."""
 
 from __future__ import annotations
 

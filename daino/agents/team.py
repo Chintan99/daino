@@ -46,9 +46,11 @@ from daino.schemas import (
 from daino.tools import ActionExecutor, EditTools
 from daino.tools.editing import patterns_overlap
 
-#: Ceiling on roster size. A team larger than this is a planning failure rather
-#: than a real division of labour, and every member costs a full conversation.
-MAX_TEAM_MEMBERS = 8
+#: Ceiling on roster size. Every member costs a full conversation, so this is
+#: mostly a guard against a model inventing work rather than dividing it. The
+#: bound is set by the largest roster Daino itself builds: a full inspection of
+#: a full-stack project fields nine reviewers plus a summarizer.
+MAX_TEAM_MEMBERS = 10
 
 #: Notified as each member finishes, so a UI can stream progress per member.
 OnMemberCallback = Callable[[TeamMemberOutcome], None]

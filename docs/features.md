@@ -23,7 +23,7 @@ commands. The table below is a map of the complete feature set and where to lear
 | Browser IDE | Monaco editor, file explorer/search, source control, terminal, agent panel, and shared sessions | [Browser IDE](gui.md) |
 | Design workspace | Creates and edits architecture, flowchart, database, API-flow, UI, and prototype artifacts on a shared canvas | [GUI: Design](gui.md#workspaces-top-tabs) |
 | Visual HTML editor | Preview, edit, split, and source modes, with viewport controls and agent-assisted styling | [GUI: visual editing](gui.md#the-visual-html-editor) |
-| Project preview | Detects and runs a development server, then embeds the actual app | [GUI: workspaces](gui.md#workspaces-top-tabs) |
+| Project preview | Detects and runs a development server, then embeds the actual app, and makes it the inspection's live target | [GUI: live app](gui.md#live-app) |
 | Headless CLI | Supports scripts and CI with structured verification, repository queries, mission controls, and evidence export | [CLI reference](cli-reference.md) |
 
 ## Planning, teams, and durability
@@ -33,6 +33,8 @@ commands. The table below is a map of the complete feature set and where to lear
 | Isolated missions | Compiles requirements, asks for plan approval, edits a Git worktree, verifies, reviews, and records evidence | [Missions](missions.md) |
 | Parallel sub-agents | Splits work into dependency waves with non-overlapping write scopes and read-only specialist roles | [TUI: teams](tui.md#teams-of-sub-agents) |
 | Project QA | Combines deterministic tests, linters, browser tests, dependency scans, and parallel read-only specialists | [TUI: QA](tui.md#quality-assurance) |
+| Vulnerability assessment | Offline audit for secrets, insecure code, and weak configuration; installed SAST and dependency scanners; a non-destructive probe of the running app | [GUI: the Inspector](gui.md#the-inspector) |
+| Release gate | One deterministic verdict — safe to push, review first, or do not push — with every reason it depended on | [GUI: the verdict](gui.md#the-verdict) |
 | Sessions | Persists conversation history, selected context, current plans, model choice, and events per repository | [TUI: sessions](tui.md#sessions-and-context), [GUI: sessions](gui.md#sessions) |
 | Checkpoints and restore | Archives the working tree before edits and supports reviewed recovery without automatic pushes | [CLI reference](cli-reference.md#memory-and-checkpoints) |
 | Playbooks | Loads validated, versioned engineering workflows from built-ins and `.daino/playbooks` | [Playbooks](playbooks.md) |

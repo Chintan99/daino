@@ -202,14 +202,24 @@ Teams cap at eight members, and deployment is deliberately not a team role.
 
 ## Quality assurance
 
-The **QA** tab (or `/qa run`) runs a repository-wide, read-only audit. D[Ai]NO detects the project
-stacks and collects deterministic evidence — configured lint/type/test/build commands, Playwright
-e2e tests when present, and dependency audits (`npm`/`pnpm`/`yarn`/`bun`, bundled `pip-audit`,
-installed `cargo-audit`/`govulncheck`). Unavailable scanners are shown as skipped; nothing is
-installed silently. Then architecture, security, code-quality, and detected frontend/backend
-specialists run concurrently (read/search tools only — they cannot edit or run commands), and a
-summarizer produces the severity-ordered consolidated report. Reports are saved under `.daino/qa/`;
-the **Saved scans** table reloads any prior run.
+The **QA** tab (or `/qa run`) runs a repository-wide, read-only audit *and* a vulnerability
+assessment. D[Ai]NO detects the project stacks and collects deterministic evidence — configured
+lint/type/test/build commands, Playwright e2e tests when present, dependency audits
+(`npm`/`pnpm`/`yarn`/`bun`, bundled `pip-audit`, installed `cargo-audit`/`govulncheck`), and
+whichever security scanners the host has (`bandit`, `gitleaks`, `semgrep`, `osv-scanner`, `trivy`).
+A built-in offline audit runs regardless of what is installed: credential shapes, insecure code
+patterns, and weak container/IaC/CI configuration. Unavailable scanners are shown as skipped;
+nothing is installed silently.
+
+Then architecture, application-security, threat-model, supply-chain, code-quality, and detected
+frontend/backend specialists run concurrently (read/search tools only — they cannot edit or run
+commands), and a summarizer produces the severity-ordered consolidated report. Everything is folded
+into one findings list and a deterministic **release-gate verdict** — pass, review, or blocked —
+which the completion notification carries. Reports are saved under `.daino/qa/`; the **Saved scans**
+table reloads any prior run.
+
+The live probe of a running application is browser-only; the terminal client has no app to point it
+at. See [the Inspector](gui.md#the-inspector).
 
 ## Providers
 

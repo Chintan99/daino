@@ -44,7 +44,12 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "/team", description: "Split work across parallel sub-agents", usage: "<instruction>" },
   { name: "/review", description: "Review the active mission changes" },
   { name: "/test", description: "Run verification", usage: "[targeted|failed|full|command]" },
-  { name: "/qa", description: "Open or run comprehensive project QA", usage: "[run]" },
+  {
+    name: "/qa",
+    description: "Open or run the Inspector's QA and vulnerability assessment",
+    usage: "[run]",
+  },
+  { name: "/inspect", description: "Open the Inspector's pre-push scan" },
   { name: "/status", description: "Show active project and mission status" },
   { name: "/missions", description: "Open the mission browser" },
   { name: "/tasks", description: "List crash-safe unfinished tasks" },
@@ -138,7 +143,9 @@ export function runGuiSlashCommand(raw: string): boolean {
       insights("map");
       return true;
     case "/qa":
-      insights("qa");
+    case "/inspect":
+      ui.setActiveWorkspaceTab("inspector");
+      ui.setInspectorView("scan");
       return true;
     case "/missions":
       insights("missions");
