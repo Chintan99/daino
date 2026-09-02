@@ -162,6 +162,13 @@ class TaskSpec(StrictModel):
     assigned_model: str | None = None
     attempt_count: int = 0
     evidence: list[str] = Field(default_factory=list)
+    #: The id of the original task this one was cut out of, when a task proved
+    #: too large for the executing model and was split. Holds the *root* id, not
+    #: the immediate parent, so the cap on repeated splitting is a dict lookup
+    #: rather than id parsing. Empty for every planned task; the planner is a
+    #: `StrictModel` and so is able to emit this field, which is why the mission
+    #: service forces it back to "" when it normalises a plan.
+    slice_of: str = ""
 
     @field_validator("verification_commands")
     @classmethod
@@ -572,6 +579,21 @@ class QAFinding(StrictModel):
     confidence: Literal["high", "medium", "low"] = "medium"
 
 
+class CheckoutFingerprint(StrictModel):
+    """Which working tree a report was taken from.
+
+    A verdict is a statement about code, not about a project. Without this a
+    "safe to push" badge outlives the checkout that earned it and keeps
+    reassuring people about files nobody inspected.
+    """
+
+    commit: str = ""
+    branch: str = ""
+    #: sha256 over the commit, the porcelain status, and the tracked diff.
+    digest: str = ""
+    dirty: bool = False
+
+
 class QACheck(StrictModel):
     """One deterministic quality, security, browser, or dependency check."""
 
@@ -621,6 +643,9 @@ class QAReport(StrictModel):
     #: The release gate's answer, and the specific reasons behind it.
     verdict: QAVerdict = "unknown"
     gate_reasons: list[str] = Field(default_factory=list)
+    #: The checkout this verdict is about. A report whose fingerprint no longer
+    #: matches the working tree is history, not a clearance.
+    checkout: CheckoutFingerprint = Field(default_factory=CheckoutFingerprint)
 
 
 #: What a change review was pointed at.
@@ -675,6 +700,13 @@ class ChangeReview(StrictModel):
     verdict: QAVerdict = "unknown"
     gate_reasons: list[str] = Field(default_factory=list)
     mission_id: str = ""
+    #: The checkout the diff was taken from, so a stale review reads as stale.
+    checkout: CheckoutFingerprint = Field(default_factory=CheckoutFingerprint)
+    #: The exact patch that was reviewed, kept so findings are always shown
+    #: beside the code they were written about rather than beside whatever the
+    #: working tree holds today. Truncated reviews say so in ``patch_truncated``.
+    patch: str = ""
+    patch_truncated: bool = False
 
 
 class ReviewFinding(StrictModel):

@@ -7,7 +7,9 @@ fatal, and the planner was never shown which files the repository contained.
 
 from __future__ import annotations
 
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -136,7 +138,7 @@ async def test_mission_rewrites_an_existing_file(tmp_path: Path) -> None:
     context.settings.models["stub"] = ModelProfileConfig(provider="stub", model="stub")
     context.settings.routing = {role.value: "stub" for role in ModelRole}
     service = MissionService(root, context.settings, context.database, context.events)
-    service.gateway = RewriteGateway('python -c "pass"')  # type: ignore[assignment]
+    service.gateway = RewriteGateway(f'{shlex.quote(sys.executable)} -c "pass"')  # type: ignore[assignment]
 
     mission, _ = await service.run("Change the landing page headline")
 
@@ -169,7 +171,7 @@ def test_scoped_file_is_included_even_when_it_exceeds_the_budget(tmp_path: Path)
         expected_files=["big.html"],
         allowed_files=["big.html"],
         acceptance_criteria=["it changes"],
-        verification_commands=["python -c 'pass'"],
+        verification_commands=[f"{shlex.quote(sys.executable)} -c 'pass'"],
     )
 
     bundle = ContextCompiler(root, indexer, token_budget=2_000).compile(task)

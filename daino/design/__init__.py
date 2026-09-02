@@ -8,10 +8,11 @@ from daino.design.models import (
     DesignSummary,
     DesignType,
 )
-from daino.design.service import DesignError, DesignService
+from daino.design.service import DesignConflictError, DesignError, DesignService
 
 __all__ = [
     "Design",
+    "DesignConflictError",
     "DesignEdge",
     "DesignError",
     "DesignFrame",

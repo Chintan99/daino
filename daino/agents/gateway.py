@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from daino.agents.tokens import CALIBRATION, estimate_message, message_chars
 from daino.config.models import ProviderConfig, Settings
-from daino.context.profiles import ModelExecutionProfile
+from daino.context.profiles import CapabilityEnvelope, ModelExecutionProfile
 from daino.events import AgentRoleChanged, EventBus, ModelReasoningChunk, ModelSelected
 from daino.exceptions import ProviderError
 from daino.model_router import ModelRole, ModelRouter, RoutingContext
@@ -196,6 +196,36 @@ class ModelGateway:
             project_budget_tokens=self.settings.project.context_budget_tokens,
             memory_items=self.settings.memory.max_retrieved_items,
             memory_tokens=self.settings.memory.max_context_tokens,
+            # The same threshold the agent loop compacts at, so the scaffolding
+            # is sized against the limit it actually has to fit under.
+            compaction_threshold=self.settings.memory.compaction_threshold,
+        )
+
+    def capability_envelope(
+        self,
+        role: ModelRole,
+        routing_context: RoutingContext | None = None,
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        profile_override: str | None = None,
+    ) -> CapabilityEnvelope:
+        """Describe what the model routed to *role* can hold while working.
+
+        Callers deciding how big a task may be should pass the same ``tools``
+        the executor will run with — ``AGENT_TOOL_SPECS`` for a builder. The
+        tool schemas are subtracted from the input budget (see
+        ``_input_budget``), so an envelope resolved without them over-reports
+        the headroom by exactly what the executor is charged for tools it will
+        certainly have.
+        """
+        return CapabilityEnvelope.from_profile(
+            self.execution_profile(
+                role,
+                routing_context,
+                tools=tools,
+                profile_override=profile_override,
+            ),
+            compaction_threshold=self.settings.memory.compaction_threshold,
         )
 
     async def structured(

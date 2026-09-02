@@ -103,6 +103,12 @@ class ChangeSetStore:
                         after_version=version,
                     )
                 )
+        # A change set is an index into history, so the history it indexes has
+        # to outlive the retention cap. Without this, a workspace busy enough to
+        # roll past MAX_REVISIONS leaves its older change sets undiffable and
+        # unrejectable — the exact recovery the panel offers.
+        for path, _action, previous, version in entries:
+            self.workbench.pin_revisions(workspace_id, path, (previous, version))
         return self.get(identifier)
 
     # --------------------------------------------------------------- reading

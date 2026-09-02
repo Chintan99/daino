@@ -1570,19 +1570,31 @@ async def test_each_launch_starts_a_fresh_session(tmp_path: Path) -> None:
         ]
 
 
-def test_bare_cli_and_explicit_tui_launch_use_tui(
+def test_tui_launches_only_when_asked_for(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """``--tui`` and ``tui`` open the workspace; a bare invocation lists commands.
+
+    The bare form is the discoverable one — ``daino`` with no interface flag
+    prints the command list rather than taking over the terminal, which is what
+    ``docs/cli-reference.md`` documents. It must stay separate from the two
+    explicit launches, because a CLI that opens a full-screen app when you
+    typed its name to see what it does is a CLI nobody explores.
+    """
     calls: list[Path | None] = []
     monkeypatch.setattr("daino.tui.run_tui", calls.append)
     runner = CliRunner()
 
-    result = runner.invoke(app, ["--project", str(tmp_path)])
+    bare = runner.invoke(app, ["--project", str(tmp_path)])
+    flag = runner.invoke(app, ["--tui", "--project", str(tmp_path)])
     explicit = runner.invoke(app, ["tui", "--project", str(tmp_path)])
 
-    assert result.exit_code == 0
+    assert bare.exit_code == 0
+    assert flag.exit_code == 0
     assert explicit.exit_code == 0
+    # The bare invocation launched nothing and offered the commands instead.
+    assert "Usage:" in bare.output
     assert calls == [tmp_path.resolve(), tmp_path]
 
 

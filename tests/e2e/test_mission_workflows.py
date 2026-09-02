@@ -482,3 +482,336 @@ async def test_a_task_blocked_by_a_failed_dependency_is_skipped(git_repo: Path) 
     assert "Completed 0 of 2" in message
     assert "Skipped after a dependency failed" in message
     assert service.get(mission.id).status == "failed"
+
+
+# ------------------------------- a task too large for the model that must run it
+
+
+class OversizedTaskGateway:
+    """One planned task scoping more files than the executing model can hold.
+
+    Unlike the other harnesses here this one also answers ``capability_envelope``,
+    because that is what the mission loop asks before deciding a task will not
+    fit. A gateway without it disables sizing entirely — the behaviour every
+    other test in this file relies on.
+    """
+
+    def __init__(self, command: str, *, files: int = 4, envelope_files: int = 1) -> None:
+        self.command = command
+        self.files = [f"mod_{index}.py" for index in range(files)]
+        self.envelope_files = envelope_files
+        self.written: set[str] = set()
+        self.builder_turns = 0
+
+    def capability_envelope(self, role: object, *args: object, **kwargs: object) -> object:
+        from daino.context import CapabilityEnvelope
+
+        return CapabilityEnvelope(
+            profile_name="mock",
+            compact=False,
+            one_action_per_turn=False,
+            max_steps=None,
+            working_headroom_tokens=8_000,
+            source_tokens=8_000,
+            max_files_per_task=self.envelope_files,
+            task_source_budget_tokens=8_000,
+        )
+
+    async def structured(
+        self,
+        mission_id: str,
+        role: object,
+        messages: object,
+        schema: type[Any],
+        **kwargs: object,
+    ) -> Any:
+        if schema is RequirementSpec:
+            return RequirementSpec(
+                problem_statement="Create several modules",
+                goals=["Create every module"],
+                functional_requirements=["every module exists"],
+                acceptance_criteria=["every module exists"],
+                test_strategy=[self.command],
+            )
+        if schema is TaskPlan:
+            return TaskPlan(
+                summary="One large task",
+                mode=ProjectMode.SPECIFICATION,
+                tasks=[
+                    TaskSpec(
+                        id="wide",
+                        title="Write every module",
+                        objective="Create all of the modules",
+                        expected_files=list(self.files),
+                        allowed_files=list(self.files),
+                        acceptance_criteria=["every module exists"],
+                        verification_commands=[self.command],
+                    )
+                ],
+            )
+        if schema is ReviewReport:
+            return ReviewReport(approved=True, summary="ok")
+        if schema is AgentAction:
+            self.builder_turns += 1
+            scope = self._scoped_files(messages)
+            for path in scope:
+                if path not in self.written:
+                    self.written.add(path)
+                    return AgentAction(
+                        thought="write",
+                        action="write",
+                        path=path,
+                        content=f"value = {path!r}\n",
+                    )
+            return AgentAction(thought="done", action="finish", summary="done")
+        raise AssertionError(schema)
+
+    def _scoped_files(self, messages: object) -> list[str]:
+        """The files this slice may touch, read out of its own bundle."""
+        for item in messages if isinstance(messages, list) else []:
+            if isinstance(item, Message) and item.role == "user":
+                try:
+                    payload = json.loads(item.content)
+                except (ValueError, TypeError):
+                    continue
+                objective = str(payload.get("task", ""))
+                return [path for path in self.files if path in objective]
+        return []
+
+
+def make_sizing_service(root: Path, gateway: object) -> MissionService:
+    settings = default_settings(root)
+    settings.runtime.default = "local"
+    settings.verification.require_review = False
+    settings.verification.repair_attempts_local = 0
+    settings.verification.total_attempts = 1
+    settings.verification.integration_gate = False
+    settings.providers = {
+        "mock": ProviderConfig(type="vllm", base_url="http://mock.invalid/v1", model="mock")
+    }
+    settings.models = {"mock": ModelProfileConfig(provider="mock", model="mock", local=True)}
+    settings.routing = {
+        role: "mock" for role in ("architect", "planner", "builder", "reviewer", "debugger")
+    }
+    save_settings(settings, root)
+    database = Database(settings, root)
+    database.initialize()
+    service = MissionService(root, settings, database)
+    service.gateway = gateway  # type: ignore[assignment]
+    return service
+
+
+@pytest.mark.asyncio
+async def test_a_task_too_wide_for_the_model_is_split_and_still_completed(
+    git_repo: Path,
+) -> None:
+    """The whole point: the work lands instead of the run dying on a stall."""
+    gateway = OversizedTaskGateway(f"{sys.executable} -c 'pass'", files=4, envelope_files=1)
+    service = make_sizing_service(git_repo, gateway)
+
+    mission, requirements, plan = await service.plan("Many modules", ProjectMode.SPECIFICATION)
+    refreshed, _ = await service.execute(mission.id, requirements, plan)
+
+    assert refreshed.status == "completed"
+    workspace = Path(refreshed.workspace_path or "")
+    for path in gateway.files:
+        assert (workspace / path).exists(), f"{path} was dropped by the split"
+
+
+@pytest.mark.asyncio
+async def test_the_split_is_persisted_so_a_resume_does_not_redo_the_parent(
+    git_repo: Path,
+) -> None:
+    """Without the database writes, `resume()` rebuilds the oversized parent."""
+    from sqlalchemy import select as sa_select
+
+    from daino.persistence.models import Task, TaskDependency
+
+    gateway = OversizedTaskGateway(f"{sys.executable} -c 'pass'", files=4, envelope_files=1)
+    service = make_sizing_service(git_repo, gateway)
+    mission, requirements, plan = await service.plan("Many modules", ProjectMode.SPECIFICATION)
+    await service.execute(mission.id, requirements, plan)
+
+    with service.database.session() as session:
+        rows = {
+            row.id: row.status
+            for row in session.scalars(
+                sa_select(Task).where(Task.mission_id == mission.id)
+            ).all()
+        }
+        edges = [
+            (row.task_id, row.depends_on_id)
+            for row in session.scalars(sa_select(TaskDependency)).all()
+        ]
+
+    parent = [task_id for task_id, status in rows.items() if status == "cancelled"]
+    slices = sorted(task_id for task_id in rows if "-s1-" in task_id)
+    assert len(parent) == 1, "the oversized parent must be cancelled, not left pending"
+    assert len(slices) == 4
+    assert all(rows[task_id] == "completed" for task_id in slices)
+    # Sequential, and recorded as such: a resume rebuilds this graph from here.
+    assert [(slices[index + 1], slices[index]) for index in range(3)] == [
+        edge for edge in edges if edge[0] in slices
+    ]
+    # And the plan rebuilt from the database skips the cancelled parent.
+    _, reloaded = service._load_plan(mission.id)
+    assert parent[0] in {task.id for task in reloaded.tasks}
+
+
+@pytest.mark.asyncio
+async def test_intermediate_slices_do_not_commit_before_the_last_one_verifies(
+    git_repo: Path,
+) -> None:
+    """A third of a change has passed no check; it must not enter the history.
+
+    Every slice commits only once the final slice verifies, so the branch never
+    holds a state no verification ever ran against.
+    """
+    gateway = OversizedTaskGateway(f"{sys.executable} -c 'pass'", files=3, envelope_files=1)
+    service = make_sizing_service(git_repo, gateway)
+    mission, requirements, plan = await service.plan("Many modules", ProjectMode.SPECIFICATION)
+
+    refreshed, _ = await service.execute(mission.id, requirements, plan)
+
+    workspace = Path(refreshed.workspace_path or "")
+    subjects = "\n".join(
+        git(workspace, "log", "--format=%s").splitlines()
+    )
+    # One commit for the whole change, made by the final slice — not one per
+    # slice — and titled with the task the user asked for rather than "(3/3)".
+    assert subjects.count("Write every module") == 1
+    assert "(3/3)" not in subjects
+    tracked = git(workspace, "ls-files").splitlines()
+    for path in gateway.files:
+        # Every slice's work is in that commit, not just the last one's. This is
+        # the part that breaks if the final slice commits only its own paths.
+        assert path in tracked, f"{path} was left uncommitted in the working tree"
+
+
+@pytest.mark.asyncio
+async def test_a_task_that_still_will_not_fit_is_not_split_forever(git_repo: Path) -> None:
+    """Three independent limits stop the recursion; this asserts the outcome.
+
+    A single file that overruns the whole budget cannot be split between files at
+    all, so the loop must give up and report rather than slice indefinitely.
+    """
+    gateway = OversizedTaskGateway(f"{sys.executable} -c 'pass'", files=1, envelope_files=1)
+    # A budget no single file can fit under.
+    gateway.capability_envelope = lambda *args, **kwargs: _pinhole_envelope()  # type: ignore[assignment]
+    service = make_sizing_service(git_repo, gateway)
+    mission, requirements, plan = await service.plan("One module", ProjectMode.SPECIFICATION)
+
+    refreshed, _ = await service.execute(mission.id, requirements, plan)
+
+    # It runs rather than looping: an unsplittable task is attempted as planned.
+    assert refreshed.status in {"completed", "failed"}
+    with service.database.session() as session:
+        from sqlalchemy import select as sa_select
+
+        from daino.persistence.models import Task
+
+        ids = list(
+            session.scalars(sa_select(Task.id).where(Task.mission_id == mission.id)).all()
+        )
+    assert not any("-s2-" in task_id for task_id in ids), "split past its generation cap"
+
+
+def _pinhole_envelope() -> object:
+    from daino.context import CapabilityEnvelope
+
+    return CapabilityEnvelope(
+        profile_name="mock",
+        compact=True,
+        one_action_per_turn=True,
+        max_steps=None,
+        working_headroom_tokens=64,
+        source_tokens=64,
+        max_files_per_task=1,
+        task_source_budget_tokens=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_task_that_thrashes_on_compaction_is_split_and_rerun(git_repo: Path) -> None:
+    """The field failure, end to end.
+
+    The builder read one file, lost it to compaction, read it again, and the
+    no-progress guard ended the run telling the user to rephrase — advice that
+    could not have worked, because the wording was never the problem. Here the
+    same stop is recognised as a window problem and the task is cut down instead.
+
+    The task fits the envelope, so only the post-flight branch can fire: the
+    pre-flight check has nothing to object to.
+    """
+    from daino.agents.loop import THRASHING_COMPACTIONS, BuilderOutcome, IncompleteRun
+    from daino.schemas import Implementation
+
+    gateway = OversizedTaskGateway(f"{sys.executable} -c 'pass'", files=3, envelope_files=3)
+    service = make_sizing_service(git_repo, gateway)
+    original = service._run_builder
+    stalled: list[str] = []
+
+    async def thrash_once(workspace, spec, context, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if not spec.slice_of and spec.id not in stalled:
+            stalled.append(spec.id)
+            raise IncompleteRun(
+                "stopped before finishing",
+                BuilderOutcome(
+                    implementation=Implementation(summary="stalled", modifications=[]),
+                    changed=[],
+                    steps=9,
+                    completed=False,
+                    stop_reason="stall",
+                    compactions=THRASHING_COMPACTIONS,
+                ),
+            )
+        return await original(workspace, spec, context, *args, **kwargs)
+
+    service._run_builder = thrash_once  # type: ignore[assignment]
+    mission, requirements, plan = await service.plan("Many modules", ProjectMode.SPECIFICATION)
+
+    refreshed, _ = await service.execute(mission.id, requirements, plan)
+
+    assert stalled, "the stall never happened, so this test proved nothing"
+    assert refreshed.status == "completed"
+    workspace = Path(refreshed.workspace_path or "")
+    for path in gateway.files:
+        assert (workspace / path).exists()
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_thrashing_model_stops_rather_than_splitting_forever(
+    git_repo: Path,
+) -> None:
+    """Bounded: two generations of splitting, then the honest failure message."""
+    from daino.agents.loop import THRASHING_COMPACTIONS, BuilderOutcome, IncompleteRun
+    from daino.schemas import Implementation
+
+    gateway = OversizedTaskGateway(f"{sys.executable} -c 'pass'", files=4, envelope_files=4)
+    service = make_sizing_service(git_repo, gateway)
+    attempts: list[str] = []
+
+    async def always_thrash(workspace, spec, context, *args, **kwargs):  # type: ignore[no-untyped-def]
+        attempts.append(spec.id)
+        raise IncompleteRun(
+            "stopped before finishing",
+            BuilderOutcome(
+                implementation=Implementation(summary="stalled", modifications=[]),
+                changed=[],
+                steps=9,
+                completed=False,
+                stop_reason="stall",
+                compactions=THRASHING_COMPACTIONS + 2,
+            ),
+        )
+
+    service._run_builder = always_thrash  # type: ignore[assignment]
+    mission, requirements, plan = await service.plan("Many modules", ProjectMode.SPECIFICATION)
+
+    with pytest.raises(RuntimeError, match="Completed 0 of"):
+        await service.execute(mission.id, requirements, plan)
+
+    # It terminates, and does so after a bounded number of builder invocations
+    # rather than slicing until the ids run out of characters.
+    assert len(attempts) < 20, attempts
+    assert not any(task_id.count("-s") > 2 for task_id in attempts)

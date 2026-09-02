@@ -4,7 +4,12 @@
 // beside the code the way it does in an editor rather than in a drawer under it.
 import { create } from "zustand";
 
-export type TabKind = "file" | "diff";
+/**
+ * "hunks" and "conflict" are their own kinds rather than modes of "diff",
+ * because both need their own controls: one selects hunks to stage, the other
+ * chooses between two sides of a merge.
+ */
+export type TabKind = "file" | "diff" | "hunks" | "conflict";
 
 export interface EditorTab {
   id: string;
@@ -46,6 +51,9 @@ export interface EditorReveal {
 export const fileTabId = (path: string) => `file:${path}`;
 export const diffTabId = (path: string, staged: boolean) =>
   `diff:${staged ? "index" : "work"}:${path}`;
+export const hunksTabId = (path: string, staged: boolean) =>
+  `hunks:${staged ? "index" : "work"}:${path}`;
+export const conflictTabId = (path: string) => `conflict:${path}`;
 
 function basename(path: string): string {
   const parts = path.split("/");
@@ -64,6 +72,10 @@ interface EditorState {
 
   openBuffer: (b: Omit<EditorBuffer, "dirty" | "conflict">) => void;
   openDiff: (path: string, staged: boolean) => void;
+  /** Stage or unstage part of a file, hunk by hunk. */
+  openHunks: (path: string, staged: boolean) => void;
+  /** Resolve a merge conflict with both sides side by side. */
+  openConflict: (path: string) => void;
   setActive: (path: string) => void;
   setActiveTab: (id: string) => void;
   closeTab: (id: string) => void;
@@ -112,6 +124,30 @@ export const useEditorStore = create<EditorState>((set) => ({
         : [
             ...s.tabs,
             { id, kind: "diff" as const, path, name: basename(path), staged },
+          ];
+      return { tabs, activeTabId: id, activePath: null };
+    }),
+
+  openHunks: (path, staged) =>
+    set((s) => {
+      const id = hunksTabId(path, staged);
+      const tabs = s.tabs.some((t) => t.id === id)
+        ? s.tabs
+        : [
+            ...s.tabs,
+            { id, kind: "hunks" as const, path, name: basename(path), staged },
+          ];
+      return { tabs, activeTabId: id, activePath: null };
+    }),
+
+  openConflict: (path) =>
+    set((s) => {
+      const id = conflictTabId(path);
+      const tabs = s.tabs.some((t) => t.id === id)
+        ? s.tabs
+        : [
+            ...s.tabs,
+            { id, kind: "conflict" as const, path, name: basename(path), staged: false },
           ];
       return { tabs, activeTabId: id, activePath: null };
     }),

@@ -66,6 +66,18 @@ def subject(
     }
 
 
+def _is_current(state: GuiState, review: ChangeReview | None) -> bool:
+    """Whether this review's verdict still describes the working tree.
+
+    A review with no stored fingerprint (written before reviews were pinned, or
+    taken outside Git) is reported as not current: a clearance nobody can verify
+    is not a clearance.
+    """
+    if review is None or not review.checkout.digest:
+        return False
+    return review.checkout.digest == state.review.git.checkout_fingerprint()["digest"]
+
+
 @router.get("/latest")
 def latest(state: Annotated[GuiState, Depends(get_state)]) -> dict[str, Any]:
     """The live review while one is in flight, else the last persisted one."""
@@ -73,6 +85,7 @@ def latest(state: Annotated[GuiState, Depends(get_state)]) -> dict[str, Any]:
     return {
         "running": _running(state),
         "review": review.model_dump(mode="json") if review is not None else None,
+        "stale": review is not None and not _running(state) and not _is_current(state, review),
     }
 
 
@@ -92,7 +105,23 @@ def report(state: Annotated[GuiState, Depends(get_state)], review_id: str) -> di
     review = state.review.load(review_id)
     if review is None:
         raise HTTPException(status_code=404, detail=f"Unknown review {review_id}")
-    return {"running": _running(state), "review": review.model_dump(mode="json")}
+    return {
+        "running": _running(state),
+        "review": review.model_dump(mode="json"),
+        "stale": not _is_current(state, review),
+    }
+
+
+def _file_patch(patch: str, path: str) -> list[str]:
+    """The section of a unified diff that belongs to one file."""
+    wanted: list[str] = []
+    collecting = False
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            collecting = line.endswith(f" b/{path}")
+        if collecting:
+            wanted.append(line)
+    return wanted
 
 
 @router.get("/diff")
@@ -101,25 +130,52 @@ def file_diff(
     path: str = Query(min_length=1),
     scope: ReviewScope = "working",
     base_ref: str = Query(default=""),
+    review_id: str = Query(default=""),
 ) -> dict[str, Any]:
     """The patch for one file of the reviewed change.
 
     Scoped to a single path so opening a file in the review costs one small
     response rather than re-sending a diff that can run to hundreds of
     kilobytes.
+
+    ``review_id`` is what keeps a saved review honest: it serves the patch that
+    review recorded rather than re-deriving one from the current working tree,
+    so last week's findings are never rendered beside code written since. Only
+    a live review of the current scope falls back to re-resolving the diff.
     """
+    if review_id:
+        review = state.review.load(review_id)
+        if review is None:
+            raise HTTPException(status_code=404, detail=f"Unknown review {review_id}")
+        wanted = _file_patch(review.patch, path)
+        if wanted:
+            return {"path": path, "patch": "\n".join(wanted), "readable": True, "archived": True}
+        known = next((item for item in review.files if item.path == path), None)
+        if known is None:
+            raise HTTPException(status_code=404, detail=f"{path} is not part of this review")
+        # In the review, but absent from its stored patch: an untracked file, a
+        # binary, or a diff truncated at the storage ceiling. Saying so beats
+        # quietly substituting today's version of the file.
+        return {
+            "path": path,
+            "patch": "",
+            "readable": False,
+            "archived": True,
+            "detail": (
+                "The reviewed diff for this file was not kept — it was binary, "
+                "untracked, or past the size this review stores."
+                if not review.patch_truncated
+                else "This review's diff was too large to keep in full, so this "
+                "file's patch is not available."
+            ),
+        }
+
     try:
         resolved = state.review.subject(scope, base_ref=base_ref)
     except ReviewError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    wanted: list[str] = []
-    collecting = False
-    for line in resolved.patch.splitlines():
-        if line.startswith("diff --git "):
-            collecting = line.endswith(f" b/{path}")
-        if collecting:
-            wanted.append(line)
+    wanted = _file_patch(resolved.patch, path)
     if not wanted and path in resolved.untracked:
         # An untracked file has no patch; show it as wholly added.
         try:
@@ -128,7 +184,7 @@ def file_diff(
             return {"path": path, "patch": "", "readable": False}
         wanted = [f"diff --git a/{path} b/{path}", "new file", f"+++ b/{path}"]
         wanted += [f"+{line}" for line in content.splitlines()]
-    return {"path": path, "patch": "\n".join(wanted), "readable": True}
+    return {"path": path, "patch": "\n".join(wanted), "readable": True, "archived": False}
 
 
 @router.post("/run")

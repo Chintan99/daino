@@ -163,17 +163,54 @@ class RunStore:
         A run marked ``running`` with no executor behind it is a lie the GUI
         would render as live work. On startup those become ``paused``: the plan
         and every finished task are intact, so the honest offer is Resume.
+
+        ``waiting_for_approval`` is recovered the same way, and has to be: the
+        future the executor was blocked on lived in memory, so after a restart
+        there is nothing left to answer and the run would sit on a prompt that
+        can never be resolved. The pending approval is cleared and recorded as
+        denied-by-restart — an approval nobody answered is not a yes.
+
+        The step that was in flight goes back to ``pending`` for the same
+        reason it does on Stop. Left ``in_progress`` it is invisible to the
+        executor's eligible-task search, so resuming would step over the
+        interrupted work and could report the whole run complete without it.
         """
         recovered: list[str] = []
         with self.database.session() as session:
             rows = session.scalars(
-                select(RunRow).where(RunRow.status.in_(("running", "pending")))
+                select(RunRow).where(
+                    RunRow.status.in_(("running", "pending", "waiting_for_approval"))
+                )
             ).all()
             for row in rows:
+                waiting = row.status == "waiting_for_approval"
                 row.status = "paused"
-                row.error = row.error or "Interrupted when Daino stopped. Resume to continue."
+                row.error = row.error or (
+                    "Daino stopped while waiting for your approval, so it was not "
+                    "granted. Resume to be asked again."
+                    if waiting
+                    else "Interrupted when Daino stopped. Resume to continue."
+                )
+                metadata = dict(row.metadata_json or {})
+                if metadata.pop("pending_approval", None) is not None:
+                    row.metadata_json = metadata
+                # Consecutive-failure counting is about a run, not a process.
+                # It is kept across the restart rather than reset here.
+                self._reopen_interrupted(session, row)
                 recovered.append(row.id)
         return recovered
+
+    @staticmethod
+    def _reopen_interrupted(session: Any, row: RunRow) -> None:
+        """Put the step the run died holding back into the queue."""
+        started = session.scalars(
+            select(TaskRow)
+            .where(TaskRow.workspace_id == row.workspace_id)
+            .where(TaskRow.status == "in_progress")
+        ).all()
+        for task in started:
+            task.status = "pending"
+        row.current_task_id = ""
 
     # ---------------------------------------------------------------- reading
 

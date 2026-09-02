@@ -47,7 +47,7 @@ def _run_dino(stop: threading.Event) -> None:
             sys.stdout.flush()
             frame += 1
             time.sleep(0.16)
-    except Exception:  # noqa: BLE001 - a cosmetic animation must never crash launch
+    except Exception:  # noqa: BLE001,S110 - a cosmetic animation must never crash launch
         pass
 
 

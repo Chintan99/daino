@@ -65,6 +65,31 @@ import type {
   CreateWorkspaceRequest,
   ProjectInfo,
   ResearchSource,
+  Diagnostic,
+  DiagnosticsResult,
+  DocumentSymbols,
+  LanguageServers,
+  LocationsResult,
+  RenamePreview,
+  TextEdit,
+  WorkspaceSymbols,
+  TestFrameworks,
+  TestLatest,
+  GitBranches,
+  GitCommitContext,
+  GitConflictSides,
+  GitHunks,
+  GitMergeState,
+  GitSyncResult,
+  ProjectTask,
+  ProjectTasks,
+  ReplaceResult,
+  SearchOptions,
+  DesignPlanStatus,
+  DebugAdapterInfo,
+  DebugScope,
+  DebugStatus,
+  DebugVariable,
 } from "./types";
 
 export class ApiError extends Error {
@@ -335,6 +360,266 @@ export const api = {
       {},
     ),
 
+  // Design plans: nothing is written until a plan is approved.
+  designPlan: (id: string) =>
+    request<DesignPlanStatus>("GET", `/api/designs/${encodeURIComponent(id)}/plan`),
+  proposeDesignPlan: (id: string, sessionId: string, profile = "") =>
+    request<DesignPlanStatus>("POST", `/api/designs/${encodeURIComponent(id)}/plan`, {
+      session_id: sessionId,
+      profile,
+    }),
+  approveDesignPlan: (id: string) =>
+    request<DesignPlanStatus>(
+      "POST",
+      `/api/designs/${encodeURIComponent(id)}/plan/approve`,
+      {},
+    ),
+  rejectDesignPlan: (id: string, reason = "") =>
+    request<DesignPlanStatus>(
+      "POST",
+      `/api/designs/${encodeURIComponent(id)}/plan/reject`,
+      { reason },
+    ),
+  implementDesign: (id: string, sessionId: string, profile = "") =>
+    request<DesignPlanStatus & { implemented: boolean; summary: string; files: string[] }>(
+      "POST",
+      `/api/designs/${encodeURIComponent(id)}/implement`,
+      { session_id: sessionId, profile },
+    ),
+
+  // Design frames (UI mock-up viewports).
+  addFrame: (
+    id: string,
+    body: { name?: string; width?: number; height?: number; children?: unknown[] },
+  ) =>
+    request<Design>("POST", `/api/designs/${encodeURIComponent(id)}/frames`, body),
+  updateFrame: (
+    id: string,
+    frameId: string,
+    body: { name?: string; width?: number; height?: number; children?: unknown[] },
+  ) =>
+    request<Design>(
+      "PATCH",
+      `/api/designs/${encodeURIComponent(id)}/frames/${encodeURIComponent(frameId)}`,
+      body,
+    ),
+  deleteFrame: (id: string, frameId: string) =>
+    request<Design>(
+      "DELETE",
+      `/api/designs/${encodeURIComponent(id)}/frames/${encodeURIComponent(frameId)}`,
+    ),
+
+  // Search and replace across the repository.
+  searchFiles: (q: string, options: SearchOptions = {}, limit = 500) =>
+    request<SearchResult>(
+      "GET",
+      `/api/files/search${qs({
+        q,
+        limit,
+        regex: options.regex ?? false,
+        case_sensitive: options.case_sensitive ?? false,
+        whole_word: options.whole_word ?? false,
+        include: options.include || undefined,
+        exclude: options.exclude || undefined,
+        replace: options.replace,
+      })}`,
+    ),
+  replaceInFiles: (
+    query: string,
+    replacement: string,
+    options: SearchOptions & { paths?: string[] } = {},
+  ) =>
+    request<ReplaceResult>("POST", "/api/files/replace", {
+      query,
+      replacement,
+      regex: options.regex ?? false,
+      case_sensitive: options.case_sensitive ?? false,
+      whole_word: options.whole_word ?? false,
+      include: options.include ?? "",
+      exclude: options.exclude ?? "",
+      paths: options.paths ?? [],
+    }),
+
+  // Run configurations and tasks.
+  projectTasks: () => request<ProjectTasks>("GET", "/api/tasks"),
+  saveProjectTasks: (tasks: Partial<ProjectTask>[]) =>
+    request<ProjectTasks>("PUT", "/api/tasks", { tasks }),
+
+  // Git: the parts beyond review and staging.
+  gitHunks: (path: string, staged = false) =>
+    request<GitHunks>("GET", `/api/git/hunks${qs({ path, staged })}`),
+  gitStageHunks: (path: string, hunks: number[]) =>
+    request<{ staged: string; hunks: number[] }>("POST", "/api/git/stage-hunks", {
+      path,
+      hunks,
+    }),
+  gitUnstageHunks: (path: string, hunks: number[]) =>
+    request<{ unstaged: string; hunks: number[] }>(
+      "POST",
+      "/api/git/unstage-hunks",
+      { path, hunks },
+    ),
+  gitCommitContext: () =>
+    request<GitCommitContext>("GET", "/api/git/commit-context"),
+  gitCommit: (message: string, options: { amend?: boolean; sign_off?: boolean } = {}) =>
+    request<{ committed: boolean; revision: string; output: string }>(
+      "POST",
+      "/api/git/commit",
+      { message, amend: options.amend ?? false, sign_off: options.sign_off ?? false },
+    ),
+  gitBranches: () => request<GitBranches>("GET", "/api/git/branches"),
+  gitSwitchBranch: (name: string, options: { create?: boolean; start?: string } = {}) =>
+    request<{ branch: string; created: boolean; output: string }>(
+      "POST",
+      "/api/git/branch",
+      { name, create: options.create ?? false, start: options.start ?? "" },
+    ),
+  gitDeleteBranch: (name: string, force = false) =>
+    request<{ deleted: string; output: string }>(
+      "DELETE",
+      `/api/git/branch${qs({ name, force })}`,
+    ),
+  gitFetch: (remote = "") =>
+    request<GitSyncResult>("POST", "/api/git/fetch", { remote }),
+  gitPull: (rebase = false) =>
+    request<GitSyncResult>("POST", "/api/git/pull", { rebase }),
+  gitPush: (options: { remote?: string; branch?: string; set_upstream?: boolean } = {}) =>
+    request<GitSyncResult>("POST", "/api/git/push", {
+      remote: options.remote ?? "",
+      branch: options.branch ?? "",
+      set_upstream: options.set_upstream ?? false,
+    }),
+  gitMerge: (ref: string, noCommit = false) =>
+    request<GitSyncResult>("POST", "/api/git/merge", { ref, no_commit: noCommit }),
+  gitAbortMerge: () =>
+    request<GitMergeState & { aborted: boolean }>("POST", "/api/git/merge/abort", {}),
+  gitConflicts: () =>
+    request<GitMergeState & { repository: boolean }>("GET", "/api/git/conflicts"),
+  gitConflictSides: (path: string) =>
+    request<GitConflictSides>("GET", `/api/git/conflict${qs({ path })}`),
+  gitResolveConflict: (path: string, side: "ours" | "theirs") =>
+    request<GitMergeState & { resolved: string }>(
+      "POST",
+      "/api/git/conflict/resolve",
+      { path, side },
+    ),
+  gitMarkResolved: (paths: string[]) =>
+    request<GitMergeState & { resolved: string[] }>(
+      "POST",
+      "/api/git/conflict/mark-resolved",
+      { paths },
+    ),
+
+  // Debugging (CODE ▸ Debug)
+  debugAdapters: () =>
+    request<{ adapters: DebugAdapterInfo[] }>("GET", "/api/debug/adapters"),
+  debugState: () => request<DebugStatus>("GET", "/api/debug/state"),
+  toggleBreakpoint: (path: string, line: number) =>
+    request<DebugStatus>("POST", "/api/debug/breakpoints/toggle", { path, line }),
+  setBreakpointCondition: (path: string, line: number, condition: string) =>
+    request<DebugStatus>("POST", "/api/debug/breakpoints/condition", {
+      path,
+      line,
+      condition,
+    }),
+  clearBreakpoints: (path = "") =>
+    request<DebugStatus>(
+      "DELETE",
+      `/api/debug/breakpoints${qs({ path: path || undefined })}`,
+    ),
+  debugLaunch: (body: {
+    program?: string;
+    module?: string;
+    args?: string[];
+    stop_on_entry?: boolean;
+  }) =>
+    request<DebugStatus>("POST", "/api/debug/launch", {
+      program: body.program ?? "",
+      module: body.module ?? "",
+      args: body.args ?? [],
+      stop_on_entry: body.stop_on_entry ?? false,
+    }),
+  debugControl: (
+    command: "continue" | "pause" | "step-over" | "step-into" | "step-out" | "stop",
+  ) => request<DebugStatus>("POST", `/api/debug/${command}`, {}),
+  debugStack: () => request<DebugStatus>("GET", "/api/debug/stack"),
+  debugScopes: (frameId: number) =>
+    request<{ scopes: DebugScope[] }>("GET", `/api/debug/scopes${qs({ frame_id: frameId })}`),
+  debugVariables: (reference: number) =>
+    request<{ variables: DebugVariable[] }>(
+      "GET",
+      `/api/debug/variables${qs({ reference })}`,
+    ),
+  debugEvaluate: (expression: string, frameId = 0) =>
+    request<{ result: string; type: string; variables_reference: number }>(
+      "POST",
+      "/api/debug/evaluate",
+      { expression, frame_id: frameId },
+    ),
+
+  // Tests (CODE ▸ Tests)
+  testFrameworks: (framework = "") =>
+    request<TestFrameworks>(
+      "GET",
+      `/api/tests/frameworks${qs({ framework: framework || undefined })}`,
+    ),
+  testLatest: () => request<TestLatest>("GET", "/api/tests/latest"),
+  runTests: (options: {
+    framework?: string;
+    selection?: string[];
+    coverage?: boolean;
+    failed_only?: boolean;
+  } = {}) =>
+    request<TestLatest>("POST", "/api/tests/run", {
+      framework: options.framework ?? "",
+      selection: options.selection ?? [],
+      coverage: options.coverage ?? false,
+      failed_only: options.failed_only ?? false,
+    }),
+  cancelTests: () =>
+    request<{ cancelled: boolean }>("POST", "/api/tests/cancel", {}),
+
+  // Language intelligence (CODE ▸ Problems, Go to definition, Find references)
+  languageServers: () => request<LanguageServers>("GET", "/api/lsp/servers"),
+  // The buffer's text rides along so diagnostics describe what is on screen
+  // rather than what was last saved.
+  diagnostics: (path: string, text?: string) =>
+    request<DiagnosticsResult>("POST", "/api/lsp/diagnostics", { path, text }),
+  closeDocument: (path: string) =>
+    request<{ closed: string }>("POST", "/api/lsp/close", { path }),
+  definition: (path: string, line: number, column: number) =>
+    request<LocationsResult>("POST", "/api/lsp/definition", { path, line, column }),
+  references: (path: string, line: number, column: number) =>
+    request<LocationsResult>("POST", "/api/lsp/references", { path, line, column }),
+  implementations: (path: string, line: number, column: number) =>
+    request<LocationsResult>("POST", "/api/lsp/implementations", {
+      path,
+      line,
+      column,
+    }),
+  hoverInfo: (path: string, line: number, column: number) =>
+    request<{ available: boolean; markdown: string; detail: string }>(
+      "POST",
+      "/api/lsp/hover",
+      { path, line, column },
+    ),
+  documentSymbols: (path: string) =>
+    request<DocumentSymbols>("GET", `/api/lsp/symbols${qs({ path })}`),
+  workspaceSymbols: (query: string, limit = 200) =>
+    request<WorkspaceSymbols>(
+      "GET",
+      `/api/lsp/workspace-symbols${qs({ query, limit })}`,
+    ),
+  previewRename: (path: string, line: number, column: number, newName: string) =>
+    request<RenamePreview>("POST", "/api/lsp/rename", {
+      path,
+      line,
+      column,
+      new_name: newName,
+    }),
+  applyRename: (edits: Record<string, TextEdit[]>) =>
+    request<{ written: string[] }>("POST", "/api/lsp/rename/apply", { edits }),
+
   // Change review (Inspector ▸ Review)
   reviewSubject: (scope: ReviewScope, baseRef = "") =>
     request<ReviewSubject>(
@@ -346,10 +631,29 @@ export const api = {
     request<ReviewHistory>("GET", `/api/review/history${qs({ limit })}`),
   reviewReport: (id: string) =>
     request<ReviewLatest>("GET", `/api/review/reports/${encodeURIComponent(id)}`),
-  reviewFileDiff: (path: string, scope: ReviewScope, baseRef = "") =>
-    request<{ path: string; patch: string; readable: boolean }>(
+  // `reviewId` is what keeps a saved review honest: the server then serves the
+  // patch that review recorded instead of re-deriving one from today's working
+  // tree, so old findings are never rendered beside code written since.
+  reviewFileDiff: (
+    path: string,
+    scope: ReviewScope,
+    baseRef = "",
+    reviewId = "",
+  ) =>
+    request<{
+      path: string;
+      patch: string;
+      readable: boolean;
+      archived?: boolean;
+      detail?: string;
+    }>(
       "GET",
-      `/api/review/diff${qs({ path, scope, base_ref: baseRef || undefined })}`,
+      `/api/review/diff${qs({
+        path,
+        scope,
+        base_ref: baseRef || undefined,
+        review_id: reviewId || undefined,
+      })}`,
     ),
   reviewRun: (options: Partial<RunReviewRequest> = {}) =>
     request<{ running: boolean; scope: ReviewScope; subject: string }>(
@@ -485,11 +789,20 @@ export const api = {
       "GET",
       `/api/workspaces/${encodeURIComponent(id)}/artifact${qs({ path })}`,
     ),
-  writeArtifact: (id: string, path: string, content: string) =>
+  // `baseDigest` is optimistic concurrency: the digest the draft was read at.
+  // The server refuses the write when the file has moved on since — an agent
+  // finishing a step used to silently lose to whatever the editor held.
+  writeArtifact: (
+    id: string,
+    path: string,
+    content: string,
+    baseDigest = "",
+  ) =>
     request<Artifact>("PUT", `/api/workspaces/${encodeURIComponent(id)}/artifact`, {
       path,
       content,
       author: "user",
+      base_digest: baseDigest,
     }),
   deleteArtifact: (id: string, path: string) =>
     request<{ deleted: string }>(

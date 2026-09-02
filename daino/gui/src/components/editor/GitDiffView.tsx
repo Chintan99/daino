@@ -5,6 +5,10 @@ import { api } from "../../api/client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEditorOptions, useMonacoTheme } from "../../lib/editorPrefs";
 import { openFileInEditor } from "../../lib/openFile";
+// Registers the Daino themes and the language workers on the monaco
+// instance. Imported here rather than at app start so the 4 MB editor
+// arrives with the first component that renders one.
+import "../../lib/monaco";
 
 /** Count changed lines the cheap way, for the header's ± summary. */
 function lineStat(original: string, modified: string) {

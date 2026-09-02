@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import subprocess
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -239,7 +240,9 @@ def test_insight_views_are_served(client: TestClient) -> None:
     assert client.get("/api/approvals").json() == {"approvals": []}
 
     latest = client.get("/api/qa/latest").json()
-    assert latest == {"running": False, "report": None}
+    # "stale" says whether the last verdict still describes this checkout. With
+    # no report at all there is nothing to have gone stale.
+    assert latest == {"running": False, "report": None, "stale": False}
     assert client.get("/api/qa/history").json() == {"running": False, "reports": []}
     assert client.get("/api/qa/reports/qa-nope").status_code == 404
     assert client.post("/api/qa/cancel").json() == {"cancelled": False}
@@ -1168,6 +1171,807 @@ def test_a_change_set_can_be_reviewed_and_rejected_over_the_api(
     assert restored["content"] == "the good draft"
 
 
+def test_saving_a_document_over_a_newer_version_is_refused(client: TestClient) -> None:
+    """The lost update: agent rewrites, user saves their stale draft, work gone.
+
+    409 rather than 400, because the request is well formed and will succeed the
+    moment the writer has seen what changed and decided what to keep.
+    """
+    workspace = client.post("/api/workspaces", json={"name": "Analysis"}).json()
+    client.put(
+        f"/api/workspaces/{workspace['id']}/artifact",
+        json={"path": "notes.md", "content": "the user's draft"},
+    )
+    opened = client.get(
+        f"/api/workspaces/{workspace['id']}/artifact", params={"path": "notes.md"}
+    ).json()
+    digest = opened["artifact"]["digest"]
+    assert digest
+
+    # The agent finishes a step and rewrites the same document.
+    client.put(
+        f"/api/workspaces/{workspace['id']}/artifact",
+        json={"path": "notes.md", "content": "the agent's rewrite", "author": "agent"},
+    )
+
+    refused = client.put(
+        f"/api/workspaces/{workspace['id']}/artifact",
+        json={"path": "notes.md", "content": "more draft", "base_digest": digest},
+    )
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["current_digest"] != digest
+    current = client.get(
+        f"/api/workspaces/{workspace['id']}/artifact", params={"path": "notes.md"}
+    ).json()
+    assert current["content"] == "the agent's rewrite"
+
+    # "Keep mine" sends no digest, and goes through.
+    kept = client.put(
+        f"/api/workspaces/{workspace['id']}/artifact",
+        json={"path": "notes.md", "content": "more draft"},
+    )
+    assert kept.status_code == 200
+
+
+def test_saving_a_design_over_a_newer_version_is_refused(client: TestClient) -> None:
+    """Two windows on version 2 both used to write version 3."""
+    design = client.post("/api/designs", json={"name": "Architecture"}).json()
+    client.post(f"/api/designs/{design['id']}/nodes", json={"label": "API"})
+
+    loaded = client.get(f"/api/designs/{design['id']}").json()
+
+    first = {**loaded, "name": "Architecture (first)"}
+    assert client.put(f"/api/designs/{design['id']}", json=first).status_code == 200
+
+    # The second window still posts the version it loaded.
+    second = {**loaded, "name": "Architecture (second)"}
+    refused = client.put(f"/api/designs/{design['id']}", json=second)
+
+    assert refused.status_code == 409
+    assert refused.json()["detail"]["stored_version"] > loaded["version"]
+    assert client.get(f"/api/designs/{design['id']}").json()["name"] == "Architecture (first)"
+
+    # And every version along the way is still there to go back to.
+    versions = client.get(f"/api/designs/{design['id']}/revisions").json()["revisions"]
+    assert loaded["version"] in {item["version"] for item in versions}
+
+
+# ------------------------------------------------------------- error surface
+
+
+def test_an_unknown_api_path_is_a_json_404_not_the_app(client: TestClient) -> None:
+    """The SPA catch-all used to answer for /api too.
+
+    A misspelled or removed endpoint returned index.html with a 200, so the
+    frontend got HTML where it expected JSON: `res.ok` was true, the parse
+    failed, and the caller received a string of markup instead of data. The
+    breakage then surfaced far from its cause and looked like a server fault.
+    """
+    for path in ("/api/does-not-exist", "/api/qa/nope", "/api", "/ws/nope"):
+        response = client.get(path)
+        assert response.status_code == 404, path
+        assert response.headers["content-type"].startswith("application/json"), path
+        assert "No such endpoint" in response.json()["detail"]
+
+
+def test_client_side_routes_still_fall_back_to_the_app(client: TestClient) -> None:
+    """Only /api and /ws are excluded; everything else is the SPA's."""
+    for path in ("/", "/docs", "/code", "/some/deep/route"):
+        response = client.get(path)
+        assert response.status_code == 200, path
+        assert "text/html" in response.headers["content-type"], path
+
+
+def test_an_unhandled_error_is_reported_and_audited(git_repo: Path) -> None:
+    """A bare "Internal Server Error" leaves nothing to report a bug with.
+
+    The traceback goes to the audit log, and the response names the exception
+    and the route — so the person who hit it can say what happened.
+
+    Builds its own client because the shared fixture re-raises server
+    exceptions, which is what you want everywhere except here: this test is
+    about the response a browser actually receives.
+    """
+    import daino.server.routes.insights as insights
+
+    initialize_project(git_repo)
+    context = open_project(git_repo)
+    original = insights._qa_running
+
+    def explode(_state: object) -> bool:
+        raise ValueError("deliberate failure")
+
+    insights._qa_running = explode  # type: ignore[assignment]
+    try:
+        with TestClient(
+            create_app(context),
+            base_url="http://127.0.0.1:4173",
+            raise_server_exceptions=False,
+        ) as unguarded:
+            response = unguarded.get("/api/qa/latest")
+    finally:
+        insights._qa_running = original  # type: ignore[assignment]
+        context.close()
+
+    assert response.status_code == 500
+    payload = response.json()
+    assert payload["detail"] == "ValueError: deliberate failure"
+    assert payload["path"] == "/api/qa/latest"
+    assert "daino logs" in payload["hint"]
+
+    from daino.observability import AuditLog
+
+    recorded = [
+        item for item in AuditLog(git_repo).read() if item.get("event") == "ServerError"
+    ]
+    assert recorded
+    assert "deliberate failure" in str(recorded[-1].get("traceback", ""))
+
+
+# ---------------------------------------------------------------------- debug
+
+
+def test_debug_adapters_are_listed_with_install_hints(client: TestClient) -> None:
+    """"No debugger" must never look the same as "the debugger found nothing"."""
+    payload = client.get("/api/debug/adapters").json()
+
+    rows = {row["id"]: row for row in payload["adapters"]}
+    assert "debugpy" in rows
+    assert "pip install debugpy" in rows["debugpy"]["install"]
+
+
+def test_breakpoints_are_kept_on_the_server_and_survive(client: TestClient) -> None:
+    """They belong to the user, not to a run — so a reload keeps them."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "prog.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
+
+    first = client.post(
+        "/api/debug/breakpoints/toggle", json={"path": "prog.py", "line": 2}
+    ).json()
+    assert [item["line"] for item in first["breakpoints"]] == [2]
+
+    # A fresh request — as a reloaded tab would make — still sees it.
+    assert [item["line"] for item in client.get("/api/debug/state").json()["breakpoints"]] == [2]
+
+    # Toggling the same line removes it.
+    again = client.post(
+        "/api/debug/breakpoints/toggle", json={"path": "prog.py", "line": 2}
+    ).json()
+    assert again["breakpoints"] == []
+
+
+def test_a_breakpoint_condition_is_recorded(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "prog.py").write_text("a = 1\n", encoding="utf-8")
+    client.post("/api/debug/breakpoints/toggle", json={"path": "prog.py", "line": 1})
+
+    payload = client.post(
+        "/api/debug/breakpoints/condition",
+        json={"path": "prog.py", "line": 1, "condition": "a > 3"},
+    ).json()
+
+    assert payload["breakpoints"][0]["condition"] == "a > 3"
+
+
+def test_breakpoints_can_be_cleared_for_one_file_or_all(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "one.py").write_text("a = 1\n", encoding="utf-8")
+    (root / "two.py").write_text("b = 2\n", encoding="utf-8")
+    client.post("/api/debug/breakpoints/toggle", json={"path": "one.py", "line": 1})
+    client.post("/api/debug/breakpoints/toggle", json={"path": "two.py", "line": 1})
+
+    narrowed = client.delete("/api/debug/breakpoints", params={"path": "one.py"}).json()
+    assert {item["path"] for item in narrowed["breakpoints"]} == {"two.py"}
+
+    assert client.delete("/api/debug/breakpoints").json()["breakpoints"] == []
+
+
+def test_debugging_a_file_no_adapter_covers_is_refused(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "notes.md").write_text("# hi\n", encoding="utf-8")
+
+    refused = client.post("/api/debug/launch", json={"program": "notes.md"})
+
+    assert refused.status_code == 400
+    assert "adapter" in refused.json()["detail"]
+
+
+def test_launching_with_nothing_named_is_refused(client: TestClient) -> None:
+    refused = client.post("/api/debug/launch", json={})
+
+    assert refused.status_code == 400
+    assert "Nothing to debug" in refused.json()["detail"]
+
+
+def test_an_unknown_debug_command_is_a_404(client: TestClient) -> None:
+    assert client.post("/api/debug/teleport").status_code == 404
+
+
+# ------------------------------------------------------- search and tasks
+
+
+def test_search_filters_narrow_the_results(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "src").mkdir(exist_ok=True)
+    (root / "src" / "a.ts").write_text("const total = 1;\n", encoding="utf-8")
+    (root / "src" / "b.py").write_text("total = 2\n", encoding="utf-8")
+
+    everything = client.get("/api/files/search", params={"q": "total"}).json()
+    only_ts = client.get(
+        "/api/files/search", params={"q": "total", "include": "*.ts"}
+    ).json()
+
+    assert {item["path"] for item in everything["matches"]} >= {
+        "src/a.ts",
+        "src/b.py",
+    }
+    assert {item["path"] for item in only_ts["matches"]} == {"src/a.ts"}
+
+
+def test_a_replace_preview_writes_nothing(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "one.txt").write_text("total here\n", encoding="utf-8")
+
+    preview = client.get(
+        "/api/files/search", params={"q": "total", "replace": "sum"}
+    ).json()
+
+    assert preview["matches"][0]["replacement"] == "sum here"
+    assert (root / "one.txt").read_text(encoding="utf-8") == "total here\n"
+
+
+def test_applying_a_replace_writes_only_the_chosen_files(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "keep.txt").write_text("total\n", encoding="utf-8")
+    (root / "change.txt").write_text("total\n", encoding="utf-8")
+
+    applied = client.post(
+        "/api/files/replace",
+        json={"query": "total", "replacement": "sum", "paths": ["change.txt"]},
+    )
+
+    assert applied.status_code == 200
+    assert applied.json()["files"] == ["change.txt"]
+    assert (root / "change.txt").read_text(encoding="utf-8") == "sum\n"
+    assert (root / "keep.txt").read_text(encoding="utf-8") == "total\n"
+
+
+def test_an_invalid_search_pattern_is_reported(client: TestClient) -> None:
+    result = client.get(
+        "/api/files/search", params={"q": "([bad", "regex": True}
+    ).json()
+
+    assert result["success"] is False
+    assert "Invalid pattern" in result["error"]
+    assert result["matches"] == []
+
+
+def test_the_projects_own_commands_are_discovered(client: TestClient) -> None:
+    """A project's npm scripts *are* its run configurations."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "package.json").write_text(
+        '{"name": "app", "scripts": {"dev": "vite", "test": "vitest run"}}',
+        encoding="utf-8",
+    )
+    (root / "package-lock.json").write_text("{}", encoding="utf-8")
+
+    payload = client.get("/api/tasks").json()
+
+    tasks = {item["id"]: item for item in payload["tasks"]}
+    assert tasks["npm:dev"]["command"] == "npm run dev"
+    assert tasks["npm:dev"]["kind"] == "run"
+    assert tasks["npm:test"]["kind"] == "test"
+    assert payload["tasks_file"].endswith("tasks.json")
+
+
+def test_a_saved_task_overrides_a_discovered_one(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "package.json").write_text(
+        '{"name": "app", "scripts": {"dev": "vite"}}', encoding="utf-8"
+    )
+
+    saved = client.put(
+        "/api/tasks",
+        json={
+            "tasks": [
+                {
+                    "id": "npm:dev",
+                    "label": "dev with debug",
+                    "command": "DEBUG=1 npm run dev",
+                    "kind": "run",
+                }
+            ]
+        },
+    )
+
+    assert saved.status_code == 200
+    resolved = client.get("/api/tasks/npm:dev").json()
+    assert resolved["command"] == "DEBUG=1 npm run dev"
+    assert resolved["source"] == "user"
+
+
+# ------------------------------------------------------------------------ git
+
+
+def _commit_all(client: TestClient, message: str) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, capture_output=True)  # noqa: S603, S607
+    subprocess.run(  # noqa: S603, S607
+        ["git", "commit", "-m", message], cwd=root, check=True, capture_output=True
+    )
+
+
+def test_part_of_a_file_can_be_staged(client: TestClient) -> None:
+    """The whole point of hunk staging: commit one change, keep the other."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "app.py").write_text(
+        "\n".join(f"line{index}" for index in range(1, 31)) + "\n", encoding="utf-8"
+    )
+    _commit_all(client, "add app")
+
+    lines = (root / "app.py").read_text(encoding="utf-8").splitlines()
+    lines.insert(1, "FIRST CHANGE")
+    lines.append("LAST CHANGE")
+    (root / "app.py").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    listed = client.get("/api/git/hunks", params={"path": "app.py"}).json()
+    assert len(listed["hunks"]) == 2
+    assert listed["hunks"][0]["added"] == 1
+
+    staged = client.post(
+        "/api/git/stage-hunks", json={"path": "app.py", "hunks": [0]}
+    )
+    assert staged.status_code == 200
+
+    index_diff = client.get("/api/git/diff", params={"staged": True}).json()["diff"]
+    assert "FIRST CHANGE" in index_diff
+    assert "LAST CHANGE" not in index_diff
+    # The other change is still in the working tree.
+    assert "LAST CHANGE" in client.get("/api/git/diff").json()["diff"]
+
+
+def test_a_staged_hunk_can_be_taken_back_out(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "app.py").write_text("a\nb\nc\n", encoding="utf-8")
+    _commit_all(client, "add app")
+    (root / "app.py").write_text("a\nCHANGED\nc\n", encoding="utf-8")
+    client.post("/api/git/stage", json={"paths": ["app.py"]})
+
+    listed = client.get("/api/git/hunks", params={"path": "app.py", "staged": True}).json()
+    assert listed["hunks"]
+
+    client.post("/api/git/unstage-hunks", json={"path": "app.py", "hunks": [0]})
+
+    assert "CHANGED" not in client.get("/api/git/diff", params={"staged": True}).json()["diff"]
+    # Unstaging must not revert the file itself.
+    assert "CHANGED" in (root / "app.py").read_text(encoding="utf-8")
+
+
+def test_a_commit_takes_only_what_is_staged(client: TestClient) -> None:
+    """A commit button that swept in the rest of the tree would be the most
+    surprising thing in the product."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "wanted.py").write_text("keep = 1\n", encoding="utf-8")
+    (root / "unwanted.py").write_text("later = 2\n", encoding="utf-8")
+    client.post("/api/git/stage", json={"paths": ["wanted.py"]})
+
+    context = client.get("/api/git/commit-context").json()
+    assert [item["path"] for item in context["staged"]] == ["wanted.py"]
+
+    committed = client.post("/api/git/commit", json={"message": "add wanted"})
+    assert committed.status_code == 200
+
+    listing = subprocess.run(  # noqa: S603, S607
+        ["git", "show", "--name-only", "--format=", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "wanted.py" in listing
+    assert "unwanted.py" not in listing
+    # And the file left out is still sitting there untracked.
+    assert "unwanted.py" in {
+        item["path"] for item in client.get("/api/git/status").json()["untracked"]
+    }
+
+
+def test_committing_nothing_is_refused_with_advice(client: TestClient) -> None:
+    refused = client.post("/api/git/commit", json={"message": "empty"})
+
+    assert refused.status_code == 400
+    assert "Nothing is staged" in refused.json()["detail"]
+
+
+def test_a_commit_can_be_amended_with_its_message_prefilled(
+    client: TestClient,
+) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "thing.py").write_text("first = 1\n", encoding="utf-8")
+    _commit_all(client, "original subject")
+
+    context = client.get("/api/git/commit-context").json()
+    assert context["can_amend"] is True
+    assert context["previous_message"] == "original subject"
+
+    (root / "thing.py").write_text("first = 2\n", encoding="utf-8")
+    client.post("/api/git/stage", json={"paths": ["thing.py"]})
+    amended = client.post(
+        "/api/git/commit", json={"message": "corrected subject", "amend": True}
+    )
+
+    assert amended.status_code == 200
+    subject = subprocess.run(  # noqa: S603, S607
+        ["git", "log", "-1", "--format=%s"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert subject == "corrected subject"
+
+
+def test_branches_are_listed_created_and_switched(client: TestClient) -> None:
+    listed = client.get("/api/git/branches").json()
+    assert listed["repository"] is True
+    assert listed["current"] == "main"
+
+    created = client.post(
+        "/api/git/branch", json={"name": "feature/x", "create": True}
+    )
+    assert created.status_code == 200
+    assert created.json()["branch"] == "feature/x"
+
+    back = client.post("/api/git/branch", json={"name": "main"})
+    assert back.json()["branch"] == "main"
+
+    names = {item["name"] for item in client.get("/api/git/branches").json()["branches"]}
+    assert names == {"main", "feature/x"}
+
+
+def test_deleting_a_branch_with_unmerged_work_is_refused(client: TestClient) -> None:
+    """Git's refusal is the only thing between the user and losing commits, so
+    it is passed straight through rather than worked around."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    client.post("/api/git/branch", json={"name": "spike", "create": True})
+    (root / "spike.py").write_text("work = 1\n", encoding="utf-8")
+    _commit_all(client, "spike work")
+    client.post("/api/git/branch", json={"name": "main"})
+
+    refused = client.delete("/api/git/branch", params={"name": "spike"})
+    assert refused.status_code == 400
+
+    forced = client.delete("/api/git/branch", params={"name": "spike", "force": True})
+    assert forced.status_code == 200
+
+
+def test_a_merge_conflict_is_reported_as_state_not_an_error(
+    client: TestClient,
+) -> None:
+    """A conflict is something the user now resolves, not a failed request."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "shared.txt").write_text("original\n", encoding="utf-8")
+    _commit_all(client, "base")
+
+    client.post("/api/git/branch", json={"name": "other", "create": True})
+    (root / "shared.txt").write_text("theirs\n", encoding="utf-8")
+    _commit_all(client, "their change")
+    client.post("/api/git/branch", json={"name": "main"})
+    (root / "shared.txt").write_text("ours\n", encoding="utf-8")
+    _commit_all(client, "our change")
+
+    merged = client.post("/api/git/merge", json={"ref": "other"})
+
+    assert merged.status_code == 200
+    payload = merged.json()
+    assert payload["conflicted"] is True
+    assert payload["conflicts"] == ["shared.txt"]
+
+    # All three sides are readable without disturbing the file being edited.
+    sides = client.get("/api/git/conflict", params={"path": "shared.txt"}).json()
+    assert sides["base"].strip() == "original"
+    assert sides["ours"].strip() == "ours"
+    assert sides["theirs"].strip() == "theirs"
+
+    resolved = client.post(
+        "/api/git/conflict/resolve", json={"path": "shared.txt", "side": "theirs"}
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["conflicts"] == []
+    assert (root / "shared.txt").read_text(encoding="utf-8").strip() == "theirs"
+
+    # The merge is still unfinished until it is committed, and says so.
+    assert client.get("/api/git/conflicts").json()["merging"] is True
+    assert client.post("/api/git/commit", json={"message": "merge other"}).status_code == 200
+    assert client.get("/api/git/conflicts").json()["merging"] is False
+
+
+def test_committing_during_an_unresolved_merge_is_refused(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "shared.txt").write_text("original\n", encoding="utf-8")
+    _commit_all(client, "base")
+    client.post("/api/git/branch", json={"name": "other", "create": True})
+    (root / "shared.txt").write_text("theirs\n", encoding="utf-8")
+    _commit_all(client, "their change")
+    client.post("/api/git/branch", json={"name": "main"})
+    (root / "shared.txt").write_text("ours\n", encoding="utf-8")
+    _commit_all(client, "our change")
+    client.post("/api/git/merge", json={"ref": "other"})
+
+    refused = client.post("/api/git/commit", json={"message": "half a merge"})
+
+    assert refused.status_code == 400
+    assert "conflicts" in refused.json()["detail"]
+
+
+def test_a_merge_can_be_abandoned(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "shared.txt").write_text("original\n", encoding="utf-8")
+    _commit_all(client, "base")
+    client.post("/api/git/branch", json={"name": "other", "create": True})
+    (root / "shared.txt").write_text("theirs\n", encoding="utf-8")
+    _commit_all(client, "their change")
+    client.post("/api/git/branch", json={"name": "main"})
+    (root / "shared.txt").write_text("ours\n", encoding="utf-8")
+    _commit_all(client, "our change")
+    client.post("/api/git/merge", json={"ref": "other"})
+
+    aborted = client.post("/api/git/merge/abort")
+
+    assert aborted.status_code == 200
+    assert aborted.json()["merging"] is False
+    assert (root / "shared.txt").read_text(encoding="utf-8").strip() == "ours"
+
+
+def test_pushing_without_a_remote_says_what_to_do(client: TestClient) -> None:
+    """A useful error beats a raw Git one, and the raw one is kept too."""
+    refused = client.post("/api/git/push", json={})
+
+    assert refused.status_code == 400
+    assert refused.json()["detail"]
+
+
+# ---------------------------------------------------------------------- tests
+
+
+def test_the_projects_test_frameworks_are_discovered(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    tests_dir = root / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    (tests_dir / "test_sample.py").write_text(
+        "def test_ok():\n    assert True\n\n\ndef test_bad():\n    assert False\n",
+        encoding="utf-8",
+    )
+
+    payload = client.get("/api/tests/frameworks").json()
+
+    pytest_entry = next(
+        item for item in payload["frameworks"] if item["id"] == "pytest"
+    )
+    assert pytest_entry["available"] is True
+    assert pytest_entry["test_count"] == 2
+    assert {item["name"] for item in payload["tests"]} == {"test_ok", "test_bad"}
+
+
+def test_a_run_reports_failures_with_a_place_to_click(client: TestClient) -> None:
+    """The point of the panel: the failing line, not just a count."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    tests_dir = root / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    (tests_dir / "test_sample.py").write_text(
+        "def test_ok():\n    assert True\n\n\ndef test_bad():\n"
+        "    assert 1 == 2, 'nope'\n",
+        encoding="utf-8",
+    )
+
+    assert client.post("/api/tests/run", json={}).status_code == 200
+    for _ in range(400):
+        latest = client.get("/api/tests/latest").json()
+        if not latest["running"] and latest["run"]["finished_at"]:
+            break
+        time.sleep(0.05)
+
+    run = client.get("/api/tests/latest").json()["run"]
+    assert run["status"] == "failed"
+    assert run["counts"]["passed"] == 1
+    assert run["counts"]["failed"] == 1
+    failure = next(item for item in run["results"] if item["status"] == "failed")
+    assert failure["failure_file"] == "tests/test_sample.py"
+    assert failure["failure_line"] == 6
+    # The id is pytest's own node id, so re-running selects exactly this test.
+    assert failure["id"] == "tests/test_sample.py::test_bad"
+
+
+def test_only_the_failures_can_be_re_run_over_the_api(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    tests_dir = root / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    (tests_dir / "test_sample.py").write_text(
+        "def test_ok():\n    assert True\n\n\ndef test_bad():\n    assert False\n",
+        encoding="utf-8",
+    )
+
+    # Nothing has failed yet, so there is nothing to re-run.
+    assert (
+        client.post("/api/tests/run", json={"failed_only": True}).status_code == 400
+    )
+
+    client.post("/api/tests/run", json={})
+    for _ in range(400):
+        latest = client.get("/api/tests/latest").json()
+        if not latest["running"] and latest["run"]["finished_at"]:
+            break
+        time.sleep(0.05)
+
+    assert client.post("/api/tests/run", json={"failed_only": True}).status_code == 200
+    for _ in range(400):
+        latest = client.get("/api/tests/latest").json()
+        if not latest["running"] and latest["run"]["finished_at"]:
+            break
+        time.sleep(0.05)
+
+    rerun = client.get("/api/tests/latest").json()["run"]
+    assert rerun["selection"] == ["tests/test_sample.py::test_bad"]
+    assert [item["name"] for item in rerun["results"]] == ["test_bad"]
+
+
+def test_test_reports_never_dirty_the_working_tree(client: TestClient) -> None:
+    """A run that showed up as an uncommitted change would poison every diff."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "pyproject.toml").write_text(
+        "[project]\nname = 'fixture'\nversion = '0.1.0'\n", encoding="utf-8"
+    )
+    tests_dir = root / "tests"
+    tests_dir.mkdir(exist_ok=True)
+    (tests_dir / "test_sample.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
+
+    client.post("/api/tests/run", json={})
+    for _ in range(400):
+        latest = client.get("/api/tests/latest").json()
+        if not latest["running"] and latest["run"]["finished_at"]:
+            break
+        time.sleep(0.05)
+
+    status = client.get("/api/git/status").json()
+    touched = {
+        item["path"]
+        for group in ("staged", "modified", "untracked")
+        for item in status[group]
+    }
+    assert not any("test-reports" in path for path in touched)
+
+
+# ------------------------------------------------------------------------ lsp
+
+
+def test_language_servers_are_listed_with_install_hints(client: TestClient) -> None:
+    """"No diagnostics" must be distinguishable from "no problems"."""
+    payload = client.get("/api/lsp/servers").json()
+
+    servers = {row["id"]: row for row in payload["servers"]}
+    assert "pyright" in servers
+    assert "install" in servers["pyright"]
+    assert isinstance(payload["running"], list)
+
+
+def test_diagnostics_for_an_unanalysable_file_say_so(client: TestClient) -> None:
+    """A .txt file is not a clean .txt file — nothing looked at it."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "notes.txt").write_text("plain text\n", encoding="utf-8")
+
+    payload = client.post(
+        "/api/lsp/diagnostics", json={"path": "notes.txt"}
+    ).json()
+
+    assert payload["supported"] is False
+    assert payload["diagnostics"] == []
+    assert "No language server" in payload["detail"]
+
+
+def test_diagnostics_without_a_server_report_the_gap_not_an_error(
+    client: TestClient,
+) -> None:
+    """A missing analyser is evidence missing, not a failed request."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "thing.py").write_text("x = 1\n", encoding="utf-8")
+
+    response = client.post("/api/lsp/diagnostics", json={"path": "thing.py"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["supported"] is True
+    # No server is installed in the test environment, and that is reported
+    # rather than rendered as a clean file.
+    assert payload["available"] is False
+    assert payload["diagnostics"] == []
+    assert payload["detail"]
+
+
+def test_workspace_symbol_search_falls_back_to_the_index(client: TestClient) -> None:
+    """The search box has to work in a checkout with nothing installed."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "shapes.py").write_text(
+        "class Rectangle:\n    pass\n", encoding="utf-8"
+    )
+    client.post("/api/repository/index", json={})
+
+    payload = client.get(
+        "/api/lsp/workspace-symbols", params={"query": "Rectangle"}
+    ).json()
+
+    assert payload["source"] == "index"
+    assert any(item["name"] == "Rectangle" for item in payload["symbols"])
+
+
+def test_a_rename_is_previewed_then_applied(client: TestClient) -> None:
+    """Applying is a separate, explicit call from computing the edits."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "shapes.py").write_text(
+        "class Rectangle:\n    pass\n", encoding="utf-8"
+    )
+
+    applied = client.post(
+        "/api/lsp/rename/apply",
+        json={
+            "edits": {
+                "shapes.py": [
+                    {
+                        "start_line": 1,
+                        "start_column": 7,
+                        "end_line": 1,
+                        "end_column": 16,
+                        "text": "Square",
+                    }
+                ]
+            }
+        },
+    )
+
+    assert applied.status_code == 200
+    assert applied.json()["written"] == ["shapes.py"]
+    assert (root / "shapes.py").read_text(encoding="utf-8") == "class Square:\n    pass\n"
+
+
+def test_multiple_edits_in_one_file_do_not_shift_each_other(
+    client: TestClient,
+) -> None:
+    """Applied back-to-front, so an earlier edit cannot move a later one."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "many.py").write_text("aa = 1\nbb = aa + aa\n", encoding="utf-8")
+
+    client.post(
+        "/api/lsp/rename/apply",
+        json={
+            "edits": {
+                "many.py": [
+                    {"start_line": 1, "start_column": 1, "end_line": 1,
+                     "end_column": 3, "text": "value"},
+                    {"start_line": 2, "start_column": 6, "end_line": 2,
+                     "end_column": 8, "text": "value"},
+                    {"start_line": 2, "start_column": 11, "end_line": 2,
+                     "end_column": 13, "text": "value"},
+                ]
+            }
+        },
+    )
+
+    assert (root / "many.py").read_text(encoding="utf-8") == (
+        "value = 1\nbb = value + value\n"
+    )
+
+
 # --------------------------------------------------------------- change review
 
 
@@ -1243,6 +2047,66 @@ def test_one_file_of_the_change_can_be_read_on_its_own(client: TestClient) -> No
     assert "README.md" in tracked["patch"] and "brand_new.py" not in tracked["patch"]
     # A file git has no diff for is shown as wholly added rather than as nothing.
     assert "+def added():" in untracked["patch"]
+
+
+def test_a_saved_review_shows_the_diff_it_reviewed_not_todays(
+    client: TestClient,
+) -> None:
+    """Findings and the code they are about have to age together.
+
+    The endpoint used to re-resolve the requested scope against the current
+    working tree, so opening a file in a week-old review showed last week's
+    findings beside code written since.
+    """
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "app.py").write_text("REVIEWED = 1\n", encoding="utf-8")
+
+    assert client.post("/api/review/run", json={"scope": "working"}).json()["running"] is True
+    for _ in range(200):
+        latest = client.get("/api/review/latest").json()
+        if not latest["running"] and latest["review"]:
+            break
+        time.sleep(0.05)
+    review = client.get("/api/review/latest").json()["review"]
+    assert review["status"] == "completed"
+
+    # The working tree moves on after the review is saved.
+    (root / "app.py").write_text("WRITTEN_AFTERWARDS = 2\n", encoding="utf-8")
+
+    archived = client.get(
+        "/api/review/diff", params={"path": "app.py", "review_id": review["id"]}
+    ).json()
+    live = client.get("/api/review/diff", params={"path": "app.py"}).json()
+
+    assert archived["archived"] is True
+    assert "REVIEWED = 1" in archived["patch"]
+    assert "WRITTEN_AFTERWARDS" not in archived["patch"]
+    # Without a review id the endpoint still describes the tree as it is now.
+    assert "WRITTEN_AFTERWARDS" in live["patch"]
+
+    # And the report itself reads as no longer describing this checkout.
+    assert client.get(f"/api/review/reports/{review['id']}").json()["stale"] is True
+
+
+def test_a_verdict_goes_stale_when_the_files_move(client: TestClient) -> None:
+    """The tab badge must stop claiming a checkout nobody inspected is cleared."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    assert client.post("/api/qa/run", json={"profile": "quality"}).status_code == 200
+    for _ in range(400):
+        latest = client.get("/api/qa/latest").json()
+        if not latest["running"] and latest["report"]:
+            break
+        time.sleep(0.05)
+
+    fresh = client.get("/api/qa/latest").json()
+    assert fresh["report"]["checkout"]["digest"]
+    assert fresh["stale"] is False
+
+    (root / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    assert client.get("/api/qa/latest").json()["stale"] is True
 
 
 def test_only_one_review_runs_at_a_time(client: TestClient) -> None:

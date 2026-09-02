@@ -6,7 +6,7 @@
 import { useMemo } from "react";
 import type { editor } from "monaco-editor";
 import type { ITheme } from "@xterm/xterm";
-import { EDITOR_OPTIONS, monacoThemeFor } from "./monaco";
+import { EDITOR_OPTIONS, monacoThemeFor } from "./editorTheme";
 import { useSettingsStore } from "../store/settingsStore";
 
 export function useMonacoTheme(): string {

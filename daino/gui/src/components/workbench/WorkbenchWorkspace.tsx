@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { qk, useWorkspaceItem } from "../../api/hooks";
@@ -12,6 +12,7 @@ import { UploadPanel } from "./UploadPanel";
 import { SourcesPanel } from "./SourcesPanel";
 import { ChangesPanel } from "./ChangesPanel";
 import { LinksPanel } from "./LinksPanel";
+import { handoffInFlight } from "../../lib/handoff";
 
 const VIEWS: { id: WorkbenchView; label: string; hint: string }[] = [
   { id: "documents", label: "DOCUMENTS", hint: "What this workspace is producing" },
@@ -39,22 +40,19 @@ export function WorkbenchWorkspace() {
   const setView = useUIStore((s) => s.setWorkbenchView);
   const activeId = useUIStore((s) => s.activeWorkspaceId);
   const setActiveId = useUIStore((s) => s.setActiveWorkspaceId);
-  const setSessionTarget = useUIStore((s) => s.setSessionTarget);
+  const shelveSessionTarget = useUIStore((s) => s.shelveSessionTarget);
   const { data: workspace } = useWorkspaceItem(activeId);
   const [editingGoal, setEditingGoal] = useState(false);
   const [goal, setGoal] = useState("");
 
-  // The session this tab pointed the agent at, so leaving restores what CODE
-  // was talking to rather than stranding the panel on a workspace thread.
-  const borrowed = useRef<string | null>(null);
-
+  // The session this tab points the agent at is *shelved* rather than simply
+  // replaced, so leaving restores what CODE was talking to — and so a handoff
+  // in LinksPanel can address that conversation while this tab still owns the
+  // socket.
   useEffect(() => {
     if (!workspace) return;
-    if (borrowed.current === null) {
-      borrowed.current = useUIStore.getState().sessionTarget;
-    }
     if (workspace.session_id) {
-      setSessionTarget(workspace.session_id);
+      shelveSessionTarget(workspace.session_id);
       return;
     }
     // A workspace with no conversation yet gets one, attached so its history
@@ -64,20 +62,26 @@ export function WorkbenchWorkspace() {
       const created = await api.createSession(workspace.name);
       if (!live) return;
       await api.attachWorkspaceSession(workspace.id, created.id);
-      setSessionTarget(created.id);
+      shelveSessionTarget(created.id);
       await qc.invalidateQueries({ queryKey: qk.workspaceItem(workspace.id) });
     })();
     return () => {
       live = false;
     };
-  }, [workspace?.id, workspace?.session_id, workspace?.name, setSessionTarget, qc, workspace]);
+  }, [
+    workspace?.id,
+    workspace?.session_id,
+    workspace?.name,
+    shelveSessionTarget,
+    qc,
+    workspace,
+  ]);
 
   useEffect(
     () => () => {
-      if (borrowed.current !== null) {
-        useUIStore.getState().setSessionTarget(borrowed.current);
-        borrowed.current = null;
-      }
+      // A handoff has already pointed the socket where it wants it and asked
+      // for this tab to get out of the way; unshelving then would undo it.
+      if (!handoffInFlight()) useUIStore.getState().unshelveSessionTarget();
     },
     [],
   );

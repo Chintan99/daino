@@ -13,6 +13,8 @@ import type {
   WsEvent,
 } from "../api/types";
 import { roleActivity, toolActivity } from "../lib/activity";
+import { claimQueuedMessage } from "../lib/handoff";
+import { markBufferStale } from "../lib/saveFile";
 import { wsUrl } from "./url";
 
 function num(v: unknown): number {
@@ -154,6 +156,20 @@ export function useSessionSocket(target: string = "latest") {
           if (msg.turn_running) s.resumeTurn();
           else if (s.turnRunning) s.endTurn();
           qc.invalidateQueries({ queryKey: qk.sessionMessages(msg.session_id) });
+          // A cross-tab handoff queued its brief for this socket target and is
+          // waiting for the connection to actually be here. Sending before the
+          // server confirmed the session is what used to put the message in the
+          // conversation the user was leaving.
+          const queued = claimQueuedMessage(target);
+          if (queued && !msg.turn_running) {
+            const live = useAgentStore.getState();
+            live.send?.({
+              type: "user_message",
+              text: queued,
+              profile: live.selectedModel ?? undefined,
+            });
+            live.beginTurn(queued);
+          }
           break;
         }
         case "event": {
@@ -284,16 +300,23 @@ export function useSessionSocket(target: string = "latest") {
           }
           break;
         }
-        case "FileChanged":
+        case "FileChanged": {
           // Accumulate the live file list the panel shows while the turn runs.
+          const changed = str(event.path);
           s.recordChange({
-            path: str(event.path),
+            path: changed,
             action: str(event.action) || "changed",
             added: num(event.added),
             removed: num(event.removed),
           });
+          // Tell the editor now, rather than letting the user keep typing into
+          // a buffer whose file has moved and discover it only when the save
+          // is refused. A clean buffer just takes the new text; a dirty one is
+          // flagged, because only its author can say which version wins.
+          markBufferStale(changed);
           qc.invalidateQueries({ queryKey: qk.gitStatus });
           break;
+        }
         case "GitChanged":
           qc.invalidateQueries({ queryKey: qk.gitStatus });
           break;

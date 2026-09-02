@@ -58,13 +58,17 @@ export function ReviewView() {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const { data: subject, error: subjectError } = useReviewSubject(scope, baseRef);
-  const { data: fileDiff } = useReviewFileDiff(openPath, scope, baseRef);
 
   const running = !!latest?.running;
   // A saved review the user picked wins until the next live run starts.
   const review = running
     ? (latest?.review ?? null)
     : (viewing ?? latest?.review ?? null);
+  // A finished review is read against the patch *it* recorded. Re-deriving one
+  // from the working tree is how findings written last week ended up rendered
+  // beside code written since; only a live run has no archive to read from.
+  const archiveId = running || !review ? "" : review.id;
+  const { data: fileDiff } = useReviewFileDiff(openPath, scope, baseRef, archiveId);
 
   // The saved list has no reason to poll, but a finished run adds a row.
   useEffect(() => {
@@ -259,6 +263,12 @@ export function ReviewView() {
                         setOpenPath(openPath === file.path ? null : file.path)
                       }
                       patch={openPath === file.path ? (fileDiff?.patch ?? "") : ""}
+                      note={
+                        openPath === file.path && fileDiff && !fileDiff.readable
+                          ? (fileDiff.detail ??
+                            "This file's diff is not available.")
+                          : ""
+                      }
                     />
                   ))}
                 </tbody>
@@ -364,11 +374,14 @@ function FileRow({
   open,
   onToggle,
   patch,
+  note,
 }: {
   file: ChangedFile;
   open: boolean;
   onToggle: () => void;
   patch: string;
+  /** Why there is no patch to show, when a saved review did not keep one. */
+  note?: string;
 }) {
   return (
     <>
@@ -417,6 +430,10 @@ function FileRow({
                 <div className="empty">
                   A binary file has no diff to read.
                 </div>
+              ) : note ? (
+                // Saying the reviewed diff was not kept is honest; quietly
+                // substituting the file's current contents would not be.
+                <div className="empty">{note}</div>
               ) : (
                 <pre className="mono">
                   {(patch || "Loading…").split("\n").map((line, index) => (

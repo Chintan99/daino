@@ -5,6 +5,7 @@
 // and the shortcut printed next to a menu item is the one that is actually
 // bound (see `useShortcuts`).
 import { api } from "../api/client";
+import { useQuickOpenStore } from "../store/quickOpenStore";
 import { useAgentStore } from "../store/agentStore";
 import { useEditorStore } from "../store/editorStore";
 import { useSettingsStore } from "../store/settingsStore";
@@ -167,6 +168,59 @@ export function findInFiles(): void {
   ui().setActiveWorkspaceTab("code");
   ui().setActivityView("search");
   ui().focusSearch();
+}
+
+// ---------------------------------------------------------------- debugging
+
+/**
+ * F5: continue if stopped, otherwise start debugging the open file.
+ *
+ * One key for both, as every other editor does it — "run or resume" is a single
+ * intention, and which of the two applies is something the app can work out.
+ */
+export async function debugContinueOrStart(): Promise<void> {
+  const { api } = await import("../api/client");
+  const { useDebugStore } = await import("../store/debugStore");
+  const { useEditorStore } = await import("../store/editorStore");
+  ui().setBottomTab("debug");
+  const store = useDebugStore.getState();
+  try {
+    if (store.running) {
+      store.apply(await api.debugControl("continue"));
+      return;
+    }
+    const path = useEditorStore.getState().activePath;
+    if (!path) return;
+    store.apply(await api.debugLaunch({ program: path }));
+  } catch (err) {
+    window.alert(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** F10 / F11 / ⇧F11. Silently ignored when nothing is stopped. */
+export async function debugStep(
+  command: "step-over" | "step-into" | "step-out",
+): Promise<void> {
+  const { api } = await import("../api/client");
+  const { useDebugStore } = await import("../store/debugStore");
+  const store = useDebugStore.getState();
+  if (!store.running) return;
+  try {
+    store.apply(await api.debugControl(command));
+  } catch {
+    // Stepping while the debuggee is running is a no-op, not an error worth
+    // interrupting anyone about.
+  }
+}
+
+/** Jump to any symbol in the project. */
+export function openSymbolPalette(): void {
+  useQuickOpenStore.getState().show("@");
+}
+
+/** Run one of the project's declared commands. */
+export function openTaskPalette(): void {
+  useQuickOpenStore.getState().show(">");
 }
 
 // -------------------------------------------------------------------- view

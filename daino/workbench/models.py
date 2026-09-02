@@ -97,6 +97,10 @@ class Artifact(BaseModel):
     extracted_path: str = ""
     #: Why an upload is unreadable, when it is.
     warning: str = ""
+    #: sha256 of the file as it was read. A client sends this back when saving
+    #: so an edit written against a version the agent has since replaced is
+    #: refused rather than silently overwriting it.
+    digest: str = ""
 
 
 class ArtifactContent(BaseModel):

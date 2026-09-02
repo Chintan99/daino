@@ -10,9 +10,11 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from daino.design import Design, DesignError
+from daino.application.design_plan_service import DesignPlanApplicationService
+from daino.design import Design, DesignConflictError, DesignError
+from daino.design.plans import PlanError, PlanGateError
 from daino.server.deps import get_state
 from daino.server.state import GuiState
 
@@ -64,45 +66,128 @@ def list_designs(state: Annotated[GuiState, Depends(get_state)]) -> dict:
 
 @router.post("/generate-from-code")
 def generate_from_code(state: Annotated[GuiState, Depends(get_state)]) -> dict:
-    """Seed an architecture design from a best-effort scan of the repository.
+    """Derive an architecture design from what the code actually does.
 
-    Deterministic (no model call): detected frameworks and top-level source
-    directories become nodes; a database node is added when models are found. The
-    result is a starting point the user and agent refine, not a reverse-engineered
-    truth.
+    Deterministic — no model call. Modules come from how the source is laid out
+    (at a granularity chosen from how the code is spread, so a single-package
+    repository does not draw one box), edges come from import statements and
+    carry the number of files behind them, and layers come from the dependency
+    order. Routes and persistence models relabel the modules that expose them.
+
+    The design records its own caveat in ``metadata.generated``: imports
+    overstate coupling and miss dynamic dispatch, so this is a starting point to
+    correct rather than a reverse-engineered truth. A generated diagram that
+    does not admit it was generated gets trusted more than it should be.
     """
+    from daino.design import architecture
     from daino.repository import RepositoryIndexer
 
     indexer = RepositoryIndexer(state.root)
     try:
         index = indexer.load()
+        if not index.files:
+            index = indexer.build()
     except (OSError, ValueError):
         index = indexer.build()
 
-    frameworks = sorted(index.frameworks)[:6]
-    has_db = bool(indexer.database_models())
-    has_routes = bool(indexer.api_routes())
+    analysis = architecture.analyse(
+        index,
+        routes=indexer.api_routes(),
+        models=indexer.database_models(),
+        env_vars=indexer.environment_variables(),
+    )
+    nodes, edges = architecture.layout(analysis)
+    if not nodes:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Nothing to draw: the repository index is empty. Run the "
+                "repository indexer first (Insights ▸ Repository)."
+            ),
+        )
 
     name = f"{state.context.settings.project.name} architecture"
-    design = state.design.create(name, "architecture")
-    y = 0
-    previous: str | None = None
-    for framework in frameworks or ["Application"]:
-        node = state.design.add_node(
-            design.id, label=framework, node_type="service", x=0, y=y
-        ).nodes[-1]
-        if previous is not None:
-            state.design.connect(design.id, previous, node.id)
-        previous = node.id
-        y += 120
-    if has_routes and previous is not None:
-        api = state.design.add_node(design.id, label="API", node_type="api", x=280, y=0).nodes[-1]
-        state.design.connect(design.id, previous, api.id, label="serves")
-        previous = api.id
-    if has_db and previous is not None:
-        db = state.design.add_node(design.id, label="Database", node_type="database", x=280, y=160)
-        state.design.connect(design.id, previous, db.nodes[-1].id, label="persists")
-    return state.design.get(design.id).model_dump(mode="json")
+    design = state.design.create(
+        name,
+        "architecture",
+        nodes=nodes,
+        edges=[
+            {
+                "id": f"{edge['source']}-{edge['target']}",
+                "source": edge["source"],
+                "target": edge["target"],
+                "label": edge["label"],
+            }
+            for edge in edges
+        ],
+        metadata={
+            "generated": architecture.summary(analysis),
+            "generated_from": "repository-index",
+            "module_count": len(nodes),
+            "edge_count": len(edges),
+            "env_vars": analysis["env_vars"],
+        },
+    )
+    return design.model_dump(mode="json")
+
+
+# --------------------------------------------------------------------- frames
+
+
+class FrameRequest(BaseModel):
+    name: str = ""
+    frame_id: str | None = None
+    width: int = 1440
+    height: int = 900
+    children: list[dict] | None = None
+
+
+class UpdateFrameRequest(BaseModel):
+    name: str | None = None
+    width: int | None = None
+    height: int | None = None
+    #: Replaces the child list wholesale — a merge would make removing an
+    #: element impossible.
+    children: list[dict] | None = None
+
+
+@router.post("/{design_id}/frames")
+def add_frame(
+    state: Annotated[GuiState, Depends(get_state)], design_id: str, body: FrameRequest
+) -> dict:
+    """Add a UI mock-up frame: a device viewport with nested elements."""
+    return _handle(state.design.add_frame)(
+        design_id,
+        name=body.name,
+        frame_id=body.frame_id,
+        width=body.width,
+        height=body.height,
+        children=body.children,
+    ).model_dump(mode="json")
+
+
+@router.patch("/{design_id}/frames/{frame_id}")
+def update_frame(
+    state: Annotated[GuiState, Depends(get_state)],
+    design_id: str,
+    frame_id: str,
+    body: UpdateFrameRequest,
+) -> dict:
+    return _handle(state.design.update_frame)(
+        design_id,
+        frame_id,
+        name=body.name,
+        width=body.width,
+        height=body.height,
+        children=body.children,
+    ).model_dump(mode="json")
+
+
+@router.delete("/{design_id}/frames/{frame_id}")
+def delete_frame(
+    state: Annotated[GuiState, Depends(get_state)], design_id: str, frame_id: str
+) -> dict:
+    return _handle(state.design.delete_frame)(design_id, frame_id).model_dump(mode="json")
 
 
 @router.post("")
@@ -125,9 +210,45 @@ def get_design(state: Annotated[GuiState, Depends(get_state)], design_id: str) -
 def replace_design(
     state: Annotated[GuiState, Depends(get_state)], design_id: str, body: Design
 ) -> dict:
+    """Save a whole canvas, refusing to overwrite work done since it was loaded.
+
+    The body carries the version the editor loaded, which is exactly the
+    optimistic-concurrency token this needs: two windows both editing version 2
+    used to both write version 3, and the second silently erased the first.
+    """
     if body.id != design_id:
         raise HTTPException(status_code=400, detail="Design id mismatch")
-    return _handle(state.design.replace)(body).model_dump(mode="json")
+    try:
+        design = state.design.replace(body, expected_version=body.version)
+    except DesignConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "stored_version": exc.stored_version},
+        ) from exc
+    except DesignError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return design.model_dump(mode="json")
+
+
+@router.get("/{design_id}/revisions")
+def list_revisions(state: Annotated[GuiState, Depends(get_state)], design_id: str) -> dict:
+    """Every kept version of this design, newest first."""
+    return {"revisions": _handle(state.design.revisions)(design_id)}
+
+
+@router.get("/{design_id}/revisions/{version}")
+def read_revision(
+    state: Annotated[GuiState, Depends(get_state)], design_id: str, version: int
+) -> dict:
+    return _handle(state.design.revision)(design_id, version).model_dump(mode="json")
+
+
+@router.post("/{design_id}/revisions/{version}/restore")
+def restore_revision(
+    state: Annotated[GuiState, Depends(get_state)], design_id: str, version: int
+) -> dict:
+    """Bring an old version back as the newest one, keeping everything between."""
+    return _handle(state.design.restore)(design_id, version).model_dump(mode="json")
 
 
 @router.delete("/{design_id}")
@@ -190,3 +311,115 @@ def disconnect(
     state: Annotated[GuiState, Depends(get_state)], design_id: str, edge_id: str
 ) -> dict:
     return _handle(state.design.disconnect)(design_id, edge_id=edge_id).model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------- plans
+
+
+class ProposePlanRequest(BaseModel):
+    """Ask for an implementation plan. The session carries the conversation."""
+
+    session_id: str = Field(min_length=1)
+    profile: str = ""
+
+
+class RejectPlanRequest(BaseModel):
+    #: Recorded so the next proposal can address it.
+    reason: str = ""
+
+
+class ImplementRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+    profile: str = ""
+
+
+def _plans(state: GuiState) -> DesignPlanApplicationService:
+    return DesignPlanApplicationService(state.context, state.design, state.missions)
+
+
+@router.get("/{design_id}/plan")
+def read_plan(state: Annotated[GuiState, Depends(get_state)], design_id: str) -> dict:
+    """The plan, and whether implementation is allowed right now.
+
+    ``can_implement`` and its reason come from the same gate the implement
+    endpoint uses, so the button and the endpoint can never disagree about
+    whether work may start.
+    """
+    return _handle(_plans(state).status)(design_id)
+
+
+@router.post("/{design_id}/plan")
+async def propose_plan(
+    state: Annotated[GuiState, Depends(get_state)],
+    design_id: str,
+    body: ProposePlanRequest,
+) -> dict:
+    """Run one read-only turn to produce a plan.
+
+    The turn cannot write, edit, delete, or run anything: the tool surface omits
+    every mutating tool, ``EditTools`` refuses mutations, and no command runner
+    is attached. "Propose a plan before writing code" used to be a sentence in a
+    prompt, which the model was free to ignore — and did.
+    """
+    try:
+        await _plans(state).propose(
+            design_id, body.session_id, profile_override=body.profile
+        )
+    except DesignError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _plans(state).status(design_id)
+
+
+@router.post("/{design_id}/plan/approve")
+def approve_plan(state: Annotated[GuiState, Depends(get_state)], design_id: str) -> dict:
+    try:
+        _plans(state).approve(design_id)
+    except PlanError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _plans(state).status(design_id)
+
+
+@router.post("/{design_id}/plan/reject")
+def reject_plan(
+    state: Annotated[GuiState, Depends(get_state)],
+    design_id: str,
+    body: RejectPlanRequest | None = None,
+) -> dict:
+    try:
+        _plans(state).reject(design_id, (body or RejectPlanRequest()).reason)
+    except PlanError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _plans(state).status(design_id)
+
+
+@router.post("/{design_id}/implement")
+async def implement_design(
+    state: Annotated[GuiState, Depends(get_state)],
+    design_id: str,
+    body: ImplementRequest,
+) -> dict:
+    """Carry out an approved plan.
+
+    Refused with 409 when there is no approved plan for *this version* of the
+    design. The version check is the part that matters most: a plan written
+    against version 4 of a canvas describes a canvas that no longer exists once
+    someone has rearranged it, and implementing it would build the wrong thing
+    while looking entirely legitimate.
+    """
+    service = _plans(state)
+    try:
+        outcome = await service.implement(
+            design_id, body.session_id, profile_override=body.profile
+        )
+    except PlanGateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PlanError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DesignError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "implemented": True,
+        "summary": outcome.answer or outcome.summary,
+        "files": sorted({diff.path for diff in outcome.diffs}),
+        **service.status(design_id),
+    }

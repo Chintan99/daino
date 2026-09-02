@@ -176,6 +176,24 @@ export function useAppMenus(): MenuDefinition[] {
           shortcut: `${SHIFT} ${MOD} F`,
           onSelect: cmd.findInFiles,
         },
+        {
+          type: "item",
+          label: "Replace in files",
+          onSelect: cmd.findInFiles,
+        },
+        sep,
+        {
+          type: "item",
+          label: "Go to symbol in project…",
+          shortcut: `${MOD} T`,
+          onSelect: cmd.openSymbolPalette,
+        },
+        {
+          type: "item",
+          label: "Run task…",
+          shortcut: `${SHIFT} ${MOD} P`,
+          onSelect: cmd.openTaskPalette,
+        },
         sep,
         {
           type: "item",

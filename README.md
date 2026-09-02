@@ -107,12 +107,26 @@ daino . --gui --port 5000
 The GUI opens your default browser to a local URL and gives you three workspaces that share one
 D[Ai]NO agent and one session:
 
-- **Code** — file explorer, Monaco editor with tabs and dirty-state, an integrated terminal,
-  Git status/diff, and a persistent D[Ai]NO agent panel with streamed responses, tool cards, and
-  command approvals (the same security model as the TUI — nothing is auto-committed).
+- **Code** — file explorer, Monaco editor with tabs and dirty-state, an integrated terminal, and a
+  persistent D[Ai]NO agent panel with streamed responses, tool cards, and command approvals (the
+  same security model as the TUI). Diagnostics, go-to-definition, find-references and rename come
+  from whichever language servers the machine has — pyright, tsserver, gopls, rust-analyzer — and
+  when none is installed the Problems panel says so rather than reporting a clean file. Tests are
+  discovered and run per test, with failures linking to the line they failed on. Git covers
+  hunk-level staging, commits and amends, branches, fetch/pull/push, merges and conflict
+  resolution; nothing runs without an explicit click. A debugger drives the Debug Adapter Protocol
+  (Python via debugpy) with gutter breakpoints, stepping, call stack, variables, and expression
+  evaluation. Search supports regex, filters, and previewed replace across the repository; ⌘T jumps
+  to any symbol and ⇧⌘P runs any command the project declares.
 - **Design** — structured, AI-editable diagrams (architecture, flowchart, database, API flow) on a
-  React Flow canvas you can also edit by hand, plus HTML/React prototypes. Design never writes
-  production code directly; use **Implement Design** to generate a plan first.
+  React Flow canvas you can also edit by hand, plus UI frames and live HTML/SVG prototypes rendered
+  in place. Files placed from CODE keep their path and digest, so the canvas says when the source
+  has moved on and can pull from or push to it. JSX/TSX is placed as source text — it is not
+  compiled or previewed. **Generate from code** derives the architecture from the repository index:
+  modules from the source layout, edges from import statements weighted by how many files carry
+  them, and layers from the dependency order. Design never writes production code directly:
+  implementation is gated on a plan you have read and approved, and the planning turn has read-only
+  tools so it cannot write while proposing.
 - **Workspace** — the work that is not code. Give Daino a goal, upload the files it needs (PDF,
   Word, Excel and PowerPoint are extracted to text), and the documents it writes land under
   `.daino/workspaces/<name>/` as ordinary files — greppable and openable in the editor, without
@@ -120,7 +134,8 @@ D[Ai]NO agent and one session:
   a time: researching, writing, diagramming in DESIGN, preparing coding work for CODE, and rendering
   finished Word, Excel, PowerPoint and PDF files. Steer it mid-run by typing, pause it between
   steps, review everything it changed in one place, and undo any of it. Research is cited from a
-  recorded source list and every version of a document is recoverable.
+  recorded source list, and every save is a restorable version (the newest 50 per document, plus
+  any a change set still refers to).
 - **Inspector** — the pre-production check. **Scan** audits the whole repository; **Review** reads one change — your working tree, what is staged, or this branch against its base — re-parses every file it touches, finds what was left behind, and says whether it can be merged. **Scan** runs end-to-end QA and a vulnerability assessment —
   a built-in offline audit for secrets, insecure code, and weak configuration; the project's own
   lint/type/test commands; whichever security scanners the host has; and a non-destructive probe of

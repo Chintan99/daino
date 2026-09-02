@@ -15,6 +15,18 @@ export function openDiffInEditor(path: string, staged: boolean): void {
   useEditorStore.getState().openDiff(path, staged);
 }
 
+/** Open the hunk view for a file, to stage or unstage part of it. */
+export function openHunksInEditor(path: string, staged: boolean): void {
+  useUIStore.getState().setActiveWorkspaceTab("code");
+  useEditorStore.getState().openHunks(path, staged);
+}
+
+/** Open a merge conflict with both sides shown. */
+export function openConflictInEditor(path: string): void {
+  useUIStore.getState().setActiveWorkspaceTab("code");
+  useEditorStore.getState().openConflict(path);
+}
+
 /** Where in a file to land, when opening from search or a problem list. */
 export interface FileLocation {
   line: number;

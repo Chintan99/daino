@@ -73,6 +73,271 @@ export interface SessionMessages {
   messages: SessionMessage[];
 }
 
+// ---- Debugging (CODE ▸ Debug) ----
+
+export type DebugState =
+  | "starting"
+  | "running"
+  | "stopped"
+  | "terminated"
+  | "failed";
+
+export interface DebugBreakpoint {
+  path: string;
+  /** Where the user clicked. */
+  line: number;
+  condition: string;
+  /** False means execution will not stop here — the adapter said so. */
+  verified: boolean;
+  /** Where the adapter actually put it, when it had to move it. */
+  actual_line: number;
+  moved: boolean;
+  message: string;
+}
+
+export interface DebugFrame {
+  id: number;
+  name: string;
+  path: string;
+  line: number;
+  column: number;
+}
+
+export interface DebugSessionInfo {
+  id: string;
+  adapter: string;
+  state: DebugState;
+  program: string;
+  /** "breakpoint", "step", "exception", "entry". */
+  stop_reason: string;
+  thread_id: number;
+  error: string;
+  exit_code: number | null;
+  output: string[];
+  frames: DebugFrame[];
+}
+
+export interface DebugStatus {
+  running: boolean;
+  breakpoints: DebugBreakpoint[];
+  session: DebugSessionInfo | null;
+}
+
+export interface DebugAdapterInfo {
+  id: string;
+  label: string;
+  languages: string[];
+  available: boolean;
+  install: string;
+}
+
+export interface DebugScope {
+  name: string;
+  variables_reference: number;
+  expensive: boolean;
+}
+
+export interface DebugVariable {
+  name: string;
+  value: string;
+  type: string;
+  /** Non-zero when it can be expanded. */
+  variables_reference: number;
+}
+
+// ---- Tests (CODE ▸ Tests) ----
+
+/**
+ * "errored" is distinct from "failed" on purpose: a test whose setup blew up
+ * did not test anything, and telling them apart is what stops a broken fixture
+ * reading as a broken feature.
+ */
+export type TestStatus =
+  | "passed"
+  | "failed"
+  | "errored"
+  | "skipped"
+  | "xfailed"
+  | "xpassed";
+
+export type TestRunStatus =
+  | "pending"
+  | "running"
+  | "passed"
+  | "failed"
+  | "cancelled"
+  | "errored";
+
+export interface TestResult {
+  /** The framework's own selector — the only thing that can re-run this test. */
+  id: string;
+  name: string;
+  suite: string;
+  file: string;
+  line: number;
+  status: TestStatus;
+  duration_seconds: number;
+  message: string;
+  /** Where it broke, which is often not where the test is defined. */
+  failure_file: string;
+  failure_line: number;
+}
+
+export interface FileCoverage {
+  path: string;
+  covered: number;
+  total: number;
+  missing: number[];
+}
+
+export interface TestCoverage {
+  source: string;
+  covered: number;
+  total: number;
+  files: FileCoverage[];
+}
+
+export interface TestRun {
+  id: string;
+  framework: string;
+  command: string;
+  status: TestRunStatus;
+  started_at: string;
+  finished_at: string | null;
+  duration_seconds: number;
+  results: TestResult[];
+  output: string;
+  error: string;
+  coverage: TestCoverage | null;
+  selection: string[];
+  counts: Record<TestStatus, number>;
+}
+
+export interface TestFramework {
+  id: string;
+  label: string;
+  command: string;
+  available: boolean;
+  /** Why it cannot run, or the collection error that stopped discovery. */
+  detail: string;
+  /** -1 when discovery was not attempted for this framework. */
+  test_count: number;
+  supports_coverage: boolean;
+}
+
+export interface DiscoveredTest {
+  id: string;
+  name: string;
+  suite: string;
+  file: string;
+  line: number;
+}
+
+export interface TestFrameworks {
+  frameworks: TestFramework[];
+  tests: DiscoveredTest[];
+  running: boolean;
+}
+
+export interface TestLatest {
+  running: boolean;
+  run: TestRun | null;
+}
+
+// ---- Language intelligence (LSP) ----
+
+export type DiagnosticSeverity = "error" | "warning" | "info" | "hint";
+
+export interface Diagnostic {
+  path: string;
+  /** One-based, as the editor shows it. */
+  line: number;
+  column: number;
+  end_line: number;
+  end_column: number;
+  severity: DiagnosticSeverity;
+  message: string;
+  source: string;
+  code: string;
+}
+
+/**
+ * Three outcomes, not two. `supported` false means no analyser exists for this
+ * file type; `available` false means one exists but is not installed here.
+ * Either way `diagnostics` is empty — and an empty list must never be rendered
+ * as "no problems" unless `available` is true.
+ */
+export interface DiagnosticsResult {
+  path: string;
+  supported: boolean;
+  available: boolean;
+  diagnostics: Diagnostic[];
+  detail: string;
+}
+
+export interface LanguageServerInfo {
+  id: string;
+  label: string;
+  languages: string[];
+  available: boolean;
+  install: string;
+}
+
+export interface LanguageServers {
+  servers: LanguageServerInfo[];
+  running: { language: string; server: string; label: string }[];
+}
+
+export interface CodeLocation {
+  path: string;
+  line: number;
+  column: number;
+}
+
+export interface LocationsResult {
+  available: boolean;
+  locations: CodeLocation[];
+  detail: string;
+  source?: "language-server" | "index";
+}
+
+export interface SymbolInfo {
+  name: string;
+  kind: string;
+  path: string;
+  line: number;
+  signature: string | null;
+}
+
+export interface DocumentSymbols {
+  available: boolean;
+  symbols: SymbolInfo[];
+  detail: string;
+}
+
+export interface WorkspaceSymbols {
+  symbols: SymbolInfo[];
+  /** "language-server" is semantic; "index" is text-derived and less precise. */
+  source: "language-server" | "index";
+  query: string;
+}
+
+export interface TextEdit {
+  start_line: number;
+  start_column: number;
+  end_line: number;
+  end_column: number;
+  text: string;
+}
+
+export interface RenamePreview {
+  available: boolean;
+  edits: Record<string, TextEdit[]>;
+  files?: number;
+  count?: number;
+  detail: string;
+}
+
 // ---- Files ----
 
 export type EntryType = "file" | "directory";
@@ -105,13 +370,60 @@ export interface FileWriteResult {
 export interface SearchMatch {
   path: string;
   line: number;
+  /** One-based, so the editor can select the match rather than just scroll. */
+  column?: number;
+  length?: number;
   text: string;
+  /** What this line would become, in a replace preview. */
+  replacement?: string;
 }
 
 export interface SearchResult {
   query: string;
   matches: SearchMatch[];
   success: boolean;
+  /** Set when the pattern itself is invalid — a malformed regex, usually. */
+  error?: string;
+  /** How many files held a match. */
+  files?: number;
+  /** True when the limit cut the results short, so the UI can say so. */
+  truncated?: boolean;
+  /** Binary or oversized files that were not searched. Counted, never hidden. */
+  skipped?: number;
+}
+
+export interface SearchOptions {
+  regex?: boolean;
+  case_sensitive?: boolean;
+  whole_word?: boolean;
+  /** Comma-separated globs, e.g. "src/**,*.ts". */
+  include?: string;
+  exclude?: string;
+  /** Present makes the request a preview: each match carries its new line. */
+  replace?: string;
+}
+
+export interface ReplaceResult {
+  files: string[];
+  replacements: number;
+  errors: string[];
+}
+
+/** One runnable command a project declares. */
+export interface ProjectTask {
+  id: string;
+  label: string;
+  command: string;
+  /** Which file it came from: "npm", "make", "just", "compose", "user"… */
+  source: string;
+  cwd: string;
+  detail: string;
+  kind: "run" | "build" | "test" | "lint" | "other" | string;
+}
+
+export interface ProjectTasks {
+  tasks: ProjectTask[];
+  tasks_file: string;
 }
 
 // ---- Git ----
@@ -127,6 +439,85 @@ export interface GitStatus {
   staged: GitEntry[];
   modified: GitEntry[];
   untracked: GitEntry[];
+}
+
+export interface GitHunkLine {
+  kind: "added" | "removed" | "context" | "marker";
+  text: string;
+}
+
+export interface GitHunk {
+  /** Position within this file's hunk list, for this reading of the diff. */
+  index: number;
+  header: string;
+  /** The function or class Git names after the closing `@@`. */
+  heading: string;
+  old_start: number;
+  new_start: number;
+  added: number;
+  removed: number;
+  lines: GitHunkLine[];
+}
+
+export interface GitHunks {
+  path: string;
+  staged: boolean;
+  binary: boolean;
+  hunks: GitHunk[];
+}
+
+export interface GitBranch {
+  name: string;
+  upstream: string;
+  current: boolean;
+  ahead: number;
+  behind: number;
+  /** The upstream this tracked was deleted on the remote. */
+  gone: boolean;
+  commit: string;
+  subject: string;
+}
+
+export interface GitBranches {
+  repository: boolean;
+  current?: string;
+  branches: GitBranch[];
+  remote_branches: string[];
+  remotes: { name: string; url: string }[];
+}
+
+/** A merge, rebase or cherry-pick that has been started and not finished. */
+export interface GitMergeState {
+  merging: boolean;
+  rebasing: boolean;
+  cherry_picking: boolean;
+  message: string;
+  conflicts: string[];
+}
+
+export interface GitCommitContext extends Partial<GitMergeState> {
+  repository: boolean;
+  branch?: string;
+  staged?: GitEntry[];
+  can_amend?: boolean;
+  previous_message?: string;
+}
+
+export interface GitConflictSides {
+  path: string;
+  /** null when the file did not exist on that side. */
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+  /** The working-tree file, markers and all. */
+  merged: string;
+  language: string;
+}
+
+export interface GitSyncResult extends Partial<GitMergeState> {
+  output: string;
+  conflicted?: boolean;
+  branches?: GitBranch[];
 }
 
 export interface GitDiff {
@@ -169,7 +560,7 @@ export interface Design {
   version: number;
   nodes: DesignNode[];
   edges: DesignEdge[];
-  frames: unknown[];
+  frames: DesignFrame[];
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -184,6 +575,50 @@ export interface DesignSummary {
   edge_count: number;
   frame_count: number;
   updated_at: string;
+}
+
+export type PlanStatus = "proposed" | "approved" | "rejected" | "implemented";
+
+export interface PlanStep {
+  description: string;
+  /** Paths the plan claimed it would touch — advisory, and reviewable. */
+  paths: string[];
+}
+
+export interface DesignPlan {
+  design_id: string;
+  status: PlanStatus;
+  summary: string;
+  steps: PlanStep[];
+  reviewed_paths: string[];
+  questions: string[];
+  rejection_reason: string;
+  session_id: string;
+  /** The design's version when the plan was written. */
+  design_version: number;
+  created_at: string;
+  updated_at: string;
+  implemented_at: string | null;
+}
+
+export interface DesignPlanStatus {
+  plan: DesignPlan | null;
+  /** Whether implementation is allowed right now — from the same gate the
+   *  endpoint uses, so the button and the server cannot disagree. */
+  can_implement: boolean;
+  /** Why not, when not. */
+  reason: string;
+  design_version: number;
+  /** The plan was written for an older version of the canvas. */
+  stale: boolean;
+}
+
+export interface DesignFrame {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  children: Record<string, unknown>[];
 }
 
 export interface DesignList {
@@ -230,6 +665,7 @@ export type WsEventKind =
   | "MissionFailed"
   | "TaskStarted"
   | "TaskCompleted"
+  | "TaskSplit"
   | "TodoUpdated"
   | "ContextCompacted"
   | "AgentRoleChanged"
@@ -434,6 +870,15 @@ export interface QASpecialist {
   error: string;
 }
 
+/** Which working tree a report was taken from. */
+export interface CheckoutFingerprint {
+  commit: string;
+  branch: string;
+  /** sha256 over the commit, the porcelain status, and the tracked diff. */
+  digest: string;
+  dirty: boolean;
+}
+
 export interface QAReport {
   id: string;
   status: QAStatus;
@@ -450,6 +895,8 @@ export interface QAReport {
   findings: QAFinding[];
   verdict: QAVerdict;
   gate_reasons: string[];
+  /** The checkout this verdict is about; empty digest means unpinnable. */
+  checkout?: CheckoutFingerprint;
 }
 
 /** What the Inspector asks the backend to run. */
@@ -498,6 +945,10 @@ export interface ChangeReview {
   verdict: QAVerdict;
   gate_reasons: string[];
   mission_id: string;
+  /** The checkout the diff was taken from, so a stale review reads as stale. */
+  checkout?: CheckoutFingerprint;
+  /** Whether the stored patch was clipped at the archive ceiling. */
+  patch_truncated?: boolean;
 }
 
 /** What a review of a scope would cover, resolved without running one. */
@@ -515,6 +966,8 @@ export interface ReviewSubject {
 export interface ReviewLatest {
   running: boolean;
   review: ChangeReview | null;
+  /** True when the reviewed checkout no longer matches the working tree. */
+  stale?: boolean;
 }
 
 export interface ReviewHistory {
@@ -531,6 +984,12 @@ export interface RunReviewRequest {
 export interface QALatest {
   running: boolean;
   report: QAReport | null;
+  /**
+   * True when the report's checkout no longer matches the working tree. A
+   * verdict describes code, so once the code moves the verdict is history —
+   * the tab badge has to stop claiming this checkout was cleared.
+   */
+  stale?: boolean;
 }
 
 export interface QAHistory {
@@ -994,6 +1453,12 @@ export interface Artifact {
   extracted_path: string;
   /** Why an upload is unreadable, when it is. */
   warning: string;
+  /**
+   * sha256 of the file as it was read; only set by the single-document read.
+   * Sent back on save so an edit written against a version the agent has since
+   * replaced is refused instead of silently overwriting it.
+   */
+  digest?: string;
 }
 
 export interface ArtifactContent {

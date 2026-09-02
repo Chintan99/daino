@@ -8,6 +8,8 @@ a code block while the file on disk stayed exactly as it was.
 from __future__ import annotations
 
 import json
+import shlex
+import sys
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,8 +30,14 @@ def _is_change(line: str) -> bool:
 
 
 ORIGINAL = "<!DOCTYPE html>\n<html>\n<body>\n<h1>Welcome</h1>\n</body>\n</html>\n"
+#: Passes the first time it runs and fails every time after, so a turn that
+#: verifies twice sees the second result. ``sys.executable`` rather than
+#: "python": that name does not exist on modern macOS or most Linux distros, so
+#: the command failed with "not found" both times and the check was never
+#: actually flaky.
 FLAKY_CHECK = (
-    "python -c \"from pathlib import Path; p=Path('.vasuki-flaky-check'); "
+    f"{shlex.quote(sys.executable)} -c \"from pathlib import Path; "
+    "p=Path('.vasuki-flaky-check'); "
     "first=not p.exists(); p.write_text('seen'); raise SystemExit(0 if first else 1)\""
 )
 

@@ -17,6 +17,38 @@ _NEUTRAL_SCORE = 5
 #: a working transcript at once, so compact mode is the honest choice.
 _COMPACT_BUDGET_TOKENS = 12_000
 
+#: The share of the compaction threshold that must stay free for the transcript.
+#:
+#: This exists because of a specific, silent stall. The scaffolding compaction
+#: re-adds every pass — instructions, retrieved memory, bundled sources — was
+#: sized as a fraction of the *input budget*, while compaction fires at a
+#: fraction of that same budget. On a 32k window that worked out to 14,000
+#: tokens of scaffolding under a 15,121-token threshold: 1,121 tokens of room
+#: for everything the agent actually did. One ``read_file`` of a 6k-token source
+#: file blew straight through it, compaction shed the only thing it could — the
+#: transcript, including that read — and the agent, having lost the file, read it
+#: again. Three repeats and the no-progress guard killed the run with "the model
+#: is stuck; rephrase the request", which no rephrasing could fix.
+#:
+#: So the scaffolding is now sized against the threshold it has to fit under,
+#: and this is the floor it must leave behind.
+_MIN_WORKING_FRACTION = 0.45
+#: Retrieved memory is the most expendable of the three, so it is capped at a
+#: modest share of the scaffolding before the bundle is squeezed at all.
+_MEMORY_SHARE_OF_SCAFFOLD = 0.25
+
+#: A source file this size is ordinary — the one in the field report was 478
+#: lines of Python — so it is the unit a task's file count is measured in.
+#: Defined here rather than in the test so the sizing and the assertion that
+#: guards it cannot drift apart.
+TYPICAL_SOURCE_FILE_TOKENS = 6_000
+
+#: Beyond this a task stops being a reviewable vertical slice regardless of what
+#: the window affords. A product judgement, not an arithmetic one: eight files
+#: is already a large diff to read in one sitting, and a model with a million
+#: tokens of room does not make a twenty-file task easier to check.
+_MAX_FILES_PER_TASK_CEILING = 8
+
 
 class ExecutionMode(StrEnum):
     STANDARD = "standard"
@@ -57,6 +89,7 @@ class ModelExecutionProfile:
         project_budget_tokens: int,
         memory_items: int,
         memory_tokens: int,
+        compaction_threshold: float = 0.80,
     ) -> ModelExecutionProfile:
         # Capability scores default to the neutral value 5 when a provider is
         # first configured, so they are not evidence about any model — remote or
@@ -108,6 +141,34 @@ class ModelExecutionProfile:
             max_source_files = None
             per_file_tokens = None
             recent_groups = 6
+        # Everything above sized the scaffolding against the input budget. What
+        # it must actually fit under is the *compaction threshold*, because that
+        # is the point at which the transcript starts being thrown away — and
+        # the scaffolding is re-added in full on every pass, so whatever it
+        # takes is permanently unavailable to the agent's working context.
+        #
+        # Without this the two references disagreed by 20% and the scaffolding
+        # ate 93% of the threshold, leaving too little room to hold a single
+        # source file. See _MIN_WORKING_FRACTION.
+        compaction_budget = max(1_024, int(input_budget_tokens * compaction_threshold))
+        scaffold_ceiling = max(
+            1_024, int(compaction_budget * (1.0 - _MIN_WORKING_FRACTION))
+        )
+        selected_memory_tokens = min(
+            selected_memory_tokens,
+            max(256, int(scaffold_ceiling * _MEMORY_SHARE_OF_SCAFFOLD)),
+        )
+        bundle_ceiling = max(768, scaffold_ceiling - selected_memory_tokens)
+        if instruction_tokens + source_tokens > bundle_ceiling:
+            # Scaled rather than truncated, so the instruction/source ratio the
+            # mode chose is preserved — a compact profile keeps its emphasis on
+            # instructions, a standard one on sources.
+            scale = bundle_ceiling / (instruction_tokens + source_tokens)
+            instruction_tokens = max(256, int(instruction_tokens * scale))
+            source_tokens = max(512, int(source_tokens * scale))
+        # The initial bundle is drawn from the same allowance, so it cannot
+        # exceed it either.
+        initial = min(initial, max(768, scaffold_ceiling))
         # Zero means unlimited. Long, productive tasks must not be terminated
         # merely because they crossed an arbitrary turn count; operators can
         # still opt into a hard ceiling per model profile.
@@ -129,6 +190,99 @@ class ModelExecutionProfile:
             staged_retrieval=model.staged_retrieval,
             one_action_per_turn=compact,
         )
+
+
+@dataclass(frozen=True)
+class CapabilityEnvelope:
+    """What the model that will *execute* a task can actually hold at once.
+
+    ``ModelExecutionProfile`` shapes context packing while a task runs. This
+    describes the same limits to whoever decides what a task *is* — the planner,
+    and the splitter that catches a task the planner sized wrong. The two must
+    come from one arithmetic, so this is derived from the profile rather than
+    recomputed beside it.
+
+    Two of the numbers deserve their reasoning stated:
+
+    ``working_headroom_tokens`` is the compaction threshold minus the
+    scaffolding, and is *exactly* the quantity ``resolve()`` sizes against (see
+    ``_MIN_WORKING_FRACTION``) — the room left for the transcript once the
+    instructions, memory and bundled sources compaction re-adds on every pass
+    have taken their share. It is not a second notion of headroom; it names the
+    existing one.
+
+    ``task_source_budget_tokens`` is ``min(source_tokens, working_headroom)``.
+    ``source_tokens`` is what the bundle can *carry*; the headroom is what the
+    agent has left to *work in* after that bundle is re-added on every
+    compaction pass. A task whose files fit the bundle but exceed the headroom
+    is precisely the thrash case: the read succeeds, compaction sheds the
+    transcript that held it, and the agent reads the same file again.
+    """
+
+    profile_name: str
+    compact: bool
+    one_action_per_turn: bool
+    max_steps: int | None
+    working_headroom_tokens: int
+    source_tokens: int
+    max_files_per_task: int
+    task_source_budget_tokens: int
+
+    @classmethod
+    def from_profile(
+        cls,
+        profile: ModelExecutionProfile,
+        *,
+        compaction_threshold: float = 0.80,
+    ) -> CapabilityEnvelope:
+        scaffold = profile.instruction_tokens + profile.source_tokens + profile.memory_tokens
+        threshold = int(profile.input_budget_tokens * compaction_threshold)
+        headroom = max(0, threshold - scaffold)
+        source_budget = max(1, min(profile.source_tokens, headroom or profile.source_tokens))
+        # How many ordinary files that budget admits, floored at one: a task
+        # must always be expressible, even on a window that can only hold part
+        # of a single file. The cases that produces are what the splitter's
+        # "one path over budget" branch exists for.
+        affordable = max(1, source_budget // TYPICAL_SOURCE_FILE_TOKENS)
+        ceiling = _MAX_FILES_PER_TASK_CEILING
+        if profile.max_source_files:
+            # A compact profile will not even pack more than this many, so
+            # planning for more would be planning for files the agent is
+            # guaranteed never to see.
+            ceiling = min(ceiling, profile.max_source_files)
+        return cls(
+            profile_name=profile.profile_name,
+            compact=profile.compact,
+            one_action_per_turn=profile.one_action_per_turn,
+            max_steps=profile.max_steps,
+            working_headroom_tokens=headroom,
+            source_tokens=profile.source_tokens,
+            max_files_per_task=min(affordable, ceiling),
+            task_source_budget_tokens=source_budget,
+        )
+
+    def describe(self) -> str:
+        """Render the limits for a prompt, in numbers a model can arithmetic on.
+
+        Deliberately free of "small", "a few" and "large": the repository
+        summary already gives the planner each file's size in bytes, so stating
+        the budget in tokens *and* characters lets it do the comparison instead
+        of guessing what those words mean.
+        """
+        lines = [
+            f"- Executor model profile: {self.profile_name}"
+            f"{' (compact mode)' if self.compact else ''}",
+            f"- Files per task: at most {self.max_files_per_task}",
+            f"- Source per task: at most {self.task_source_budget_tokens} tokens"
+            f" (~{self.task_source_budget_tokens * 4} characters of file content)",
+            f"- Working room after that context is loaded:"
+            f" {self.working_headroom_tokens} tokens",
+        ]
+        if self.one_action_per_turn:
+            lines.append("- The executor takes exactly one action per turn.")
+        if self.max_steps:
+            lines.append(f"- The executor stops after {self.max_steps} steps per task.")
+        return "\n".join(lines)
 
 
 def adapt_context_bundle(

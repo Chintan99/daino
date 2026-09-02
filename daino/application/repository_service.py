@@ -155,6 +155,40 @@ class RepositoryApplicationService:
     def find_references(self, name: str) -> list[dict[str, int | str]]:
         return self.indexer.find_references(name)
 
+    def find_references_at(self, relative: str, line: int) -> list[dict[str, Any]]:
+        """Textual occurrences of whatever identifier sits at ``relative:line``.
+
+        The fallback for a project with no language server installed. It reads
+        the identifier off the line and greps the index for it, which finds real
+        uses and also finds the same word in a comment — so callers label it as
+        text matching rather than as references. Never good enough to drive a
+        rename; good enough to navigate.
+        """
+        import re
+
+        target = (self.context.root / relative).resolve()
+        try:
+            lines = target.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            return []
+        if line < 1 or line > len(lines):
+            return []
+        # The longest identifier on the line is nearly always the one being
+        # asked about — a def, class, or assignment target.
+        names = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", lines[line - 1])
+        if not names:
+            return []
+        wanted = max(names, key=len)
+        return [
+            {
+                "path": str(item.get("path", "")),
+                "line": int(item.get("line", 0)),
+                "column": 1,
+                "text": str(item.get("text", "")),
+            }
+            for item in self.indexer.find_references(wanted)
+        ]
+
     def intelligence(self) -> dict[str, Any]:
         index = self.indexer.load()
         return {

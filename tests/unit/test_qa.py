@@ -18,7 +18,14 @@ from daino.application.qa_service import (
     merge_duplicates,
     specialist_plan,
 )
-from daino.schemas import QAAgentAction, QACheck, QAFinding, QAReport, QASeverity
+from daino.schemas import (
+    QAAgentAction,
+    QACheck,
+    QAFinding,
+    QAReport,
+    QASeverity,
+    QASpecialist,
+)
 
 
 def _tool_names() -> set[str]:
@@ -261,6 +268,71 @@ def test_a_critical_finding_or_a_failing_test_blocks_the_release() -> None:
     assert "1 critical finding(s)" in reasons[0]
     assert failing_tests == "blocked"
     assert "Python tests" in test_reasons[0]
+
+
+def test_a_failing_browser_test_blocks_the_release() -> None:
+    """Playwright has its own category, not a softer standard.
+
+    A completed report whose end-to-end run failed used to return "pass",
+    because the gate only counted the category literally named "tests".
+    """
+    verdict, reasons = evaluate_gate(
+        _report(
+            checks=[
+                QACheck(
+                    id="playwright",
+                    label="Playwright end-to-end",
+                    category="browser",
+                    status="failed",
+                    summary="2 specs failed",
+                )
+            ]
+        )
+    )
+
+    assert verdict == "blocked"
+    assert "Playwright end-to-end" in reasons[0]
+
+
+def test_a_failed_live_probe_is_never_silent() -> None:
+    """The app not answering may mean it stopped — but it is not a clean pass."""
+    verdict, reasons = evaluate_gate(
+        _report(
+            checks=[
+                QACheck(
+                    id="live-probe",
+                    label="Live application probe",
+                    category="runtime",
+                    status="failed",
+                )
+            ]
+        )
+    )
+
+    assert verdict == "warn"
+    assert any("did not answer" in reason for reason in reasons)
+
+
+def test_a_clean_verdict_says_the_reviewers_were_not_counted() -> None:
+    """Model prose cannot be tallied, so the gate must not imply it agreed."""
+    report = _report()
+    report.specialists = [
+        QASpecialist(
+            id="security",
+            label="Security reviewer",
+            role="reviewer",
+            objective="read the code",
+            status="passed",
+            summary="I am uneasy about the token handling in auth.py.",
+        )
+    ]
+
+    verdict, reasons = evaluate_gate(report)
+
+    assert verdict == "pass"
+    advisory = next(reason for reason in reasons if reason.startswith("Advisory:"))
+    assert "Security reviewer" in advisory
+    assert "NOT part of this verdict" in advisory
 
 
 def test_high_findings_block_only_once_they_cluster() -> None:

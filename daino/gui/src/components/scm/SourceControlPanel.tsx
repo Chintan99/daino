@@ -1,8 +1,16 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useGitStatus } from "../../api/hooks";
 import { api } from "../../api/client";
 import { useEditorStore, diffTabId } from "../../store/editorStore";
-import { openDiffInEditor, openFileInEditor } from "../../lib/openFile";
+import {
+  openConflictInEditor,
+  openDiffInEditor,
+  openFileInEditor,
+  openHunksInEditor,
+} from "../../lib/openFile";
+import { conflictTabId } from "../../store/editorStore";
+import { BranchBar } from "./BranchBar";
+import { CommitBox } from "./CommitBox";
 import type { GitEntry } from "../../api/types";
 
 type Group = "staged" | "modified" | "untracked";
@@ -74,10 +82,26 @@ function Section({
             </span>
             <span className="tree-name">{e.path}</span>
             <span className="acts">
+              {group !== "untracked" && (
+                <button
+                  className="btn icon"
+                  title={
+                    staged
+                      ? "Unstage part of this file"
+                      : "Stage part of this file"
+                  }
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    openHunksInEditor(e.path, staged);
+                  }}
+                >
+                  ⁝
+                </button>
+              )}
               {staged ? (
                 <button
                   className="btn icon"
-                  title="Unstage"
+                  title="Unstage the whole file"
                   onClick={(ev) => {
                     ev.stopPropagation();
                     void act(() => api.gitUnstage([e.path]));
@@ -107,7 +131,7 @@ function Section({
                   )}
                   <button
                     className="btn icon"
-                    title="Stage"
+                    title="Stage the whole file"
                     onClick={(ev) => {
                       ev.stopPropagation();
                       void act(() => api.gitStage([e.path]));
@@ -129,6 +153,12 @@ export function SourceControlPanel() {
   const qc = useQueryClient();
   const { data: git, isLoading } = useGitStatus();
   const activeTabId = useEditorStore((s) => s.activeTabId);
+  // Polled with the rest of the git queries, so a merge started from the
+  // terminal shows up here without anyone reloading.
+  const { data: merge } = useQuery({
+    queryKey: ["git", "conflicts"],
+    queryFn: api.gitConflicts,
+  });
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["git"] });
@@ -156,15 +186,39 @@ export function SourceControlPanel() {
         )}
         {git?.repository && (
           <>
-            <div
-              style={{
-                padding: "7px 10px",
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              <span className="badge info">⑃ {git.branch || "detached"}</span>
-            </div>
-            {clean && <div className="empty">No changes</div>}
+            <BranchBar />
+            {(merge?.conflicts.length ?? 0) > 0 && (
+              <div className="scm-section">
+                <div className="scm-title">
+                  Conflicts
+                  <span className="badge warn">{merge?.conflicts.length}</span>
+                  <span className="grow" />
+                  <button
+                    className="btn icon"
+                    title="Abandon the merge and go back"
+                    onClick={() =>
+                      void api.gitAbortMerge().then(refresh)
+                    }
+                  >
+                    ✕
+                  </button>
+                </div>
+                {merge?.conflicts.map((path) => (
+                  <div
+                    key={path}
+                    className={`scm-row ${
+                      activeTabId === conflictTabId(path) ? "active" : ""
+                    }`}
+                    onClick={() => openConflictInEditor(path)}
+                    title={`${path} — click to resolve`}
+                  >
+                    <span className="scm-mark conflict">!</span>
+                    <span className="scm-path ellipsis">{path}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {clean && !merge?.merging && <div className="empty">No changes</div>}
             <Section
               title="Staged"
               group="staged"
@@ -186,6 +240,7 @@ export function SourceControlPanel() {
               activeTabId={activeTabId}
               onRefresh={refresh}
             />
+            <CommitBox />
           </>
         )}
       </div>

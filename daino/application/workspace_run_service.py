@@ -30,6 +30,7 @@ import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from daino.agents import THRASHING_COMPACTIONS, IncompleteRun
 from daino.application.context import ProjectContext
 from daino.application.mission_service import MissionApplicationService
 from daino.events import WorkspaceRunUpdated
@@ -211,6 +212,9 @@ class WorkspaceRunApplicationService:
             raise RunError("This run has finished; send it as a new message instead.")
         control = self._controls.setdefault(run_id, _Control())
         control.steering.append(text)
+        # New direction is a fresh start: the streak that would have stopped the
+        # run was about a plan nobody was correcting.
+        self.clear_failure_streak(run_id)
         self.runs.add_step(run_id, "steer", text)
         self._publish(run, message="Plan updated from your instruction")
         if run.status == "waiting_for_user":
@@ -308,7 +312,6 @@ class WorkspaceRunApplicationService:
     async def _execute(self, run_id: str) -> None:
         """Work the plan until it is done, blocked, paused, or stopped."""
         control = self._controls.setdefault(run_id, _Control())
-        failures = 0
         try:
             while True:
                 run = self.get(run_id)
@@ -335,7 +338,7 @@ class WorkspaceRunApplicationService:
                     return
 
                 ok = await self._run_task(run_id, workspace, task)
-                failures = 0 if ok else failures + 1
+                failures = self._count_failure(run_id, succeeded=ok)
                 if not ok:
                     if failures >= MAX_CONSECUTIVE_FAILURES:
                         self._settle(
@@ -347,8 +350,8 @@ class WorkspaceRunApplicationService:
                     self._settle(
                         run_id,
                         "waiting_for_user",
-                        f"'{task.content}' did not finish. Retry it, skip it, or tell "
-                        "Daino what to do differently.",
+                        f"'{task.content}' did not finish ({failures} in a row). Retry "
+                        "it, skip it, or tell Daino what to do differently.",
                     )
                     return
         except asyncio.CancelledError:
@@ -385,6 +388,19 @@ class WorkspaceRunApplicationService:
         except asyncio.CancelledError:
             self.workbench.update_task(workspace.id, task.id, status="pending")
             raise
+        except IncompleteRun as exc:
+            reason = _oversized_step_reason(exc) or str(exc).strip() or exc.__class__.__name__
+            self.changes.record(
+                workspace.id,
+                before=before,
+                run_id=run_id,
+                task_id=task.id,
+                summary=f"Left behind by a step that stopped early: {reason}"[:2_000],
+            )
+            self._fail_task(workspace.id, task, reason)
+            self.runs.add_step(run_id, "task_failed", f"{task.content} — {reason}", task_id=task.id)
+            self._publish(self.get(run_id), task_id=task.id, message=f"Step failed: {reason}")
+            return False
         except Exception as exc:  # noqa: BLE001 - the failure is the result here
             reason = str(exc).strip() or exc.__class__.__name__
             # A step that failed may still have written something. Grouping it
@@ -429,6 +445,37 @@ class WorkspaceRunApplicationService:
         )
         self._publish(self.get(run_id), task_id=task.id, message=f"Finished: {task.content}")
         return True
+
+    def clear_failure_streak(self, run_id: str) -> None:
+        """Forget the consecutive-failure tally.
+
+        Called when a person intervenes — skipping a step, or steering. The
+        guard exists to stop an *unattended* loop retrying its way through a
+        plan that does not work; someone actively deciding to move on is the
+        opposite of that, and should not inherit the count.
+        """
+        run = self.runs.get(run_id)
+        if run is None or "consecutive_failures" not in run.metadata:
+            return
+        metadata = {k: v for k, v in run.metadata.items() if k != "consecutive_failures"}
+        self.runs.update(run_id, metadata=metadata)
+
+    def _count_failure(self, run_id: str, *, succeeded: bool) -> int:
+        """Track consecutive failures on the run row, and return the tally.
+
+        It cannot live in :meth:`_execute`: a failure settles the run at
+        ``waiting_for_user`` and returns, so Retry starts a *new* invocation.
+        A counter in that stack frame is zero every time it is read, which made
+        :data:`MAX_CONSECUTIVE_FAILURES` unreachable — a plan that fails the same
+        step forever would keep asking forever instead of giving up.
+        """
+        run = self.get(run_id)
+        failures = 0 if succeeded else int(run.metadata.get("consecutive_failures", 0)) + 1
+        metadata = {**run.metadata, "consecutive_failures": failures}
+        if succeeded:
+            metadata.pop("consecutive_failures", None)
+        self.runs.update(run_id, metadata=metadata)
+        return failures
 
     async def _apply_steering(self, run_id: str, control: _Control) -> None:
         """Fold the user's new direction into the plan before the next step."""
@@ -593,6 +640,24 @@ executor does that, step by step, straight after this."""
 
 
 # ------------------------------------------------------------------ helpers
+
+
+def _oversized_step_reason(exc: IncompleteRun) -> str:
+    """Name the size problem, when that is what it was.
+
+    A workspace plan is prose, so nothing here can split a step automatically —
+    but the run can say which step was too big and what to do about it, instead
+    of reporting a generic stall the user cannot act on. The run settles at
+    ``waiting_for_user``, where editing the plan and retrying is one click away.
+    """
+    if exc.outcome.stop_reason != "stall" or exc.outcome.compactions < THRASHING_COMPACTIONS:
+        return ""
+    return (
+        "This step was too large for the model running it: the context was compacted "
+        f"{exc.outcome.compactions} times and the work kept being lost before it finished. "
+        "Split this step into smaller ones — each producing a single artifact — and retry, "
+        "or switch to a model with a larger context window."
+    )
 
 
 def _next_task(tasks: list[WorkspaceTask]) -> WorkspaceTask | None:

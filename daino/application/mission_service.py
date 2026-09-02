@@ -15,16 +15,17 @@ from typing import Any
 from sqlalchemy import func, select
 
 from daino.agents import ReviewerAgent, TeamLead, TeamRunner, validate_team_plan
-from daino.agents.loop import ToolLoop, describe_incomplete_outcome
+from daino.agents.loop import IncompleteRun, ToolLoop, describe_incomplete_outcome
 from daino.agents.tool_schemas import (
     AGENT_TOOL_SPECS,
     CHAT_TOOL_SPECS,
+    PLANNING_TOOL_SPECS,
     WORKSPACE_TOOL_SPECS,
 )
 from daino.application.attention import TurnAttention
 from daino.application.context import ProjectContext
 from daino.application.view_models import ConversationItem, MissionSummary
-from daino.context import ModelExecutionProfile
+from daino.context import CapabilityEnvelope, ModelExecutionProfile
 from daino.design import DesignService
 from daino.events import (
     ApprovalResolved,
@@ -119,12 +120,22 @@ def _with_partial_changes(reason: str, diffs: list[FileDiff]) -> str:
 DEFAULT_SESSION_TITLE = "General repository questions"
 
 
-def workspace_system_prompt(workspace: Workspace, template: WorkspaceTemplate) -> str:
+def workspace_system_prompt(
+    workspace: Workspace,
+    template: WorkspaceTemplate,
+    envelope: CapabilityEnvelope | None = None,
+) -> str:
     """The workspace agent's contract, plus this workspace's own context.
 
     The goal and the work type go in the system prompt rather than the user
     message because they hold for every turn: the agent should not need the user
     to restate what the workspace is for each time they ask for something.
+
+    ``envelope`` scales the *plan* to the executing model. A workspace step has
+    no file scope to pack — the work is prose, and ``WorkspaceTask`` is a line of
+    text — so there is nothing here to split automatically. What can be done is
+    to tell the model writing the plan how much one step may contain, which is
+    the honest translation of a per-task file budget into knowledge work.
     """
     parts = [WORKSPACE_AGENT_SYSTEM, "", f"Workspace: {workspace.name}"]
     if workspace.goal:
@@ -134,7 +145,35 @@ def workspace_system_prompt(workspace: Workspace, template: WorkspaceTemplate) -
         parts.extend(
             ["", f"This is a {template.title.lower()} workspace.", template.preamble.strip()]
         )
+    scale = _workspace_step_scale(envelope)
+    if scale:
+        parts.extend(["", scale])
     return "\n".join(parts)
+
+
+def _workspace_step_scale(envelope: CapabilityEnvelope | None) -> str:
+    if envelope is None:
+        return ""
+    lines = ["Scale each plan step to the model that will run it:"]
+    if envelope.max_files_per_task <= 1:
+        lines.append(
+            "- Each step must end with exactly one artifact created or updated. A step that "
+            "would produce two documents is two steps."
+        )
+    else:
+        lines.append(
+            f"- A step may create or update at most {envelope.max_files_per_task} documents."
+        )
+    lines.append(
+        f"- About {envelope.task_source_budget_tokens * 4} characters of existing material can "
+        "be loaded into one step; a step needing to read more than that is several steps."
+    )
+    if envelope.max_steps:
+        lines.append(
+            f"- The executor stops after {envelope.max_steps} actions per step, so a step that "
+            "needs more than that must be broken up."
+        )
+    return "\n".join(lines)
 
 
 class MissionApplicationService:
@@ -569,6 +608,36 @@ class MissionApplicationService:
         )
         return mission, requirements, plan
 
+    def _turn_sizing(
+        self,
+        gateway: object,
+        role: ModelRole,
+        tools: list[dict[str, Any]],
+    ) -> tuple[int, ModelExecutionProfile | None, CapabilityEnvelope | None]:
+        """Budget, profile and envelope for one turn — all for the same model.
+
+        Resolved together because they must agree. They used to be read
+        separately and all three named ``ModelRole.BUILDER``, while the turn
+        itself might run as ``researcher``: the context was packed for one
+        model's window and handed to another. That is the same shape as the
+        compaction stall, where scaffolding was sized against one limit and
+        compaction fired at a different one.
+
+        Each is guarded because the test suite's gateways are duck types that
+        expose only ``structured``.
+        """
+        budgeter = getattr(gateway, "context_budget", None)
+        budget = (
+            budgeter(role, tools=tools)
+            if callable(budgeter)
+            else self.context.settings.project.context_budget_tokens
+        )
+        profile_resolver = getattr(gateway, "execution_profile", None)
+        profile = profile_resolver(role, tools=tools) if callable(profile_resolver) else None
+        envelope_resolver = getattr(gateway, "capability_envelope", None)
+        envelope = envelope_resolver(role, tools=tools) if callable(envelope_resolver) else None
+        return budget, profile, envelope
+
     def workspace_role(self, profile_override: str = "") -> ModelRole:
         """Pick the role that runs a Workspace turn.
 
@@ -894,6 +963,7 @@ class MissionApplicationService:
         profile_override: str = "",
         approve: ApprovalCallback | None = None,
         approve_action: ActionApprovalCallback | None = None,
+        read_only: bool = False,
     ) -> ChatOutcome:
         """Run the agent on one chat turn: it answers, or it edits and reports the diff.
 
@@ -901,6 +971,12 @@ class MissionApplicationService:
         grounded tools the builder has plus ``respond``, and it decides which the
         request called for — a request to change something is carried out rather
         than described.
+
+        ``read_only`` is the exception, and it is enforced in three places at
+        once: the tool surface omits every mutating tool, ``EditTools`` refuses
+        mutations outright, and no command runner is attached. One of those
+        alone would be a restriction the model could talk its way past; a
+        planning turn must be unable to write, not merely discouraged from it.
         """
         if not self.core._role_available(ModelRole.BUILDER, profile_override):
             raise ConfigurationError(
@@ -927,18 +1003,15 @@ class MissionApplicationService:
             self.context.root, self.context.database, events=self.context.events
         )
         workspace = self._session_workspace(session_id, workbench)
-        tools = self._chat_tool_specs(workspace)
-        budgeter = getattr(gateway, "context_budget", None)
-        model_budget = (
-            budgeter(ModelRole.BUILDER, tools=tools)
-            if callable(budgeter)
-            else self.context.settings.project.context_budget_tokens
-        )
-        profile_resolver = getattr(gateway, "execution_profile", None)
-        execution_profile = (
-            profile_resolver(ModelRole.BUILDER, tools=tools)
-            if callable(profile_resolver)
-            else None
+        tools = PLANNING_TOOL_SPECS if read_only else self._chat_tool_specs(workspace)
+        # Resolved once, here, because the budget and the execution profile must
+        # describe the model that will actually run the turn. A workspace turn
+        # may route to `researcher`, and sizing it against the builder's window
+        # is the same class of mistake as the compaction thrash: the context is
+        # packed for one model and handed to another.
+        turn_role = self.workspace_role(profile_override) if workspace else ModelRole.BUILDER
+        model_budget, execution_profile, turn_envelope = self._turn_sizing(
+            gateway, turn_role, tools
         )
         context_reserve = min(2_048, max(512, model_budget // 4))
         context_budget = min(
@@ -958,6 +1031,7 @@ class MissionApplicationService:
             self.context.root,
             require_read_before_write=True,
             seen_files=set(base_context.included_paths),
+            read_only=read_only,
         )
         runtime, runner = await self._command_runner(session_id, approve)
         if runner.unavailable:
@@ -994,7 +1068,10 @@ class MissionApplicationService:
             )
         executor = RecordingActionExecutor(
             editor,
-            runner,
+            # The third lock on a planning turn: with no runner attached,
+            # `run_command` is refused by the executor itself rather than
+            # merely absent from the tool list.
+            None if read_only else runner,
             web=SourceRecordingWeb(
                 WebResearchTool(
                     approve=approve,
@@ -1015,14 +1092,16 @@ class MissionApplicationService:
         )
         loop = ToolLoop(
             gateway,
-            self.workspace_role(profile_override) if workspace else ModelRole.BUILDER,
+            turn_role,
             executor,
             on_action_start=self._record_chat_action_started(mission.id),
             # A workspace turn is knowledge work, not repository work, so it gets
             # its own contract: documents instead of code, and no demand for
             # verification commands that a written report cannot have.
             system=(
-                workspace_system_prompt(workspace, workbench.templates.get(workspace.kind))
+                workspace_system_prompt(
+                    workspace, workbench.templates.get(workspace.kind), turn_envelope
+                )
                 if workspace
                 else CHAT_AGENT_SYSTEM
             ),
@@ -1039,10 +1118,14 @@ class MissionApplicationService:
                 history=history,
             )
             if not result.completed:
-                raise RuntimeError(
+                # Carries the outcome so a workspace run can tell "this step was
+                # too large for this model" from "the model is stuck", and say
+                # the right thing about it.
+                raise IncompleteRun(
                     describe_incomplete_outcome(
                         result, role_label="coding", pinned=bool(profile_override)
-                    )
+                    ),
+                    result,
                 )
         except Exception as exc:
             # A turn that stops early has usually already changed files, and

@@ -210,6 +210,55 @@ def test_the_researcher_role_is_optional(tmp_path: Path) -> None:
     assert service.workspace_role("cheap") == ModelRole.BUILDER
 
 
+def test_a_turn_is_budgeted_for_the_model_that_will_run_it(tmp_path: Path) -> None:
+    """The bug this pins: sized for the builder, executed by the researcher.
+
+    A workspace turn routed to `researcher` used to have its context budget and
+    execution profile resolved for `builder`. Two different windows — the same
+    class of mistake as packing scaffolding against one limit while compaction
+    fires at another, which is what made the agent thrash in the first place.
+    """
+    from daino.application import MissionApplicationService
+    from daino.application.context import initialize_project, open_project
+
+    initialize_project(tmp_path)
+    service = MissionApplicationService(open_project(tmp_path))
+    asked: list[str] = []
+
+    class RecordingGateway:
+        def context_budget(self, role, *, tools=None):  # type: ignore[no-untyped-def]
+            asked.append(f"budget:{role.value}")
+            return 20_000
+
+        def execution_profile(self, role, *, tools=None):  # type: ignore[no-untyped-def]
+            asked.append(f"profile:{role.value}")
+            return None
+
+        def capability_envelope(self, role, *, tools=None):  # type: ignore[no-untyped-def]
+            asked.append(f"envelope:{role.value}")
+            return None
+
+    budget, _, _ = service._turn_sizing(RecordingGateway(), ModelRole.RESEARCHER, [])
+
+    assert budget == 20_000
+    assert asked == ["budget:researcher", "profile:researcher", "envelope:researcher"]
+
+
+def test_a_gateway_without_sizing_still_produces_a_turn(tmp_path: Path) -> None:
+    """Every fake gateway in the suite exposes only `structured`."""
+    from daino.application import MissionApplicationService
+    from daino.application.context import initialize_project, open_project
+
+    initialize_project(tmp_path)
+    service = MissionApplicationService(open_project(tmp_path))
+
+    budget, profile, envelope = service._turn_sizing(object(), ModelRole.BUILDER, [])
+
+    assert budget == service.context.settings.project.context_budget_tokens
+    assert profile is None
+    assert envelope is None
+
+
 # ------------------------------------------------------- parallel research
 
 

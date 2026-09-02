@@ -7,6 +7,10 @@ import { useEditorOptions, useMonacoTheme } from "../../lib/editorPrefs";
 import { confirmFor } from "../../store/dialogStore";
 import type { Workspace } from "../../api/types";
 import { fmtDateTime } from "../insights/format";
+// Registers the Daino themes and the language workers on the monaco
+// instance. Imported here rather than at app start so the 4 MB editor
+// arrives with the first component that renders one.
+import "../../lib/monaco";
 
 /**
  * Every saved version of one document, and the way back to any of them.

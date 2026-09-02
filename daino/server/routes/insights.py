@@ -165,6 +165,11 @@ def qa_latest(state: Annotated[GuiState, Depends(get_state)]) -> dict:
     return {
         "running": _qa_running(state),
         "report": report.model_dump(mode="json") if report is not None else None,
+        # A verdict describes a checkout. Once the tree has moved, the badge has
+        # to stop claiming this code was cleared.
+        "stale": (
+            report is not None and not _qa_running(state) and not state.qa.is_current(report)
+        ),
     }
 
 
@@ -173,7 +178,11 @@ def qa_report(state: Annotated[GuiState, Depends(get_state)], report_id: str) ->
     report = state.qa.load(report_id)
     if report is None:
         raise HTTPException(status_code=404, detail=f"Unknown QA report {report_id}")
-    return {"running": _qa_running(state), "report": report.model_dump(mode="json")}
+    return {
+        "running": _qa_running(state),
+        "report": report.model_dump(mode="json"),
+        "stale": not state.qa.is_current(report),
+    }
 
 
 @router.post("/qa/run")

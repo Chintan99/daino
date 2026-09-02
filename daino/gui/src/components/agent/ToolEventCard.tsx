@@ -123,6 +123,16 @@ export function ToolEventCard({ item }: { item: LiveEvent }) {
           <div className="detail">Model: {str(e.model ?? e.name)}</div>
         </div>
       );
+    case "TaskSplit":
+      return (
+        <div className="tool-card">
+          <div className="detail">
+            Task split into {(e.slices as unknown[] | undefined)?.length ?? 0} smaller
+            tasks: {str(e.title ?? e.name)}
+          </div>
+          <div className="detail">{str(e.reason)}</div>
+        </div>
+      );
     case "TaskStarted":
     case "TaskCompleted":
     case "MissionStarted":

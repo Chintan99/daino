@@ -98,8 +98,16 @@ to open it in CODE like any other file.
 
 ### History
 
-Every saved version is kept, with who saved it, and any of them can be restored — the current text
-becomes a new version, so a restore is undoable too.
+Every save is recorded as a version, with who saved it, and any kept version can be restored — the
+current text becomes a new version, so a restore is undoable too.
+
+History is a safety net rather than an archive: the newest 50 versions of a document are kept, and
+older ones are trimmed. Versions a change set still points at are exempt from that trim, so
+reviewing or rejecting an old run's work never finds its "before" missing.
+
+Saving is checked against the version you opened. If the agent (or another window) has rewritten the
+document since, the save is refused and the editor offers **Reload from disk** or **Keep mine** —
+your draft is never silently replaced, and neither is theirs.
 
 Versions are recorded from the file-change event rather than from the save button, which means an
 edit you make by hand in CODE and an edit the agent makes are captured identically. That is the pair

@@ -11,6 +11,7 @@ from textual import events, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Button, ContentSwitcher
 
@@ -327,6 +328,21 @@ class WorkspaceScreen(Screen[None]):
             self.missions.session_todos(self.session_id)
         )
 
+    def _finish_activity(self, message: str) -> None:
+        """Close the activity line, if the log view is still there to close it on.
+
+        Every turn ends here from a ``finally``, and a turn can outlive the
+        screen: the app quits, or the user leaves, while the model is still
+        answering. An unguarded ``query_one`` then raises out of the ``finally``
+        — which turns an ordinary cancellation into a worker error and, worse,
+        swallows the ``raise`` that was propagating. Nothing about writing a log
+        line is worth failing a turn over.
+        """
+        try:
+            self.query_one("#logs-view", LogsView).finish_activity(message)
+        except NoMatches:
+            return
+
     def _set_activity(self, state: str, detail: str = "") -> None:
         if not self.verbose and state in {
             "thinking",
@@ -337,7 +353,12 @@ class WorkspaceScreen(Screen[None]):
         }:
             state, detail = "working", ""
         self._attend(state, detail)
-        self.query_one("#task-checklist", TaskChecklist).set_activity(state, detail)
+        # Same reason as _finish_activity: this runs from the except/finally of
+        # every turn, and a turn can outlive the screen it started on.
+        try:
+            self.query_one("#task-checklist", TaskChecklist).set_activity(state, detail)
+        except NoMatches:
+            return
 
     def _attend(self, state: str, detail: str) -> None:
         """Keep the machine awake while working, and announce the ending.
@@ -1400,9 +1421,7 @@ class WorkspaceScreen(Screen[None]):
                 if self.active_mission_id
                 else ("Ready" if turn_status == previous_status else turn_status)
             )
-            self.query_one("#logs-view", LogsView).finish_activity(
-                f"Prompt {turn_status.casefold()}"
-            )
+            self._finish_activity(f"Prompt {turn_status.casefold()}")
             self.request_refresh()
 
     @work(exclusive=True, group="mission")
@@ -1447,7 +1466,7 @@ class WorkspaceScreen(Screen[None]):
             if self.active_status == "Failed":
                 team_status = "failed"
             await conversation.clear_reasoning()
-            self.query_one("#logs-view", LogsView).finish_activity(f"Team prompt {team_status}")
+            self._finish_activity(f"Team prompt {team_status}")
             self.request_refresh()
 
     @work(exclusive=True, group="mission")
@@ -1520,7 +1539,7 @@ class WorkspaceScreen(Screen[None]):
             self.active_status = previous_status if self.active_mission_id else "Ready"
             if self.active_mission_id and previous_status in {"Running", "Verifying"}:
                 self._set_activity(*previous_activity)
-            self.query_one("#logs-view", LogsView).finish_activity(f"Answer {answer_status}")
+            self._finish_activity(f"Answer {answer_status}")
             self.request_refresh()
 
     @work(exclusive=True, group="verification")

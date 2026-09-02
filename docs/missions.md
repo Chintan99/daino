@@ -76,6 +76,19 @@ daino missions discard <mission-id>
 Discarding a mission workspace is destructive to that isolated worktree, so the command asks for
 confirmation unless `--yes` is supplied. It does not remove changes from the original checkout.
 
+## Tasks too large for the model
+
+A task whose file scope exceeds what the routed builder can hold is cut into smaller tasks rather
+than attempted and failed. This happens before the turn when the scope is measurably too big, and
+after a stall when a run compacted repeatedly without progress — the signature of a window problem
+rather than a stuck model.
+
+Slices appear in the plan as `<task-id>-s1-01`, `-s1-02` and so on, run in sequence, and cover
+exactly the parent's files between them. The parent is cancelled and recorded with what replaced it,
+so a resumed mission continues with the slices instead of re-attempting the oversized task. Only the
+final slice runs the verification commands and commits; the earlier ones leave their work in the
+working tree, so the branch never holds a state that no check ever passed.
+
 ## Verification behavior
 
 Project verification commands come from `.daino/config.yaml` or are discovered from common Python,

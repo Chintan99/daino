@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from daino.design import DesignService
+from daino.design import DesignConflictError, DesignService
 from daino.schemas import AgentAction
 from daino.tools import EditTools
 from daino.tools.editing import ActionExecutor
@@ -208,3 +208,64 @@ async def test_plain_diagram_nodes_are_unaffected(tmp_path: Path) -> None:
     node = added.data["nodes"][-1]
     assert node["type"] == "queue"
     assert node["data"] == {}
+
+
+def test_two_editors_cannot_silently_overwrite_each_other(tmp_path: Path) -> None:
+    """The lost update this prevents.
+
+    Both windows load version 2 and post back a whole document; without an
+    expected version they both write version 3, and the second erases the
+    first. A design is an hour of somebody moving nodes around — losing it
+    silently is the worst outcome available.
+    """
+    service = DesignService(tmp_path)
+    design = service.create("Architecture", "architecture")
+    service.add_node(design.id, label="API")
+
+    first = service.get(design.id)
+    second = service.get(design.id)
+    assert first.version == second.version
+
+    # The first window saves.
+    first.name = "Architecture (first)"
+    service.replace(first, expected_version=first.version)
+
+    # The second still holds the version it loaded.
+    second.name = "Architecture (second)"
+    with pytest.raises(DesignConflictError) as caught:
+        service.replace(second, expected_version=second.version)
+
+    assert caught.value.stored_version > second.version
+    assert service.get(design.id).name == "Architecture (first)"
+
+
+def test_every_saved_version_of_a_design_can_be_restored(tmp_path: Path) -> None:
+    """"Version" used to be a counter that overwrote its own predecessor."""
+    service = DesignService(tmp_path)
+    design = service.create("Flow", "flowchart")
+    service.add_node(design.id, label="Start", node_id="start")
+    with_two = service.add_node(design.id, label="Finish", node_id="finish")
+    service.delete_node(design.id, "finish")
+
+    assert [node.id for node in service.get(design.id).nodes] == ["start"]
+
+    versions = [item["version"] for item in service.revisions(design.id)]
+    assert with_two.version in versions
+
+    restored = service.restore(design.id, with_two.version)
+
+    assert [node.id for node in restored.nodes] == ["start", "finish"]
+    # A restore moves forward, so undoing it is the same operation again.
+    assert restored.version > with_two.version
+
+
+def test_a_stale_expected_version_is_the_only_thing_refused(tmp_path: Path) -> None:
+    """Callers that have genuinely just read the document keep working."""
+    service = DesignService(tmp_path)
+    design = service.create("Architecture", "architecture")
+
+    current = service.get(design.id)
+    current.name = "Renamed"
+
+    # No expectation stated: last writer wins, as before.
+    assert service.replace(current).name == "Renamed"

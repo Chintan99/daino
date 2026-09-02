@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useUIStore } from "../store/uiStore";
 import { getTab } from "../tabs/registry";
@@ -16,11 +17,30 @@ import { ExplorerPanel } from "./explorer/ExplorerPanel";
 import { SearchPanel } from "./search/SearchPanel";
 import { SourceControlPanel } from "./scm/SourceControlPanel";
 import { Dialogs } from "./ui/Dialogs";
+// Overlays that are usually never opened. StaleDiffOverlay renders a Monaco
+// diff, so loading it eagerly would undo the editor split.
+const StaleDiffOverlay = lazy(() =>
+  import("./editor/StaleDiffOverlay").then((m) => ({ default: m.StaleDiffOverlay })),
+);
+const RenamePreview = lazy(() =>
+  import("./editor/RenamePreview").then((m) => ({ default: m.RenamePreview })),
+);
+const QuickOpen = lazy(() =>
+  import("./ui/QuickOpen").then((m) => ({ default: m.QuickOpen })),
+);
+import { ReferencesPanel } from "./editor/ReferencesPanel";
+
+/** Shown while a lazily loaded workspace arrives. Deliberately plain: it is on
+ *  screen for a fraction of a second on a local server. */
+function WorkspaceLoading() {
+  return <div className="empty" style={{ margin: "auto" }}>Loading…</div>;
+}
 
 function ActivitySidebar() {
   const view = useUIStore((s) => s.activityView);
   if (view === "search") return <SearchPanel />;
   if (view === "scm") return <SourceControlPanel />;
+  if (view === "references") return <ReferencesPanel />;
   return <ExplorerPanel />;
 }
 
@@ -78,7 +98,9 @@ export function AppShell() {
                 direction="vertical"
               >
                 <Panel defaultSize={showBottom ? 66 : 100} minSize={20}>
-                  <Workspace />
+                  <Suspense fallback={<WorkspaceLoading />}>
+                    <Workspace />
+                  </Suspense>
                 </Panel>
                 {showBottom && (
                   <>
@@ -90,7 +112,9 @@ export function AppShell() {
                 )}
               </PanelGroup>
             ) : (
-              <Workspace />
+              <Suspense fallback={<WorkspaceLoading />}>
+                <Workspace />
+              </Suspense>
             )}
           </Panel>
 
@@ -108,6 +132,16 @@ export function AppShell() {
       <StatusBar />
       {/* Prompts and reference sheets the menu opens. */}
       <Dialogs />
+      {/* Overlays: each renders null until opened, so there is nothing to
+          show while its chunk arrives. */}
+      <Suspense fallback={null}>
+        {/* Your unsaved buffer against the file that moved under it. */}
+        <StaleDiffOverlay />
+        {/* What a cross-file rename is about to do, before it does it. */}
+        <RenamePreview />
+        {/* Go to symbol, and run a project command. */}
+        <QuickOpen />
+      </Suspense>
     </div>
   );
 }

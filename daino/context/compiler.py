@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from daino.context.retrieval import select_candidates
 from daino.repository import RepositoryIndexer
+from daino.repository.graph import ImportGraph, is_test_path
 from daino.schemas import ContextBundle, TaskSpec
+
+#: How many near collaborators are named individually before the rest become a
+#: count. Enough to be useful, few enough that the notes stay readable.
+_NAMED_NEAR_MISSES = 5
 
 
 class ContextCompiler:
@@ -43,22 +49,33 @@ class ContextCompiler:
         # Files the task is scoped to must be present: editing one the agent
         # cannot see means guessing at its contents and rewriting it blind.
         required = list(dict.fromkeys([*task.expected_files, *task.allowed_files]))
-        discovered: list[str] = []
-        lower_terms = {
-            word.lower() for word in f"{task.title} {task.objective}".split() if len(word) > 3
-        }
         indexed_files = {item.path: item for item in index.files}
-        for item in index.files:
-            haystack = f"{item.path} {item.summary}".lower()
-            if any(term in haystack for term in lower_terms):
-                discovered.append(item.path)
-        for test in self.indexer.tests():
-            stem = Path(test).stem.removeprefix("test_")
-            if any(stem in path for path in [*required, *discovered]):
-                discovered.append(test)
+        # Ranked by import distance from what the task actually names, with the
+        # old substring match kept as the floor. It used to be the *only* signal:
+        # on this repository it matched 187 of 506 files, and the bundle was then
+        # filled in filesystem walk order — so a compact profile's four slots
+        # went to whatever happened to sort first, and the file's own caller was
+        # never reached. `self.indexer.tests()` is gone with it: it re-loaded and
+        # re-parsed the whole index, a second time, on every compile.
+        candidates = select_candidates(index, task, required, ImportGraph.build(index))
+        discovered = [item.path for item in candidates]
+        near_misses = {item.path for item in candidates if item.near}
 
         files: dict[str, str] = {}
         tests: dict[str, str] = {}
+        # What the budget cost the agent. Without this a scoped file could be
+        # truncated — or, under 400 remaining characters, dropped outright — and
+        # nothing in the bundle said so: the agent saw a file it was told to
+        # edit simply missing, and had no way to tell that from a file that does
+        # not exist yet. It has read_file; naming the near miss is what lets it
+        # use it.
+        omitted: list[str] = []
+        #: Related files the budget could not take. Counted rather than listed,
+        #: except for the nearest few: on this repository the lexical floor
+        #: matches 187 files, and naming every one that did not fit would put
+        #: 3,000 characters of "use read_file" into a bundle whose whole purpose
+        #: is to leave the agent room to work.
+        overflowed: list[str] = []
         used = self._estimate_tokens(task.model_dump_json())
 
         def include(relative: str, *, mandatory: bool) -> None:
@@ -82,24 +99,47 @@ class ContextCompiler:
             cost = self._estimate_tokens(content)
             if used + cost > self.token_budget:
                 if not mandatory:
+                    overflowed.append(relative)
                     return
                 # Truncate rather than omit, and say so, so the agent knows it is
                 # looking at part of the file instead of assuming it has all of it.
                 remaining = max(0, self.token_budget - used) * 4
                 if remaining < 400:
+                    omitted.append(f"{relative} (in task scope, no budget left); use read_file")
                     return
                 content = content[:remaining] + "\n… file truncated to fit the context budget\n"
                 cost = self._estimate_tokens(content)
-            target = tests if "test" in path.name.lower() or "tests" in path.parts else files
+                omitted.append(f"part of {relative}; use read_file with offset/limit")
+            target = tests if is_test_path(relative) else files
             target[relative] = content
             used += cost
 
         for relative in required:
             include(relative, mandatory=True)
+        capped = 0
         for relative in dict.fromkeys(discovered):
             if self.max_files is not None and len(files) + len(tests) >= self.max_files:
+                remaining_paths = dict.fromkeys(discovered)
+                capped = sum(
+                    1 for item in remaining_paths if item not in files and item not in tests
+                )
                 break
             include(relative, mandatory=False)
+        # A direct collaborator that did not fit is worth naming individually:
+        # the agent has read_file, and what it lacks is any way to know the file
+        # exists. A distant word match is not, so it is only counted.
+        missed_near = [
+            path
+            for path in discovered
+            if path in near_misses and path not in files and path not in tests
+        ]
+        omitted.extend(
+            f"{path} (imports or is imported by this task's files); use read_file"
+            for path in missed_near[:_NAMED_NEAR_MISSES]
+        )
+        remaining = capped + len(overflowed) + max(0, len(missed_near) - _NAMED_NEAR_MISSES)
+        if remaining:
+            omitted.append(f"{remaining} further related files; use read_file/grep")
         return ContextBundle(
             task=task.objective,
             acceptance_criteria=task.acceptance_criteria,
@@ -109,6 +149,7 @@ class ContextCompiler:
             failure_summary=failure_summary,
             token_estimate=used,
             included_paths=[*files, *tests],
+            omitted_context=list(dict.fromkeys(omitted)),
         )
 
 

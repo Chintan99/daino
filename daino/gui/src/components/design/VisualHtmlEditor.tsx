@@ -10,6 +10,10 @@ import { useVisualEditor } from "./useVisualEditor";
 import { ComponentPalette } from "./ComponentPalette";
 import { ElementInspector } from "./ElementInspector";
 import { BRAND } from "../../lib/branding";
+// Registers the Daino themes and the language workers on the monaco
+// instance. Imported here rather than at app start so the 4 MB editor
+// arrives with the first component that renders one.
+import "../../lib/monaco";
 
 type Mode = "preview" | "design" | "split" | "code";
 

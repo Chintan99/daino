@@ -16,11 +16,14 @@ from daino.application.repository_service import RepositoryApplicationService
 from daino.application.review_service import ChangeReviewApplicationService
 from daino.application.settings_service import SettingsApplicationService
 from daino.application.workspace_run_service import WorkspaceRunApplicationService
+from daino.debugger import DebugManager
 from daino.design import DesignService
 from daino.git import GitClient
 from daino.observability import AuditLog
+from daino.repository.lsp import PooledLSPAdapter
 from daino.schemas import ChangeReview, QAReport
 from daino.services import PreviewManager, TerminalManager
+from daino.testing import TestService
 from daino.tools.filesystem import FileTools
 from daino.workbench.links import LinkStore
 from daino.workbench.service import WorkbenchService
@@ -56,6 +59,16 @@ class GuiState:
     runs: WorkspaceRunApplicationService
     #: How a workspace's outputs relate, and which have fallen behind.
     links: LinkStore
+    #: Language-server intelligence. One pool of server processes for the whole
+    #: project, shared by every socket and request: starting pyright per
+    #: keystroke would be slower than having no diagnostics at all.
+    lsp: PooledLSPAdapter
+    #: Test discovery and execution. One run at a time per project, because
+    #: tests share a working tree and two concurrent runs describe nothing.
+    tests: TestService
+    #: The debug session, if one is running, and the breakpoints that outlive
+    #: it. Server-side so a reloaded tab shows the frame it was stopped at.
+    debugger: DebugManager
     #: Provider/model routing and validated configuration writes — the same
     #: services the TUI's providers and settings screens drive.
     providers: ProviderApplicationService
@@ -109,6 +122,9 @@ class GuiState:
                 context, missions, workbench, turn_lock=turn_lock
             ),
             links=LinkStore(context.database, workbench),
+            lsp=PooledLSPAdapter(context.root),
+            tests=TestService(context.root),
+            debugger=DebugManager(context.root),
             providers=ProviderApplicationService(context),
             settings=SettingsApplicationService(context),
             audit=AuditLog(context.root),
@@ -131,5 +147,44 @@ class GuiState:
     def shutdown(self) -> None:
         self.terminals.close_all()
         self.preview.stop()
+        # Language servers are child processes; leaving them behind would leak a
+        # pyright per restart.
+        self._close_language_servers()
+        # A test run outliving the server would keep writing reports nobody
+        # will read, against a working tree that may be changing.
+        self.tests.cancel()
+        # A debuggee is a child process holding the working tree open, and a
+        # paused one holds it open forever.
+        self._stop_debugger()
         # Stopping the server mid-turn must not leave sleep inhibited.
         self.missions.attention.shutdown()
+
+    def _stop_debugger(self) -> None:
+        """Terminate the debuggee, from sync shutdown code."""
+        import asyncio
+        import contextlib
+
+        if not self.debugger.running:
+            return
+        with contextlib.suppress(RuntimeError):
+            asyncio.get_running_loop().create_task(self.debugger.stop())
+            return
+        with contextlib.suppress(Exception):
+            asyncio.run(self.debugger.stop())
+
+    def _close_language_servers(self) -> None:
+        """Stop every language server, from sync shutdown code.
+
+        ``shutdown`` is called from lifespan teardown and from the TUI, only one
+        of which has a running loop, so the close is dispatched whichever way
+        applies rather than assuming.
+        """
+        import asyncio
+        import contextlib
+
+        with contextlib.suppress(RuntimeError):
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.lsp.close())
+            return
+        with contextlib.suppress(Exception):
+            asyncio.run(self.lsp.close())

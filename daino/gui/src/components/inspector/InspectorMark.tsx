@@ -6,6 +6,11 @@ import { useQALatest } from "../../api/hooks";
  *
  * The verdict outlives its notification, so the tab keeps showing whether this
  * checkout is currently cleared to push — from whichever tab you are in.
+ *
+ * "Currently" is the load-bearing word. A verdict is a statement about the code
+ * that was inspected, and the moment the working tree moves it stops describing
+ * anything. A stale report is shown greyed and says so, rather than leaving a
+ * green "safe to push" over files nobody has looked at.
  */
 export function InspectorMark() {
   const { data: qa } = useQALatest();
@@ -14,6 +19,17 @@ export function InspectorMark() {
   }
   const verdict = qa?.report?.verdict;
   if (!verdict || verdict === "unknown") return null;
+  if (qa?.stale) {
+    return (
+      <span
+        className="tab-mark stale"
+        title={
+          "The files have changed since the last inspection, so its verdict " +
+          "no longer applies. Run it again before pushing."
+        }
+      />
+    );
+  }
   return (
     <span
       className={`tab-mark v-${verdict}`}

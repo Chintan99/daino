@@ -1,13 +1,37 @@
 // Workspace tab registry. Adding a new top-level workspace is a matter of
 // registering an entry here — no layout refactor needed.
-import type { ComponentType } from "react";
+import { lazy, type ComponentType } from "react";
 import { EditorWorkspace } from "../components/editor/EditorWorkspace";
-import { DesignWorkspace } from "../components/design/DesignWorkspace";
-import { WorkbenchWorkspace } from "../components/workbench/WorkbenchWorkspace";
 import { WorkspaceMark } from "../components/workbench/WorkspaceMark";
 import { InspectorMark } from "../components/inspector/InspectorMark";
-import { InspectorWorkspace } from "../components/inspector/InspectorWorkspace";
-import { InsightsWorkspace } from "../components/insights/InsightsWorkspace";
+
+// CODE is eager: it is what opens, so deferring it would only add a spinner in
+// front of the first thing anyone sees. Every other workspace is loaded when
+// its tab is first opened — DESIGN alone pulls in ReactFlow, which is not
+// something a session spent editing files should pay for.
+//
+// The tab marks stay eager. They render inside the tab bar from the moment the
+// app starts, so lazily loading a 12-pixel dot would be all cost.
+const DesignWorkspace = lazy(() =>
+  import("../components/design/DesignWorkspace").then((m) => ({
+    default: m.DesignWorkspace,
+  })),
+);
+const WorkbenchWorkspace = lazy(() =>
+  import("../components/workbench/WorkbenchWorkspace").then((m) => ({
+    default: m.WorkbenchWorkspace,
+  })),
+);
+const InspectorWorkspace = lazy(() =>
+  import("../components/inspector/InspectorWorkspace").then((m) => ({
+    default: m.InspectorWorkspace,
+  })),
+);
+const InsightsWorkspace = lazy(() =>
+  import("../components/insights/InsightsWorkspace").then((m) => ({
+    default: m.InsightsWorkspace,
+  })),
+);
 
 export interface WorkspaceTab {
   id: string;

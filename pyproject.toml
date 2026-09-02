@@ -26,7 +26,6 @@ dependencies = [
   "textual>=6.1,<7",
   "tree-sitter>=0.24",
   "tree-sitter-language-pack>=0.7",
-  "tree-sitter-typescript>=0.23",
   "typer>=0.15",
   "uvicorn[standard]>=0.32",
   "websockets>=13.1",
@@ -52,6 +51,10 @@ otel = [
 dev = [
   "bandit>=1.8",
   "coverage>=7.6",
+  # The debugger tests drive a real DAP session rather than a mock, because the
+  # things that break in a debug client are protocol details a fake adapter
+  # would agree with. Without this they skip.
+  "debugpy>=1.8",
   "mypy>=1.14",
   "pytest>=8.3",
   "pytest-asyncio>=0.25",

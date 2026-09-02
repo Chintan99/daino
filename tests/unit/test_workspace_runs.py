@@ -17,6 +17,7 @@ import pytest
 
 from daino.application.context import ProjectContext
 from daino.application.workspace_run_service import (
+    MAX_CONSECUTIVE_FAILURES,
     RunError,
     WorkspaceRunApplicationService,
 )
@@ -40,6 +41,8 @@ class FakeMissions:
         self.turns: list[str] = []
         #: Instruction substring -> the exception to raise for that turn.
         self.failures: dict[str, str] = {}
+        #: Instruction substrings whose turn stops on a compaction stall.
+        self.stalls: set[str] = set()
         #: Called with (instruction, approve, approve_action) before answering.
         self.hook: Any = None
         self.sessions: list[str] = []
@@ -74,6 +77,9 @@ class FakeMissions:
         for marker, error in self.failures.items():
             if marker in instruction:
                 raise RuntimeError(error)
+        for marker in self.stalls:
+            if marker in instruction:
+                raise _thrashing_run()
         if self.hook is not None:
             await self.hook(instruction, approve, approve_action)
         return ChatOutcome(mission_id="m-1", answer=f"Did: {instruction[:40]}")
@@ -416,3 +422,156 @@ async def _until(predicate: Any, timeout: float = 2.0) -> None:
         if asyncio.get_running_loop().time() > deadline:
             raise AssertionError("Condition was never reached")
         await asyncio.sleep(0.01)
+
+
+async def test_a_plan_that_keeps_failing_the_same_step_eventually_gives_up(
+    runs: WorkspaceRunApplicationService, workbench: WorkbenchService, missions: FakeMissions
+) -> None:
+    """The consecutive-failure guard has to survive the retry that triggers it.
+
+    The counter used to live in the executor's stack frame, and a failure
+    settles the run and returns — so every retry started a new invocation with
+    the count back at zero and the limit could never be reached. A plan that
+    does not work would ask forever instead of stopping.
+    """
+    workspace = workbench.create("Analysis")
+    tasks = workbench.set_tasks(workspace.id, ["Read the file", "Write it up"])
+    missions.failures["Read the file"] = "No such file"
+
+    run = await runs.start(workspace.id)
+    await _drain(runs, run.id)
+    assert runs.get(run.id).status == "waiting_for_user"
+
+    for _ in range(MAX_CONSECUTIVE_FAILURES - 1):
+        workbench.update_task(workspace.id, tasks[0].id, status="pending", error="")
+        await runs.resume(run.id)
+        await _drain(runs, run.id)
+
+    stopped = runs.get(run.id)
+    assert stopped.status == "failed"
+    assert f"{MAX_CONSECUTIVE_FAILURES} steps in a row" in stopped.error
+
+
+async def test_deciding_to_skip_a_step_clears_the_failure_streak(
+    runs: WorkspaceRunApplicationService, workbench: WorkbenchService, missions: FakeMissions
+) -> None:
+    """The guard stops an unattended loop, not a person steering one."""
+    workspace = workbench.create("Analysis")
+    workbench.set_tasks(workspace.id, ["Read the file", "Write it up"])
+    missions.failures["Read the file"] = "No such file"
+
+    run = await runs.start(workspace.id)
+    await _drain(runs, run.id)
+    assert runs.get(run.id).metadata["consecutive_failures"] == 1
+
+    runs.clear_failure_streak(run.id)
+
+    assert "consecutive_failures" not in runs.get(run.id).metadata
+
+
+async def test_a_restart_while_waiting_for_approval_leaves_a_resumable_run(
+    runs: WorkspaceRunApplicationService,
+    workbench: WorkbenchService,
+    missions: FakeMissions,
+    project: ProjectContext,
+) -> None:
+    """The approval future lived in memory, so a restart has to release the run.
+
+    Left as-is, the run sat at ``waiting_for_approval`` on a prompt nothing
+    could answer, and the step it was on stayed ``in_progress`` — invisible to
+    the executor, so resuming stepped over it and could call the run complete
+    with the work never done.
+    """
+    workspace = workbench.create("Analysis")
+    tasks = workbench.set_tasks(workspace.id, ["Read the file", "Write it up"])
+
+    # Reproduce exactly the state the process died in.
+    run = await runs.start(workspace.id)
+    await _drain(runs, run.id)
+    workbench.update_task(workspace.id, tasks[0].id, status="in_progress")
+    runs.runs.update(
+        run.id,
+        status="waiting_for_approval",
+        current_task_id=tasks[0].id,
+        metadata={"pending_approval": {
+            "id": "wsapp-1",
+            "action": "rm -rf build",
+            "reason": "writes outside the workspace",
+            "level": "local_execution",
+        }},
+    )
+
+    # A fresh process reconciles what it finds.
+    recovered = WorkspaceRunApplicationService(
+        project, missions, workbench  # type: ignore[arg-type]
+    ).reconcile()
+
+    assert run.id in recovered
+    after = runs.get(run.id)
+    assert after.status == "paused"
+    assert after.pending_approval is None
+    assert "not granted" in after.error
+    # The interrupted step is back in the queue rather than stranded.
+    assert workbench.get(workspace.id).tasks[0].status == "pending"
+
+
+def _thrashing_run() -> Exception:
+    """A turn that stopped because it kept losing its context, not because it was stuck."""
+    from daino.agents.loop import THRASHING_COMPACTIONS, BuilderOutcome, IncompleteRun
+    from daino.schemas import Implementation
+
+    return IncompleteRun(
+        "The coding agent stopped before finishing.",
+        BuilderOutcome(
+            implementation=Implementation(summary="stalled", modifications=[]),
+            changed=[],
+            steps=9,
+            completed=False,
+            stop_reason="stall",
+            compactions=THRASHING_COMPACTIONS + 2,
+        ),
+    )
+
+
+async def test_a_step_too_large_for_the_model_says_so_rather_than_just_failing(
+    runs: WorkspaceRunApplicationService, workbench: WorkbenchService, missions: FakeMissions
+) -> None:
+    """A workspace plan is prose, so nothing can split it automatically.
+
+    What the run can do is name the cause and the fix. "The agent stopped before
+    finishing" tells the user nothing they can act on; "this step was too large,
+    split it" tells them exactly what to change before pressing Retry.
+    """
+    workspace = workbench.create("Analysis")
+    workbench.set_tasks(workspace.id, ["Gather data", "Write the whole report", "Review it"])
+    missions.stalls.add("Write the whole report")
+
+    run = await runs.start(workspace.id)
+    await _drain(runs, run.id)
+
+    held = runs.get(run.id)
+    assert held.status == "waiting_for_user"
+    failed = workbench.get(workspace.id).tasks[1]
+    assert "too large for the model" in failed.error
+    assert "Split this step into smaller ones" in failed.error
+    # And the plan is intact, so the user can edit it and retry.
+    assert [task.status for task in workbench.get(workspace.id).tasks] == [
+        "completed",
+        "failed",
+        "pending",
+    ]
+
+
+async def test_an_ordinary_failure_is_not_reported_as_a_size_problem(
+    runs: WorkspaceRunApplicationService, workbench: WorkbenchService, missions: FakeMissions
+) -> None:
+    """Wrong advice is worse than generic advice."""
+    workspace = workbench.create("Analysis")
+    workbench.set_tasks(workspace.id, ["Gather data", "Analyse it"])
+    missions.failures["Analyse it"] = "The spreadsheet could not be read"
+
+    run = await runs.start(workspace.id)
+    await _drain(runs, run.id)
+
+    failed = workbench.get(workspace.id).tasks[1]
+    assert "too large for the model" not in failed.error

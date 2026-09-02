@@ -656,6 +656,27 @@ QA_TOOL_SPECS: list[dict[str, Any]] = [
     spec for spec in AGENT_TOOL_SPECS if spec["function"]["name"] in _QA_ACTIONS
 ]
 
+#: Every action that can change the working tree or run a process. Named as one
+#: set so a read-only surface is defined by subtraction — adding a new write
+#: tool cannot silently leak into a surface that is meant to have none.
+MUTATING_ACTIONS: frozenset[str] = frozenset(
+    {"write", "replace", "multi_edit", "delete", "run_command", "resolve_command_failure"}
+)
+
+#: Reading and answering, and nothing else. Used by the design planner, which
+#: must be able to study the repository and describe what it would do without
+#: being able to do any of it. The restriction is enforced twice — here, so the
+#: model is never offered a write tool, and in ``EditTools(read_only=True)``, so
+#: a hallucinated call is refused rather than executed.
+PLANNING_TOOL_SPECS: list[dict[str, Any]] = [
+    *(
+        spec
+        for spec in AGENT_TOOL_SPECS
+        if spec["function"]["name"] not in MUTATING_ACTIONS
+    ),
+    _RESPOND,
+]
+
 
 def tool_call_to_action(call: ToolCall) -> AgentAction:
     """Convert one native tool call into the validated loop action."""

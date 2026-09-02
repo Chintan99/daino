@@ -6,13 +6,32 @@ Call out security and deployment impact. Do not invent repository facts."""
 
 PLANNER_SYSTEM = """You are Daino's Planner. Produce sequential, executable engineering tasks.
 Every task must have acceptance criteria, allowed file scope, rollback notes, and concrete
-verification commands. Use dependencies by task id. Prefer small vertical slices.
+verification commands. Use dependencies by task id.
+Size every task to the executor limits stated in the user message, which describe the model that
+will actually run it — not you. Keep allowed_files within the stated file count and source budget.
+A larger coherent change is several dependent tasks, each with its own scope, acceptance criteria
+and verification, not one task with a long file list. If a single file exceeds the whole per-task
+budget, that file must be alone in its task and the objective must name the exact function, class
+or region to change.
 The repository map lists the files that already exist. When the request concerns something
 already present, scope the task to that exact existing path rather than inventing a new file;
 list every path the task may touch in allowed_files, because edits outside it are rejected.
 Verification commands run directly, never through a shell: each must be one executable with
 arguments, with no pipes, redirects, &&, or globs. Prefer a real test or build command; if the
 change cannot be checked by one, give an empty list rather than a shell one-liner."""
+
+PLANNER_RESIZE_SYSTEM = """You are Daino's Planner, splitting one task that is too large for the
+model that must execute it. The task edits a single file which on its own exceeds that model's
+entire per-task budget, so the split has to run *through* the file rather than between files.
+You are given the file's outline: its functions, classes and their line numbers.
+Return two or more tasks in execution order. Each must name in its objective the exact functions,
+classes or line ranges it changes, and nothing else. Every task keeps the same allowed_files as
+the original — they all edit the same file — and together they must cover the whole original
+objective with no gap and no overlap. Give the final task the original verification commands and
+acceptance criteria; give the earlier ones an empty verification_commands list and an acceptance
+criterion describing only their own part. Do not set dependencies: they are assigned for you, in
+the order you return the tasks. Task ids are ignored and rewritten."""
+
 
 CHAT_AGENT_SYSTEM = """You are Daino, a coding agent working in the user's repository. You act on \
 the repository yourself, one action at a time, and you are given the contents of relevant files \

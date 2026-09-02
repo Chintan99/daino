@@ -7,9 +7,32 @@ import { saveBuffer } from "../../lib/saveFile";
 import { useEditorOptions, useMonacoTheme } from "../../lib/editorPrefs";
 import { registerEditor } from "../../lib/editorRegistry";
 import { goToLine } from "../../lib/commands";
+import {
+  useProblemsStore,
+  type DiagnosticSeverity,
+} from "../../store/problemsStore";
+import {
+  fetchDiagnostics,
+  releaseDiagnostics,
+  requestDiagnostics,
+} from "../../lib/diagnostics";
+import { registerNavigation } from "../../lib/navigation";
+import { registerBreakpoints } from "../../lib/breakpoints";
+// Registers the Daino themes and the language workers on the monaco
+// instance. Imported here rather than at app start so the 4 MB editor
+// arrives with the first component that renders one.
+import "../../lib/monaco";
 
 /** Auto-save waits for a pause in typing rather than firing on every keystroke. */
 const AUTO_SAVE_DELAY_MS = 1000;
+
+/** Monaco's numeric MarkerSeverity, in the panel's terms. */
+const SEVERITY: Record<number, DiagnosticSeverity> = {
+  8: "error",
+  4: "warning",
+  2: "info",
+  1: "hint",
+};
 
 export function MonacoFileEditor({ path }: { path: string }) {
   const buffer = useEditorStore((s) => s.buffers[path]);
@@ -112,6 +135,51 @@ export function MonacoFileEditor({ path }: { path: string }) {
         endLine: sel.endLineNumber,
       });
     });
+
+    // Monaco's language workers publish what they find as markers. They are a
+    // supplement to the language server, not a substitute: syntax for TS/JS
+    // (semantic validation is off — see lib/monaco.ts) and full validation for
+    // JSON, CSS and HTML, which need no project context to be right.
+    const publish = () => {
+      const current = ed.getModel();
+      if (!current) return;
+      useProblemsStore.getState().setFromEditor(
+        path,
+        monaco.editor
+          .getModelMarkers({ resource: current.uri })
+          .map((marker) => ({
+            path,
+            line: marker.startLineNumber,
+            column: marker.startColumn,
+            severity: SEVERITY[marker.severity] ?? "info",
+            message: marker.message,
+            source: marker.source ?? "editor",
+          })),
+      );
+    };
+    publish();
+    const markers = monaco.editor.onDidChangeMarkers((resources) => {
+      const uri = ed.getModel()?.uri.toString();
+      if (uri && resources.some((item) => item.toString() === uri)) publish();
+    });
+
+    // Go to definition / Find references / Rename, from the language server.
+    registerNavigation(ed, monaco, path);
+    // Breakpoints: clicking the gutter toggles one, and the markers are drawn
+    // from the server's state so they survive a reload and a restart.
+    const breakpoints = registerBreakpoints(ed, monaco, path);
+
+    // The first analysis of a freshly opened file, and then on every pause in
+    // typing (the change handler below debounces).
+    void fetchDiagnostics(path);
+
+    ed.onDidDispose(() => {
+      breakpoints.dispose();
+      markers.dispose();
+      // The file is no longer open, so its diagnostics are no longer current
+      // and the server should stop tracking it.
+      releaseDiagnostics(path);
+    });
   };
 
   if (!buffer) return <div className="empty">No file open</div>;
@@ -124,7 +192,12 @@ export function MonacoFileEditor({ path }: { path: string }) {
       value={buffer.content}
       theme={theme}
       onMount={onMount}
-      onChange={(value) => setContent(path, value ?? "")}
+      onChange={(value) => {
+        setContent(path, value ?? "");
+        // Diagnostics describe the buffer, not the last save, so every edit
+        // schedules a re-analysis of the text actually on screen.
+        requestDiagnostics(path);
+      }}
       options={options}
     />
   );

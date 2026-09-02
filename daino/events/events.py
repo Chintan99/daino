@@ -67,6 +67,22 @@ class TaskCompleted(MissionEvent):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class TaskSplit(MissionEvent):
+    """One planned task proved too large for its model and became several.
+
+    Distinct from ``TaskCompleted`` because the parent did not complete: it was
+    cancelled and replaced. Reporting it as a completion would tell the user the
+    work was done, and reporting nothing would leave them watching one task
+    silently turn into three.
+    """
+
+    task_id: str
+    title: str
+    reason: str
+    slices: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class TodoUpdated(MissionEvent):
     """The current user-visible checklist for one conversation session."""
 

@@ -1,10 +1,16 @@
 // UI layout + navigation state (workspace tab, activity view, panels).
 import { create } from "zustand";
 
-export type ActivityView = "explorer" | "search" | "scm";
+/** The left rail: files, text search, source control, or symbol references. */
+export type ActivityView = "explorer" | "search" | "scm" | "references";
 /** The agent column shows the conversation, agent settings, or provider setup. */
 export type AgentView = "chat" | "settings" | "providers";
-export type BottomTab = "terminal" | "output" | "problems" | "tests";
+export type BottomTab =
+  | "terminal"
+  | "output"
+  | "problems"
+  | "tests"
+  | "debug";
 export type InsightsView =
   | "map"
   | "logs"
@@ -77,6 +83,21 @@ interface UIState {
   setSessionTarget: (id: string | null) => void;
 
   /**
+   * The conversation the Workspace tab displaced while it is mounted.
+   *
+   * Lifted out of WorkbenchWorkspace's ref so a cross-tab handoff can address
+   * the conversation CODE will come back to. Without it, "Start in CODE" sent
+   * its brief to the workspace's thread and then dropped the user into a
+   * different one.
+   */
+  shelvedSessionTarget: string | null;
+  sessionShelved: boolean;
+  /** Point the socket at `next`, remembering what it was on. */
+  shelveSessionTarget: (next: string | null) => void;
+  /** Put the remembered conversation back. */
+  unshelveSessionTarget: () => void;
+
+  /**
    * Bumped when something asks the search panel to take focus (Edit ▸ Find in
    * files). A counter rather than a boolean, so two requests in a row both land.
    */
@@ -129,6 +150,25 @@ export const useUIStore = create<UIState>((set) => ({
 
   sessionTarget: null,
   setSessionTarget: (sessionTarget) => set({ sessionTarget }),
+
+  shelvedSessionTarget: null,
+  sessionShelved: false,
+  shelveSessionTarget: (next) =>
+    set((s) =>
+      s.sessionShelved
+        ? { sessionTarget: next }
+        : { sessionTarget: next, shelvedSessionTarget: s.sessionTarget, sessionShelved: true },
+    ),
+  unshelveSessionTarget: () =>
+    set((s) =>
+      s.sessionShelved
+        ? {
+            sessionTarget: s.shelvedSessionTarget,
+            shelvedSessionTarget: null,
+            sessionShelved: false,
+          }
+        : {},
+    ),
 
   searchFocusNonce: 0,
   focusSearch: () => set((s) => ({ searchFocusNonce: s.searchFocusNonce + 1 })),

@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from daino.agents.gateway import ModelGateway
+from daino.agents.tool_schemas import AGENT_TOOL_SPECS
 from daino.config.models import ModelProfileConfig, ProviderConfig, Settings
-from daino.context import ExecutionMode, ModelExecutionProfile
+from daino.context import CapabilityEnvelope, ExecutionMode, ModelExecutionProfile
 from daino.exceptions import ConfigurationError
 from daino.model_router import ModelRole, ModelRouter, RoutingContext
-from daino.planning import validate_task_graph, validate_transition
-from daino.schemas import ProjectMode, TaskPlan, TaskSpec, TaskStatus
+from daino.persistence import Database
+from daino.planning import Planner, validate_task_graph, validate_transition
+from daino.schemas import (
+    Message,
+    ProjectMode,
+    RequirementSpec,
+    TaskPlan,
+    TaskSpec,
+    TaskStatus,
+)
 
 
 def configured_settings() -> Settings:
@@ -68,7 +80,16 @@ def test_execution_profile_auto_detects_small_local_model() -> None:
     assert compact.initial_context_tokens == 8_192
     assert compact.max_steps is None
     assert standard.mode == ExecutionMode.STANDARD
-    assert standard.initial_context_tokens == 24_000
+    # Roomy, but bounded by what compaction can afford to re-add every pass:
+    # the bundle plus memory has to leave the transcript real room, or the
+    # agent loses what it reads and re-reads it. See test_execution_profiles.
+    assert standard.initial_context_tokens > compact.initial_context_tokens
+    assert (
+        standard.instruction_tokens
+        + standard.source_tokens
+        + standard.memory_tokens
+        < int(standard.input_budget_tokens * 0.8)
+    )
     assert standard.max_steps is None
 
 
@@ -159,8 +180,15 @@ def test_unrated_local_model_keeps_the_full_window() -> None:
     # whole budget: standard mode reserves a share for the system prompt and the
     # working transcript, without which the first prompt already sits over the
     # compaction threshold and every later turn compacts for no gain.
-    assert profile.initial_context_tokens == 22_000 * 3 // 5
+    #
+    # Asserted as the invariant rather than as a number, because the number is
+    # derived from the compaction threshold and changing that must not silently
+    # change what this test is protecting.
     assert profile.initial_context_tokens > 8_192
+    scaffold = (
+        profile.instruction_tokens + profile.source_tokens + profile.memory_tokens
+    )
+    assert scaffold < int(profile.input_budget_tokens * 0.8)
 
 
 def test_a_starved_input_budget_still_forces_compact_mode() -> None:
@@ -174,3 +202,271 @@ def test_a_starved_input_budget_still_forces_compact_mode() -> None:
     )
 
     assert profile.mode == ExecutionMode.COMPACT
+
+
+# --------------------------------------- sizing tasks for the executor's window
+
+
+def _requirements() -> RequirementSpec:
+    return RequirementSpec(
+        problem_statement="p",
+        goals=["g"],
+        functional_requirements=["f"],
+        acceptance_criteria=["a"],
+        test_strategy=["pytest"],
+    )
+
+
+def _split_brain_settings() -> Settings:
+    """The shipped pairing: a roomy cloud planner, a narrow local builder.
+
+    `config.example.yaml` ships exactly this — `planner: strong-cloud`,
+    `builder: local-ollama` — and it is the configuration where planning in the
+    planner's own terms produces tasks the builder cannot execute.
+    """
+    settings = Settings()
+    settings.providers = {
+        "local": ProviderConfig(type="vllm", base_url="http://localhost:8000/v1", model="small"),
+        "cloud": ProviderConfig(
+            type="openai-compatible", base_url="https://example.invalid/v1", model="strong"
+        ),
+    }
+    settings.models = {
+        "small": ModelProfileConfig(
+            provider="local", model="small", local=True, context_window=32_768
+        ),
+        "strong": ModelProfileConfig(provider="cloud", model="strong", context_window=400_000),
+    }
+    settings.routing = {"planner": "strong", "builder": "small"}
+    return settings
+
+
+def test_the_envelope_describes_the_builder_not_the_planner(tmp_path: Path) -> None:
+    """The whole point of the envelope, asserted as directly as it can be.
+
+    A strong planner reading its own limits writes tasks a weak builder cannot
+    hold — the field failure, where the builder read one 6k-token file, lost it
+    to compaction, and read it again until the no-progress guard killed the run.
+    """
+    settings = _split_brain_settings()
+    gateway = ModelGateway(settings, Database(settings, tmp_path))
+
+    builder = gateway.capability_envelope(ModelRole.BUILDER, tools=AGENT_TOOL_SPECS)
+    planner = gateway.capability_envelope(ModelRole.PLANNER, tools=AGENT_TOOL_SPECS)
+
+    assert builder.profile_name == "small"
+    assert planner.profile_name == "strong"
+    # Not merely different — smaller, in both the numbers a task is sized by.
+    assert builder.task_source_budget_tokens < planner.task_source_budget_tokens
+    assert builder.max_files_per_task <= planner.max_files_per_task
+
+
+def test_the_tool_schemas_are_charged_against_the_envelope(tmp_path: Path) -> None:
+    """An envelope resolved without them over-reports by what the builder pays."""
+    settings = _split_brain_settings()
+    gateway = ModelGateway(settings, Database(settings, tmp_path))
+
+    with_tools = gateway.capability_envelope(ModelRole.BUILDER, tools=AGENT_TOOL_SPECS)
+    without = gateway.capability_envelope(ModelRole.BUILDER)
+
+    assert with_tools.working_headroom_tokens < without.working_headroom_tokens
+
+
+@pytest.mark.asyncio
+async def test_the_planner_prompt_carries_the_executor_numbers(tmp_path: Path) -> None:
+    settings = _split_brain_settings()
+    gateway = ModelGateway(settings, Database(settings, tmp_path))
+    envelope = gateway.capability_envelope(ModelRole.BUILDER, tools=AGENT_TOOL_SPECS)
+    recorded: list[list[Message]] = []
+
+    class RecordingGateway:
+        """Only `structured`, like the fake gateways elsewhere in the suite."""
+
+        async def structured(self, mission_id, role, messages, schema, **kwargs):  # type: ignore[no-untyped-def]
+            recorded.append(messages)
+            return TaskPlan(
+                summary="s",
+                mode=ProjectMode.DIRECT,
+                tasks=[
+                    TaskSpec(
+                        id="t1",
+                        title="t",
+                        objective="o",
+                        acceptance_criteria=["a"],
+                        verification_commands=[],
+                    )
+                ],
+            )
+
+    await Planner(RecordingGateway()).plan(  # type: ignore[arg-type]
+        "mission",
+        _requirements(),
+        "Repository map",
+        ProjectMode.DIRECT,
+        envelope=envelope,
+    )
+
+    prompt = recorded[0][1].content
+    assert str(envelope.max_files_per_task) in prompt
+    assert str(envelope.task_source_budget_tokens) in prompt
+    # And it says whose limits these are, or the planner applies them to itself.
+    assert "not you" in prompt
+
+
+@pytest.mark.asyncio
+async def test_planning_still_works_with_no_envelope() -> None:
+    """Every duck-typed gateway in the suite calls plan() without one."""
+    recorded: list[list[Message]] = []
+
+    class RecordingGateway:
+        async def structured(self, mission_id, role, messages, schema, **kwargs):  # type: ignore[no-untyped-def]
+            recorded.append(messages)
+            return TaskPlan(summary="s", mode=ProjectMode.DIRECT, tasks=[])
+
+    plan = await Planner(RecordingGateway()).plan(  # type: ignore[arg-type]
+        "mission",
+        _requirements(),
+        "Repository map",
+        ProjectMode.DIRECT,
+    )
+
+    assert plan.mode == ProjectMode.DIRECT
+    assert "Executor limits" not in recorded[0][1].content
+
+
+# ------------------------------- splitting through a file the model must divide
+
+
+@pytest.mark.asyncio
+async def test_resize_rewrites_every_id_it_is_given() -> None:
+    """Ids from the model are never trusted.
+
+    A returned id that collides with a live task, or a dependency on an id the
+    model invented, fails `validate_task_graph` — which fails the whole mission,
+    not just the split.
+    """
+    envelope = CapabilityEnvelope(
+        profile_name="small",
+        compact=False,
+        one_action_per_turn=False,
+        max_steps=None,
+        working_headroom_tokens=6_000,
+        source_tokens=6_000,
+        max_files_per_task=1,
+        task_source_budget_tokens=4_000,
+    )
+    parent = TaskSpec(
+        id="task-huge",
+        title="Rewrite the service",
+        objective="Rewrite service.py",
+        dependencies=["task-earlier"],
+        expected_files=["service.py"],
+        allowed_files=["service.py"],
+        acceptance_criteria=["the service works"],
+        verification_commands=["pytest"],
+    )
+
+    class ColludingGateway:
+        """Returns ids that collide and dependencies that do not exist."""
+
+        async def structured(self, mission_id, role, messages, schema, **kwargs):  # type: ignore[no-untyped-def]
+            return TaskPlan(
+                summary="split",
+                mode=ProjectMode.DIRECT,
+                tasks=[
+                    TaskSpec(
+                        id="task-earlier",
+                        title="Part one",
+                        objective="Rewrite the parser functions",
+                        dependencies=["invented-id"],
+                        acceptance_criteria=["parser rewritten"],
+                        verification_commands=["npm test"],
+                    ),
+                    TaskSpec(
+                        id="task-earlier",
+                        title="Part two",
+                        objective="Rewrite the writer functions",
+                        acceptance_criteria=["writer rewritten"],
+                        verification_commands=[],
+                    ),
+                ],
+            )
+
+    slices = await Planner(ColludingGateway()).resize(  # type: ignore[arg-type]
+        "mission", parent, envelope, "- line 1: function parse"
+    )
+
+    assert [spec.id for spec in slices] == ["task-huge-r01", "task-huge-r02"]
+    assert slices[0].dependencies == ["task-earlier"]
+    assert slices[1].dependencies == ["task-huge-r01"]
+    assert "invented-id" not in slices[0].dependencies
+    # Every part edits the same file, whatever the model said about scope.
+    assert all(spec.allowed_files == ["service.py"] for spec in slices)
+    # And only the last part runs the real check.
+    assert slices[0].verification_commands == []
+    assert slices[1].verification_commands == ["pytest"]
+    assert all(spec.slice_of == "task-huge" for spec in slices)
+
+
+@pytest.mark.asyncio
+async def test_resize_refuses_a_single_task_answer() -> None:
+    """One task is the original renamed, and re-running it would loop."""
+    envelope = CapabilityEnvelope(
+        profile_name="small",
+        compact=False,
+        one_action_per_turn=False,
+        max_steps=None,
+        working_headroom_tokens=6_000,
+        source_tokens=6_000,
+        max_files_per_task=1,
+        task_source_budget_tokens=4_000,
+    )
+    parent = TaskSpec(
+        id="task-huge",
+        title="t",
+        objective="o",
+        expected_files=["service.py"],
+        acceptance_criteria=["a"],
+        verification_commands=[],
+    )
+
+    class LazyGateway:
+        async def structured(self, mission_id, role, messages, schema, **kwargs):  # type: ignore[no-untyped-def]
+            return TaskPlan(
+                summary="split",
+                mode=ProjectMode.DIRECT,
+                tasks=[
+                    TaskSpec(
+                        id="x", title="t", objective="o", acceptance_criteria=["a"],
+                        verification_commands=[],
+                    )
+                ],
+            )
+
+    assert await Planner(LazyGateway()).resize("m", parent, envelope, "") == []  # type: ignore[arg-type]
+
+
+def test_a_file_outline_names_lines_and_kinds() -> None:
+    """The split follows real boundaries, so it must be given them."""
+    from daino.planning.planner import outline_of
+    from daino.schemas import RepositorySymbol
+
+    rendered = outline_of(
+        [
+            RepositorySymbol(name="write", kind="function", path="s.py", line=40),
+            RepositorySymbol(name="Parser", kind="class", path="s.py", line=10),
+        ]
+    )
+
+    # Sorted by line, so the outline reads in the order the file does.
+    assert rendered.splitlines() == [
+        "- line 10: class Parser",
+        "- line 40: function write",
+    ]
+
+
+def test_an_unindexed_file_still_produces_an_outline() -> None:
+    """The tree-sitter worker can fail; the fallback must not be a crash."""
+    from daino.planning.planner import outline_of
+
+    assert "no symbols" in outline_of([])

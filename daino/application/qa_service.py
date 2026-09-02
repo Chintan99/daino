@@ -30,9 +30,11 @@ from daino.application.context import ProjectContext
 from daino.application.mission_service import MissionApplicationService
 from daino.config import paths
 from daino.config.models import SecurityConfig
+from daino.git import GitClient
 from daino.model_router import ModelRole
 from daino.prompts import QA_REVIEW_SYSTEM
 from daino.schemas import (
+    CheckoutFingerprint,
     ProjectMode,
     QAAgentAction,
     QACheck,
@@ -61,6 +63,11 @@ SEVERITY_ORDER: tuple[QASeverity, ...] = ("critical", "high", "medium", "low", "
 #: How many confirmed high findings amount to a blocker on their own. One high
 #: is a conversation; a cluster of them is a release that has not been reviewed.
 HIGH_FINDING_BLOCK_THRESHOLD = 3
+
+#: Check categories a failure in which stops a release. Named so that adding a
+#: category cannot quietly create a class of failure the gate never reads: a
+#: Playwright run is filed under "browser", and a failing one is a failing test.
+BLOCKING_CHECK_CATEGORIES: frozenset[str] = frozenset({"tests", "browser"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,7 +184,9 @@ def discover_checks(
                 id="python-syntax",
                 label="Python syntax",
                 category="quality",
-                command=shlex.join(["python", "-m", "compileall", "-q", *_python_targets(root)]),
+                command=shlex.join(
+                    [_python_executable(root), "-m", "compileall", "-q", *_python_targets(root)]
+                ),
             )
         )
         config_text = _config_text(root)
@@ -469,6 +478,22 @@ class QAApplicationService:
     ) -> None:
         self.context = context
         self.missions = missions or MissionApplicationService(context)
+        self.git = GitClient(context.root)
+
+    def checkout(self) -> CheckoutFingerprint:
+        """The working tree as it is right now, for pinning or comparing."""
+        return CheckoutFingerprint.model_validate(self.git.checkout_fingerprint())
+
+    def is_current(self, report: QAReport | None) -> bool:
+        """Whether ``report``'s verdict still describes the working tree.
+
+        A report from before the fingerprint existed has no digest to compare,
+        and an unpinnable one (no Git) never gets a digest either. Both are
+        reported as not current: an unverifiable clearance is not a clearance.
+        """
+        if report is None or not report.checkout.digest:
+            return False
+        return report.checkout.digest == self.checkout().digest
 
     def latest(self) -> QAReport | None:
         return self._read_report(self._report_directory / "latest.json")
@@ -525,6 +550,7 @@ class QAApplicationService:
             scan_profile=scan_profile,
             target_url=target_url,
             checks=checks,
+            checkout=self.checkout(),
             specialists=[
                 QASpecialist(
                     id=member.id,
@@ -976,11 +1002,19 @@ def evaluate_gate(report: QAReport) -> tuple[QAVerdict, list[str]]:
     critical = [item for item in confident if item.severity == "critical"]
     high = [item for item in confident if item.severity == "high"]
     medium = [item for item in confident if item.severity == "medium"]
+    # A browser test is a test. Playwright is filed under its own category so
+    # the workspace can group it, not because a failing end-to-end run is a
+    # softer signal than a failing unit run — it is usually a harder one.
     failed_tests = [
-        item for item in report.checks if item.status == "failed" and item.category == "tests"
+        item
+        for item in report.checks
+        if item.status == "failed" and item.category in BLOCKING_CHECK_CATEGORIES
     ]
     failed_quality = [
         item for item in report.checks if item.status == "failed" and item.category == "quality"
+    ]
+    failed_runtime = [
+        item for item in report.checks if item.status == "failed" and item.category == "runtime"
     ]
     skipped_security = [
         item
@@ -1012,6 +1046,13 @@ def evaluate_gate(report: QAReport) -> tuple[QAVerdict, list[str]]:
         warnings.append(
             "quality checks failed: " + ", ".join(item.label for item in failed_quality)
         )
+    if failed_runtime:
+        # The probe may have failed because the app was stopped rather than
+        # because it is broken, which is why this warns rather than blocks.
+        warnings.append(
+            "the running application did not answer: "
+            + ", ".join(item.label for item in failed_runtime)
+        )
     if skipped_security:
         warnings.append(
             "security evidence is incomplete — these did not run: "
@@ -1023,13 +1064,33 @@ def evaluate_gate(report: QAReport) -> tuple[QAVerdict, list[str]]:
         # a reviewer that looked and found nothing.
         warnings.append("these reviewers did not complete: " + ", ".join(broken_reviewers))
     if warnings:
-        return "warn", [*warnings, *scope]
+        return "warn", [*warnings, *_advisory_caveats(report), *scope]
 
     cleared = [item.label for item in report.checks if item.status == "passed"]
     return "pass", [
-        "No critical or high findings, and no failing test or quality check.",
+        "No critical or high findings, and no failing test, browser, or quality check.",
         f"Evidence gathered from: {', '.join(cleared) or 'the built-in audit only'}.",
+        *_advisory_caveats(report),
         *scope,
+    ]
+
+
+
+def _advisory_caveats(report: QAReport) -> list[str]:
+    """Say plainly what the deterministic gate did *not* weigh.
+
+    The AI reviewers write prose, and prose cannot be counted. Their evidence is
+    kept and shown, but a verdict computed without it must admit that rather
+    than let a clean badge imply the reviewers agreed.
+    """
+    reported = [item.label for item in report.specialists if item.status == "passed"]
+    if not reported:
+        return []
+    return [
+        "Advisory: "
+        + ", ".join(reported)
+        + " reviewed this as well. Their notes are in the summary and are NOT part "
+        "of this verdict — read them before you push."
     ]
 
 
@@ -1166,6 +1227,25 @@ def _config_text(root: Path) -> str:
             except OSError:
                 pass
     return "\n".join(values)
+
+
+def _python_executable(root: Path) -> str:
+    """The interpreter to run the syntax check with.
+
+    Never the bare name ``python``: it does not exist on a modern macOS or on
+    most Linux distributions, where the binary is ``python3``. Hardcoding it
+    meant the syntax check reported "failed" on every such machine — a false
+    quality failure on a project whose syntax was fine, which is exactly the
+    kind of finding that teaches people to ignore the panel.
+
+    The project's own virtualenv wins when there is one, so the check runs on
+    the version the project targets; otherwise the interpreter Daino itself is
+    running under, which is guaranteed to exist.
+    """
+    for relative in (Path(".venv/bin/python"), Path(".venv/Scripts/python.exe")):
+        if (root / relative).is_file():
+            return (root / relative).as_posix()
+    return sys.executable or "python3"
 
 
 def _python_targets(root: Path) -> list[str]:

@@ -14,7 +14,9 @@ from daino.persistence import Database
 from daino.workbench.service import (
     HISTORY_DIR,
     MANIFEST,
+    MAX_REVISIONS,
     UPLOADS_DIR,
+    StaleArtifactError,
     WorkbenchError,
     WorkbenchService,
 )
@@ -473,3 +475,68 @@ def test_the_rest_of_the_state_directory_stays_hidden(
     assert tools.glob_files(".daino/logs/*.log").data["matches"] == []
     assert tools.grep("cheapest").data["matches"] == []
     assert tools.search_text("cheapest").data["matches"] == []
+
+
+def test_a_save_based_on_a_replaced_version_is_refused(
+    service: WorkbenchService,
+) -> None:
+    """The lost update this prevents: agent rewrites, user saves, agent's work gone.
+
+    History made that recoverable; refusing means it never happens. The digest
+    the reader was given is the token, so no extra round trip is needed to find
+    out what the file holds now.
+    """
+    workspace = service.create("Analysis")
+    service.write_artifact(workspace.id, "notes.md", "the user's draft")
+    opened = service.artifact(workspace.id, "notes.md").artifact.digest
+    assert opened
+
+    # The agent finishes a step and rewrites the document.
+    service.write_artifact(workspace.id, "notes.md", "the agent's rewrite", author="agent")
+
+    with pytest.raises(StaleArtifactError) as caught:
+        service.write_artifact(workspace.id, "notes.md", "more of the draft", base_digest=opened)
+
+    assert caught.value.current_digest
+    assert caught.value.current_digest != opened
+    # Nothing was written, so the agent's version is still there.
+    assert service.artifact(workspace.id, "notes.md").content == "the agent's rewrite"
+
+    # "Keep mine" is the same call without the token, and it goes through.
+    service.write_artifact(workspace.id, "notes.md", "more of the draft")
+    assert service.artifact(workspace.id, "notes.md").content == "more of the draft"
+
+
+def test_a_save_against_the_current_version_goes_through(
+    service: WorkbenchService,
+) -> None:
+    workspace = service.create("Analysis")
+    service.write_artifact(workspace.id, "notes.md", "first")
+    digest = service.artifact(workspace.id, "notes.md").artifact.digest
+
+    service.write_artifact(workspace.id, "notes.md", "second", base_digest=digest)
+
+    assert service.artifact(workspace.id, "notes.md").content == "second"
+
+
+def test_pinned_revisions_survive_the_retention_cap(
+    service: WorkbenchService,
+) -> None:
+    """A change set is an index into history, so its blobs must outlive the trim.
+
+    Without the pin, a workspace busy enough to roll past ``MAX_REVISIONS``
+    leaves its older change sets impossible to diff and impossible to reject —
+    exactly the recovery the panel offers.
+    """
+    workspace = service.create("Analysis")
+    service.write_artifact(workspace.id, "notes.md", "version 1")
+    service.pin_revisions(workspace.id, "notes.md", [1])
+
+    for index in range(2, MAX_REVISIONS + 12):
+        service.write_artifact(workspace.id, "notes.md", f"version {index}")
+
+    versions = {item.version for item in service.revisions(workspace.id, "notes.md")}
+    assert 1 in versions, "the pinned revision was trimmed away"
+    assert service.revision_content(workspace.id, "notes.md", 1) == "version 1"
+    # Unpinned old versions are still trimmed: this is a cap, not an archive.
+    assert 2 not in versions

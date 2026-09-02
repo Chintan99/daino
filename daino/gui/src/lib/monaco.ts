@@ -3,6 +3,12 @@
 // editor works fully offline / same-origin.
 import * as monaco from "monaco-editor";
 import { loader } from "@monaco-editor/react";
+
+import {
+  DAINO_CONTRAST_THEME,
+  DAINO_LIGHT_THEME,
+  DAINO_THEME,
+} from "./editorTheme";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
@@ -23,7 +29,6 @@ import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker"
 };
 
 /** The editor theme, kept in step with the TUI's syntax palette. */
-export const DAINO_THEME = "daino";
 
 monaco.editor.defineTheme(DAINO_THEME, {
   base: "vs-dark",
@@ -90,7 +95,6 @@ monaco.editor.defineTheme(DAINO_THEME, {
 });
 
 /** The light counterpart, using the same token roles as the CSS light theme. */
-export const DAINO_LIGHT_THEME = "daino-light";
 
 monaco.editor.defineTheme(DAINO_LIGHT_THEME, {
   base: "vs",
@@ -157,7 +161,6 @@ monaco.editor.defineTheme(DAINO_LIGHT_THEME, {
 });
 
 /** Maximum separation, for the matching high-contrast interface theme. */
-export const DAINO_CONTRAST_THEME = "daino-contrast";
 
 monaco.editor.defineTheme(DAINO_CONTRAST_THEME, {
   base: "hc-black",
@@ -183,30 +186,26 @@ monaco.editor.defineTheme(DAINO_CONTRAST_THEME, {
   },
 });
 
-/** Resolve the interface theme to the editor theme that matches it. */
-export function monacoThemeFor(theme: "dark" | "light" | "contrast"): string {
-  if (theme === "light") return DAINO_LIGHT_THEME;
-  if (theme === "contrast") return DAINO_CONTRAST_THEME;
-  return DAINO_THEME;
+// TypeScript/JavaScript diagnostics are syntax-only, deliberately.
+//
+// The TS worker has no filesystem and no node_modules, so semantic validation
+// reports "Cannot find module 'react'" for every real import in the project.
+// Those are artefacts of the sandbox, not problems with the code, and a
+// diagnostics panel that leads with false errors is worse than one that shows
+// fewer true ones. Syntax errors need no resolution to be correct, so they are
+// what the Problems panel reports; the project's own type-checker is what
+// INSPECTOR runs, with the whole tree available to it.
+for (const defaults of [
+  monaco.languages.typescript.typescriptDefaults,
+  monaco.languages.typescript.javascriptDefaults,
+]) {
+  defaults.setDiagnosticsOptions({
+    noSemanticValidation: true,
+    noSyntaxValidation: false,
+    noSuggestionDiagnostics: true,
+  });
 }
 
 loader.config({ monaco });
-
-/** Options every Monaco surface in the app shares, so they look like one editor. */
-export const EDITOR_OPTIONS = {
-  fontSize: 13.5,
-  fontFamily:
-    "'SFMono-Regular', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace",
-  lineHeight: 0, // 0 lets Monaco derive it from fontSize
-  minimap: { enabled: false },
-  scrollBeyondLastLine: false,
-  automaticLayout: true,
-  smoothScrolling: true,
-  renderLineHighlight: "none" as const,
-  padding: { top: 10, bottom: 10 },
-  scrollbar: { verticalScrollbarSize: 9, horizontalScrollbarSize: 9 },
-  overviewRulerBorder: false,
-  guides: { indentation: true },
-};
 
 export { monaco };

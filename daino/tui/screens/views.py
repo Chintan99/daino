@@ -1220,6 +1220,12 @@ def _live_event_summary(event: MissionEvent) -> str:
         return f"Task started: {getattr(event, 'title', '')}"
     if kind == "TaskCompleted":
         return f"Task completed: {getattr(event, 'title', '')}"
+    if kind == "TaskSplit":
+        slices = list(getattr(event, "slices", []))
+        return (
+            f"Task split into {len(slices)} smaller tasks: "
+            f"{getattr(event, 'title', '')} — {getattr(event, 'reason', '')}"
+        )
     if kind == "FileChanged":
         return f"Changed {getattr(event, 'path', '')}"
     if kind == "TestsStarted":

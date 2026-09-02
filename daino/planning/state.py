@@ -10,6 +10,10 @@ TRANSITIONS = {
         TaskStatus.AWAITING_APPROVAL,
         TaskStatus.VERIFYING,
         TaskStatus.FAILED,
+        # A running task that proves too large for its model is cancelled and
+        # replaced by the slices cut out of it. The declared machine has to
+        # allow the move the mission loop actually makes.
+        TaskStatus.CANCELLED,
     },
     TaskStatus.AWAITING_APPROVAL: {
         TaskStatus.RUNNING,

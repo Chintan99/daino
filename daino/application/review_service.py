@@ -45,6 +45,7 @@ from daino.review.diffs import FileChange, binary_change, parse_diff, whole_file
 from daino.schemas import (
     ChangedFile,
     ChangeReview,
+    CheckoutFingerprint,
     ProjectMode,
     QAAgentAction,
     QACheck,
@@ -70,6 +71,12 @@ MAX_NEW_FILE_BYTES = 512_000
 #: A diff past this is truncated before it reaches a model. Beyond it the model
 #: stops reasoning about the change and starts summarising fragments of it.
 MAX_DIFF_CHARS = 60_000
+
+#: How much of the reviewed patch is kept with the report. A finding is only
+#: readable beside the code it was written about, and re-deriving that code from
+#: today's working tree shows old findings against new lines. Generous, because
+#: a review whose diff has been dropped is a review nobody can check.
+MAX_STORED_PATCH_CHARS = 2_000_000
 
 #: Findings are grouped into these families for the "what was checked" panel, so
 #: a clean review says what it looked at rather than only that it found nothing.
@@ -282,7 +289,11 @@ class ChangeReviewApplicationService:
             files=[_changed_file(item) for item in changes],
             insertions=stats.insertions,
             deletions=stats.deletions,
+            checkout=CheckoutFingerprint.model_validate(self.git.checkout_fingerprint()),
         )
+        stored = _archivable_patch(subject, changes)
+        review.patch = stored[:MAX_STORED_PATCH_CHARS]
+        review.patch_truncated = len(stored) > MAX_STORED_PATCH_CHARS
 
         if not changes:
             review.status = "completed"
@@ -618,6 +629,10 @@ def evaluate_change_gate(review: ChangeReview) -> tuple[QAVerdict, list[str]]:
         if broken
         else []
     )
+    # The reviewers write prose, and prose is not counted. Their evidence is
+    # kept and shown, but a verdict computed without it has to say so rather
+    # than let a clean result imply the reviewers agreed.
+    incomplete.extend(_advisory_caveats(review))
 
     blockers: list[str] = []
     if critical:
@@ -642,6 +657,40 @@ def evaluate_change_gate(review: ChangeReview) -> tuple[QAVerdict, list[str]]:
         f"{len(review.files)} file(s), with no blocking finding.",
         f"Checked: {', '.join(reviewed) or 'the change shape only'}.",
         *incomplete,
+    ]
+
+
+def _archivable_patch(subject: ReviewSubject, changes: list[FileChange]) -> str:
+    """Everything the review looked at, as one unified diff it can keep.
+
+    Git's own diff covers tracked files. An untracked file has no diff — git
+    does not know about it — but it is the most interesting kind of change a
+    review sees, so it is rendered here as wholly added. Without that, opening a
+    new file in a saved review would find nothing archived and fall back to
+    whatever the working tree holds today, which is exactly the substitution
+    keeping the patch is meant to prevent.
+    """
+    sections = [subject.patch.rstrip("\n")] if subject.patch.strip() else []
+    for change in changes:
+        if change.path not in subject.untracked or not change.added:
+            continue
+        body = "\n".join(f"+{line.text}" for line in change.added)
+        sections.append(
+            f"diff --git a/{change.path} b/{change.path}\nnew file\n+++ b/{change.path}\n{body}"
+        )
+    return "\n".join(sections)
+
+
+def _advisory_caveats(review: ChangeReview) -> list[str]:
+    """Name the reviewers whose findings the deterministic gate did not weigh."""
+    reported = [item.label for item in review.specialists if item.status == "passed"]
+    if not reported:
+        return []
+    return [
+        "Advisory: "
+        + ", ".join(reported)
+        + " read this change as well. Their notes are in the summary and are NOT "
+        "part of this verdict — read them before you merge."
     ]
 
 

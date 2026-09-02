@@ -42,10 +42,43 @@ Items grey out when they cannot act rather than failing after the click.
 
 ### Workspaces (top tabs)
 
-- **Code** — file explorer with Git indicators, a Monaco editor (tabs, dirty state, multi-language),
-  an integrated PTY terminal (xterm.js), and a panel for output, problems, and test runs.
+- **Code** — file explorer with Git indicators, a Monaco editor (tabs, dirty state,
+  multi-language), an integrated PTY terminal (xterm.js), and a bottom panel with terminal, output,
+  problems, tests, and debug.
+
+  **Problems** shows diagnostics from the language servers this machine has — pyright or pylsp for
+  Python, typescript-language-server, gopls, rust-analyzer — plus Monaco's own syntax checks. It is
+  careful about the difference between "clean" and "nothing looked": an open file no analyser
+  reached is listed as a coverage gap, with the command that would close it. F12, ⇧F12 and F2 give
+  go-to-definition, find-references and rename; a rename shows every file it would touch before
+  writing any of them.
+
+  **Tests** discovers and runs the project's own tests (pytest, Vitest, Jest, `go test`,
+  `cargo test`), reports each one's outcome, and links a failure to the line it failed on — which is
+  usually not the line the test is defined on. Re-run only the failures, or collect coverage.
+
+  **Debug** drives the Debug Adapter Protocol. Click a line number to set a breakpoint; the marker
+  shows where the debugger will *actually* stop, since the adapter may move it to the nearest
+  runnable line or refuse it. F5 continues or starts, F10/F11 step, and the panel shows the call
+  stack, each frame's variables, and an expression box scoped to the selected frame. Python works
+  through debugpy; a language with no adapter installed says which one to install.
+
+  **Source control** goes beyond review: stage or unstage individual hunks, commit exactly what is
+  staged (never more), amend, switch and create branches, fetch, pull, push, merge, and resolve
+  conflicts with both sides shown side by side. Nothing here runs without an explicit click, and
+  Git's own refusals — deleting an unmerged branch, committing a half-resolved merge — are passed
+  through rather than worked around.
+
+  **Search** takes regex, case and whole-word toggles, and include/exclude globs. Replace across
+  the repository is previewed first, every line and every file, with per-file checkboxes. ⌘T jumps
+  to any symbol in the project; ⇧⌘P runs any command the project declares in `package.json`, a
+  Makefile, a justfile, `compose.yaml`, or `.daino/tasks.json`.
 - **Design** — a canvas. Drop an `.html`, `.svg`, image, note, or exported design and the file lives
-  there; architecture diagrams (nodes and edges) share the same sheet. A **left panel lists canvases
+  there; architecture diagrams (nodes and edges) and UI frames share the same sheet. Turning a
+  design into code is gated: **Propose a plan** runs one read-only turn that studies the repository
+  and writes a plan, you read and approve it, and only then can **Implement** write anything. A
+  plan written for an older version of the canvas is refused rather than applied to a design that
+  has since changed. A **left panel lists canvases
   and the folder's files**. Manual and agent edits mutate the same document under
   `.daino/designs/<id>/design.json`. See [the visual editor](#the-visual-html-editor).
 - **Workspace** — the work that is not code: documents, research, planning, and analysis. A
@@ -56,8 +89,9 @@ Items grey out when they cannot act rather than failing after the click.
 - **Inspector** — the pre-production check, in three views. **Scan** runs end-to-end QA and a
   vulnerability assessment and answers one question: can this be pushed? **Review** reads one change
   — working tree, staged, or this branch against its base — and answers whether it can be merged.
-  **Live app** runs your project's dev server (detected from `package.json` / `pyproject.toml` / `compose.yaml`, started
-  through the approval flow), embeds the running app, and becomes the scan's live target. See
+  **Live app** runs your project's dev server — detected from `package.json` / `pyproject.toml` /
+  `compose.yaml`, chosen by you from that list, and refused if the security policy classifies it as
+  never-approvable — embeds the running app, and becomes the scan's live target. See
   [the Inspector](#the-inspector).
 - **Insights** — the browser counterpart of the TUI's views behind one segmented control: per-prompt
   **execution map** (models, tools, tests, timing, tokens, cost), live and recorded **logs**,
@@ -228,9 +262,15 @@ asserts is caught.
 
 ### Live app
 
-Detects runnable commands from `package.json`, `pyproject.toml`, and `compose.yaml`, starts one
-through the normal approval flow, and embeds it. While it runs, its URL prefills the scan's live
-target, so "see it working" and "check what it exposes" are the same two clicks.
+Detects runnable commands from `package.json`, `pyproject.toml`, and `compose.yaml`, starts one, and
+embeds it. While it runs, its URL prefills the scan's live target, so "see it working" and "check
+what it exposes" are the same two clicks.
+
+Choosing the command *is* the approval here: you pick it from a detected, visible list, and the
+security policy is applied to your choice rather than to a request from the agent. A command the
+policy classifies as never-approvable is refused outright — there is no prompt to say yes to, because
+there is no answer that would make it safe. This is deliberately not the agent's approval round trip:
+nothing is proposing the command, so there is nothing to grant.
 
 Probing is limited to loopback and private-network addresses. Anything else has to be confirmed as
 yours before the button will run, and the confirmation is audited.

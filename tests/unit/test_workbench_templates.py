@@ -83,3 +83,84 @@ def test_an_unknown_name_falls_back_to_general(tmp_path: Path) -> None:
 
     assert resolved.name == "general"
     assert resolved.starter_tasks
+
+
+# --------------------------------- sizing a workspace plan to the executing model
+
+
+def _envelope(*, files: int, tokens: int = 4_000, steps: int | None = None) -> object:
+    from daino.context import CapabilityEnvelope
+
+    return CapabilityEnvelope(
+        profile_name="local-ollama",
+        compact=files <= 1,
+        one_action_per_turn=files <= 1,
+        max_steps=steps,
+        working_headroom_tokens=tokens,
+        source_tokens=tokens,
+        max_files_per_task=files,
+        task_source_budget_tokens=tokens,
+    )
+
+
+def _workspace() -> object:
+    from daino.workbench.models import Workspace
+
+    return Workspace(
+        id="ws",
+        name="Research",
+        slug="research",
+        goal="Understand the market",
+        folder="research",
+    )
+
+
+def test_a_narrow_model_is_told_one_artifact_per_step() -> None:
+    """The honest translation of a per-task file budget into knowledge work.
+
+    A workspace step has no file scope to pack — it is a line of prose — so
+    nothing can split it after the fact. Telling the model writing the plan how
+    much one step may hold is the only lever there is.
+    """
+    from daino.application.mission_service import workspace_system_prompt
+    from daino.workbench.templates import WorkspaceTemplate
+
+    rendered = workspace_system_prompt(
+        _workspace(),  # type: ignore[arg-type]
+        WorkspaceTemplate(name="research", title="Research", preamble=""),
+        _envelope(files=1, steps=30),  # type: ignore[arg-type]
+    )
+
+    assert "exactly one artifact" in rendered
+    assert "30 actions per step" in rendered
+    # Numbers, not adjectives — the same rule the planner prompt follows.
+    assert "16000 characters" in rendered
+
+
+def test_a_roomy_model_is_given_its_real_allowance() -> None:
+    from daino.application.mission_service import workspace_system_prompt
+    from daino.workbench.templates import WorkspaceTemplate
+
+    rendered = workspace_system_prompt(
+        _workspace(),  # type: ignore[arg-type]
+        WorkspaceTemplate(name="research", title="Research", preamble=""),
+        _envelope(files=5, tokens=40_000),  # type: ignore[arg-type]
+    )
+
+    assert "at most 5 documents" in rendered
+    assert "exactly one artifact" not in rendered
+
+
+def test_the_prompt_is_unchanged_when_no_envelope_is_available() -> None:
+    """Every existing caller passes nothing; none of them may change shape."""
+    from daino.application.mission_service import workspace_system_prompt
+    from daino.workbench.templates import WorkspaceTemplate
+
+    template = WorkspaceTemplate(name="research", title="Research", preamble="")
+
+    assert workspace_system_prompt(_workspace(), template) == workspace_system_prompt(  # type: ignore[arg-type]
+        _workspace(),  # type: ignore[arg-type]
+        template,
+        None,
+    )
+    assert "Scale each plan step" not in workspace_system_prompt(_workspace(), template)  # type: ignore[arg-type]

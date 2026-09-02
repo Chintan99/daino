@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import sys
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -75,7 +76,11 @@ class VerificationEngine:
     def discover_commands(self) -> list[str]:
         commands: list[str] = []
         if (self.root / "pyproject.toml").exists() or (self.root / "setup.cfg").exists():
-            commands.append("python -m compileall -q .")
+            # Never the bare name "python": it does not exist on a modern macOS
+            # or most Linux distributions, where the binary is python3. Using it
+            # made the syntax check report a failure on every such machine, for
+            # a project whose syntax was fine.
+            commands.append(f"{shlex.quote(self._python())} -m compileall -q .")
             if (self.root / "tests").exists():
                 commands.append("pytest")
         if (self.root / "package.json").exists():
@@ -87,6 +92,13 @@ class VerificationEngine:
         if not commands:
             commands.append("git diff --check")
         return commands
+
+    def _python(self) -> str:
+        """The interpreter to verify with: the project's own, else Daino's."""
+        for relative in (Path(".venv/bin/python"), Path(".venv/Scripts/python.exe")):
+            if (self.root / relative).is_file():
+                return str(self.root / relative)
+        return sys.executable or "python3"
 
     @staticmethod
     def summarize_failure(command: str, stdout: str, stderr: str) -> FailureReport:

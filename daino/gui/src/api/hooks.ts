@@ -30,8 +30,8 @@ export const qk = {
   reviewHistory: ["review", "history"] as const,
   reviewSubject: (scope: string, baseRef: string) =>
     ["review", "subject", scope, baseRef] as const,
-  reviewDiff: (path: string, scope: string, baseRef: string) =>
-    ["review", "diff", path, scope, baseRef] as const,
+  reviewDiff: (path: string, scope: string, baseRef: string, reviewId: string) =>
+    ["review", "diff", path, scope, baseRef, reviewId] as const,
   missions: ["missions"] as const,
   missionDetails: (id: string) => ["missions", id] as const,
   checkpoints: ["checkpoints"] as const,
@@ -443,10 +443,11 @@ export function useReviewFileDiff(
   path: string | null,
   scope: ReviewScope,
   baseRef: string,
+  reviewId = "",
 ) {
   return useQuery({
-    queryKey: qk.reviewDiff(path ?? "", scope, baseRef),
-    queryFn: () => api.reviewFileDiff(path as string, scope, baseRef),
+    queryKey: qk.reviewDiff(path ?? "", scope, baseRef, reviewId),
+    queryFn: () => api.reviewFileDiff(path as string, scope, baseRef, reviewId),
     enabled: !!path,
   });
 }

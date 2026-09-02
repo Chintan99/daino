@@ -30,7 +30,7 @@ from daino.application.workspace_run_service import RunError
 from daino.server.deps import get_state
 from daino.server.state import GuiState
 from daino.workbench.models import TaskStatus
-from daino.workbench.service import WorkbenchError
+from daino.workbench.service import StaleArtifactError, WorkbenchError
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspace"])
 
@@ -58,6 +58,11 @@ class WriteArtifactRequest(BaseModel):
     path: str = Field(min_length=1)
     content: str
     author: str = "user"
+    #: The digest the draft was based on, from the read that opened it. Sent by
+    #: the editor so a save cannot silently overwrite a version written since;
+    #: empty means "write regardless", which is what an overwrite-anyway button
+    #: and the agent's own tools use.
+    base_digest: str = ""
 
 
 class SetTasksRequest(BaseModel):
@@ -256,9 +261,21 @@ def write_artifact(
     workspace_id: str,
     body: WriteArtifactRequest,
 ) -> dict[str, Any]:
-    artifact = state.workbench.write_artifact(
-        workspace_id, body.path, body.content, author=body.author
-    )
+    try:
+        artifact = state.workbench.write_artifact(
+            workspace_id,
+            body.path,
+            body.content,
+            author=body.author,
+            base_digest=body.base_digest,
+        )
+    except StaleArtifactError as exc:
+        # 409, not 400: the request is well formed and will succeed once the
+        # writer has seen what changed and decided what to keep.
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(exc), "current_digest": exc.current_digest},
+        ) from exc
     return artifact.model_dump(mode="json")
 
 
@@ -533,6 +550,9 @@ async def skip_task(
         run.workspace_id, task_id, status="failed", error="Skipped by the user."
     )
     state.runs.runs.add_step(run_id, "task_skipped", "Skipped by the user.", task_id=task_id)
+    # Deciding to move past a step is an intervention, so the run does not carry
+    # the failure streak that would otherwise stop it.
+    state.runs.clear_failure_streak(run_id)
     try:
         resumed = await state.runs.resume(run_id)
     except RunError as exc:

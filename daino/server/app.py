@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sys
+import traceback
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,19 +17,24 @@ from fastapi.staticfiles import StaticFiles
 from daino import __version__, branding
 from daino.application.context import ProjectContext
 from daino.application.review_service import ReviewError
+from daino.observability import AuditLog
 from daino.server import websocket
 from daino.server.routes import (
     agent,
     customization,
+    debug,
     design,
     docs,
     files,
     git,
     insights,
+    lsp,
     preview,
     review,
     settings,
+    tasks,
     terminal,
+    tests,
     workbench,
 )
 from daino.server.security import DEV_ORIGINS, OriginPolicy
@@ -102,11 +109,15 @@ def create_app(context: ProjectContext, *, host: str = "127.0.0.1") -> FastAPI:
         design,
         preview,
         review,
+        tasks,
         terminal,
+        tests,
         insights,
+        lsp,
         docs,
         settings,
         customization,
+        debug,
         workbench,
     ):
         app.include_router(module.router)
@@ -126,6 +137,48 @@ def create_app(context: ProjectContext, *, host: str = "127.0.0.1") -> FastAPI:
         their request models.
         """
         return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(Exception)
+    async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+        """Turn a crash into something diagnosable.
+
+        Starlette's default is a bare "Internal Server Error" with the traceback
+        going to stderr, which in a detached GUI means the user sees five words
+        and the evidence is somewhere they will not look. That is the worst
+        possible split: the person who can report the bug has nothing to report,
+        and the trace that would explain it is discarded.
+
+        So the traceback goes to the audit log — the one place already tied to
+        this project and already read by ``daino logs`` — and the response
+        carries the exception type, the route, and a pointer to it. Still a 500,
+        still no internals leaked beyond the exception's own class name.
+        """
+        detail = f"{type(exc).__name__}: {exc}".strip()
+        trace = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
+        with contextlib.suppress(Exception):
+            AuditLog(context.root).emit(
+                "ServerError",
+                path=str(request.url.path),
+                method=request.method,
+                error=detail,
+                traceback=trace[-8_000:],
+            )
+        # Also to stderr, which is where the GUI log file points.
+        print(f"[daino] unhandled error on {request.method} {request.url.path}\n{trace}",
+              file=sys.stderr, flush=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": detail,
+                "path": str(request.url.path),
+                "hint": (
+                    "This is a bug in Daino. The full traceback is in the "
+                    "project's audit log — run `daino logs` to read it."
+                ),
+            },
+        )
 
     @app.get("/api/health")
     def health() -> dict:
@@ -193,9 +246,30 @@ npm run build</pre>
         return FileResponse(index)
 
     @app.get("/{full_path:path}")
-    def _spa(full_path: str) -> FileResponse:
-        # Client-side routes fall back to index.html; real files are served as-is.
-        candidate = _DIST_DIR / full_path
-        if candidate.is_file():
+    def _spa(full_path: str) -> Response:
+        """Client-side routes fall back to index.html; real files are served.
+
+        Two things this must *not* do, both of which it used to.
+
+        It must not answer for ``/api`` or ``/ws``. A misspelled or
+        removed endpoint was returning index.html with a 200, so the frontend
+        received HTML where it expected JSON — `res.ok` was true, the parse
+        failed, and the caller got a string of markup instead of data. The
+        resulting breakage appears far from its cause and looks like a server
+        error. A 404 that says what was not found is the honest answer, and it
+        is what every client already knows how to handle.
+
+        And it must not serve a path that escapes ``dist``. Starlette normalises
+        ``..`` before routing today, so this is not currently reachable — but
+        that is one dependency change away from being a file-disclosure bug, and
+        the containment check costs nothing.
+        """
+        if full_path.startswith(("api/", "ws/")) or full_path in {"api", "ws"}:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"No such endpoint: /{full_path}"},
+            )
+        candidate = (_DIST_DIR / full_path).resolve()
+        if candidate.is_file() and candidate.is_relative_to(_DIST_DIR.resolve()):
             return FileResponse(candidate)
         return FileResponse(index)

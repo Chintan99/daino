@@ -3,12 +3,14 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from daino.config import default_settings, save_settings
 from daino.persistence import Database
+from daino.schemas.core import RepositoryFile, RepositoryIndex, RepositorySymbol
 
 
 @pytest.fixture(autouse=True)
@@ -113,3 +115,41 @@ def isolated_global_config(
     settings, not only the ones that obviously do.
     """
     monkeypatch.setenv("DAINO_CONFIG_HOME", str(tmp_path_factory.mktemp("daino-global")))
+
+
+def repository_index(
+    files: dict[str, list[str]],
+    *,
+    symbols: dict[str, list[str]] | None = None,
+    sizes: dict[str, int] | None = None,
+) -> RepositoryIndex:
+    """A synthetic index: path -> its import statements, and optionally symbols.
+
+    Shared by the diagram tests and the retrieval tests because both are about
+    the same edges, and a fixture that drifted between them would let one prove
+    something the other contradicts.
+    """
+    defined = symbols or {}
+    measured = sizes or {}
+    return RepositoryIndex(
+        root="/repo",
+        generated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        files=[
+            RepositoryFile(
+                path=path,
+                language="Python" if path.endswith(".py") else "TypeScript",
+                size=measured.get(path, 100),
+                digest="d",
+                summary="",
+                imports=imports,
+                symbols=[
+                    RepositorySymbol(name=name, kind="function", path=path, line=1)
+                    for name in defined.get(path, [])
+                ],
+            )
+            for path, imports in files.items()
+        ],
+        languages={},
+        frameworks=[],
+        entrypoints=[],
+    )

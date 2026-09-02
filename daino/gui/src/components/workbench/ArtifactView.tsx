@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import Editor from "@monaco-editor/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api } from "../../api/client";
+import { api, ApiError } from "../../api/client";
 import { qk, useArtifact } from "../../api/hooks";
 import { useEditorOptions, useMonacoTheme } from "../../lib/editorPrefs";
 import { useUIStore } from "../../store/uiStore";
@@ -11,6 +11,10 @@ import { openFileInEditor } from "../../lib/openFile";
 import { sendChatMessage } from "../../lib/agent";
 import type { Workspace } from "../../api/types";
 import { HistoryPanel } from "./HistoryPanel";
+// Registers the Daino themes and the language workers on the monaco
+// instance. Imported here rather than at app start so the 4 MB editor
+// arrives with the first component that renders one.
+import "../../lib/monaco";
 
 type Mode = "read" | "edit" | "history";
 
@@ -39,6 +43,9 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
   const [draft, setDraft] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Set when a save collided with a newer version. Held rather than alerted,
+  // because the choice it presents — reload or keep mine — is the whole point.
+  const [conflict, setConflict] = useState("");
   const [exporting, setExporting] = useState("");
   const setArtifactPath = useUIStore((s) => s.setActiveArtifactPath);
   const theme = useMonacoTheme();
@@ -55,6 +62,7 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
   useEffect(() => {
     setMode("read");
     setDirty(false);
+    setConflict("");
   }, [path]);
 
   const isMarkdown = !!path && /\.(md|markdown)$/i.test(path);
@@ -72,11 +80,24 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
     );
   }
 
-  const save = async () => {
+  /**
+   * Save the draft, refusing to silently overwrite work done since it loaded.
+   *
+   * `force` is the deliberate "keep mine": the digest is dropped, so the write
+   * goes through. The version it replaces is still a revision, so both sides of
+   * the collision remain recoverable from HISTORY either way.
+   */
+  const save = async (force = false) => {
     setSaving(true);
     try {
-      await api.writeArtifact(workspace.id, path, draft);
+      await api.writeArtifact(
+        workspace.id,
+        path,
+        draft,
+        force ? "" : (data?.artifact.digest ?? ""),
+      );
       setDirty(false);
+      setConflict("");
       await qc.invalidateQueries({ queryKey: qk.workspaceItem(workspace.id) });
       await qc.invalidateQueries({
         queryKey: qk.workspaceArtifact(workspace.id, path),
@@ -85,10 +106,30 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
         queryKey: qk.workspaceRevisions(workspace.id, path),
       });
     } catch (err) {
-      window.alert(err instanceof Error ? err.message : String(err));
+      if (err instanceof ApiError && err.status === 409) {
+        // Not an error to dismiss: two versions exist and only the person
+        // editing can say which one should win.
+        setConflict(
+          err.message ||
+            "This document changed since you opened it. Reload it, or keep your version.",
+        );
+      } else {
+        window.alert(err instanceof Error ? err.message : String(err));
+      }
     } finally {
       setSaving(false);
     }
+  };
+
+  /** Throw the draft away and take what is on disk now. */
+  const reload = async () => {
+    setDirty(false);
+    setConflict("");
+    const fresh = await qc.fetchQuery({
+      queryKey: qk.workspaceArtifact(workspace.id, path),
+      queryFn: () => api.readArtifact(workspace.id, path),
+    });
+    setDraft(fresh.content);
   };
 
   /**
@@ -172,6 +213,22 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
           ↗
         </button>
       </div>
+
+      {conflict && (
+        <div className="conflict-bar">
+          <span>⚠ {conflict}</span>
+          <button className="btn subtle" onClick={() => void reload()}>
+            Reload from disk
+          </button>
+          <button
+            className="btn danger"
+            title="Overwrite the newer version with yours — it stays in HISTORY"
+            onClick={() => void save(true)}
+          >
+            Keep mine
+          </button>
+        </div>
+      )}
 
       {isLoading && <div className="empty">Loading…</div>}
       {!isLoading && data && !data.readable && (

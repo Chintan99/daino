@@ -3,6 +3,8 @@ import { api } from "../../api/client";
 import { qk, useWorkspaceLinks } from "../../api/hooks";
 import { useUIStore } from "../../store/uiStore";
 import { sendChatMessage } from "../../lib/agent";
+import { handOffToCode } from "../../lib/handoff";
+import { useDesignStore } from "../../store/designStore";
 import type { Workspace } from "../../api/types";
 
 const RELATION: Record<string, string> = {
@@ -25,6 +27,7 @@ export function LinksPanel({ workspace }: { workspace: Workspace }) {
   const qc = useQueryClient();
   const setArtifact = useUIStore((s) => s.setActiveArtifactPath);
   const setTab = useUIStore((s) => s.setActiveWorkspaceTab);
+  const setActiveDesign = useDesignStore((s) => s.setActiveDesign);
   const { data } = useWorkspaceLinks(workspace.id);
   const links = data?.links ?? [];
   const stale = data?.stale ?? [];
@@ -94,13 +97,19 @@ export function LinksPanel({ workspace }: { workspace: Workspace }) {
                   className="btn subtle sm"
                   onClick={() => {
                     if (link.source_kind === "design") {
+                      // The link's source_path is the design id, so opening
+                      // DESIGN can land on the canvas this workspace is about
+                      // rather than on whatever was last selected.
+                      if (link.source_path) setActiveDesign(link.source_path);
                       setTab("design");
                       return;
                     }
-                    // A code handoff is a brief in the workspace: open it,
-                    // then hand it to the agent as the request it describes.
+                    // A code handoff is a brief in the workspace: open it, then
+                    // hand it to the conversation CODE is about to show. The
+                    // message is queued rather than sent here, because right now
+                    // the shared socket still points at this workspace's thread.
                     setArtifact(link.source_path);
-                    void sendChatMessage(
+                    handOffToCode(
                       `Build what ${workspace.folder}/${link.source_path} describes. ` +
                         "Read it and the documents it references first.",
                     );

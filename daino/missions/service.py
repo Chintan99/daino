@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import json
+from collections import deque
+from dataclasses import replace
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from daino.agents import ModelGateway, ReviewerAgent, ToolLoop, describe_incomplete_outcome
+from daino.agents import (
+    THRASHING_COMPACTIONS,
+    IncompleteRun,
+    ModelGateway,
+    ReviewerAgent,
+    ToolLoop,
+    describe_incomplete_outcome,
+)
 from daino.agents.tool_schemas import AGENT_TOOL_SPECS
 from daino.config.models import Settings
-from daino.context import ContextBuilder, ContextCompiler
+from daino.context import CapabilityEnvelope, ContextBuilder, ContextCompiler
 from daino.events import (
     AgentRoleChanged,
     ApprovalRequested,
@@ -22,6 +31,7 @@ from daino.events import (
     MissionFailed,
     MissionStarted,
     TaskCompleted,
+    TaskSplit,
     TaskStarted,
     TestsCompleted,
     TestsStarted,
@@ -46,6 +56,8 @@ from daino.persistence.models import (
     VerificationRun,
 )
 from daino.planning import Planner, recommend_mode, validate_task_graph
+from daino.planning.planner import outline_of
+from daino.planning.sizing import measure_scope, split_task
 from daino.repository import RepositoryIndexer
 from daino.requirements import RequirementsCompiler
 from daino.runtimes import DockerRuntime, LocalRuntime, Runtime
@@ -216,8 +228,21 @@ class MissionService:
         planner_gateway = (
             gateway if self._role_available(ModelRole.PLANNER, profile_override) else None
         )
+        # The tasks are sized for the model that will *execute* them, which the
+        # shipped configuration routes to a different (usually smaller) profile
+        # than the planner. Guarded twice: the fake gateways in the test suite
+        # expose only `structured`, and planning is deliberately allowed to
+        # succeed with no builder routed at all — that is enforced later, when a
+        # build is actually attempted.
+        envelope_resolver = getattr(gateway, "capability_envelope", None)
+        envelope = (
+            envelope_resolver(ModelRole.BUILDER, tools=AGENT_TOOL_SPECS)
+            if callable(envelope_resolver)
+            and self._role_available(ModelRole.BUILDER, profile_override)
+            else None
+        )
         task_plan = await Planner(planner_gateway).plan(
-            mission.id, requirements, summary, ProjectMode(mission.mode)
+            mission.id, requirements, summary, ProjectMode(mission.mode), envelope=envelope
         )
         ordered = validate_task_graph(task_plan)
         id_map = {task.id: new_id("task") for task in ordered}
@@ -229,6 +254,11 @@ class MissionService:
                         "id": id_map[spec.id],
                         "dependencies": [id_map[item] for item in spec.dependencies],
                         "status": TaskStatus.PENDING,
+                        # `TaskSpec` is a StrictModel, so the planner is able to
+                        # emit this — and a planned task that claimed to be a
+                        # slice of something would have its commit deferred
+                        # waiting for siblings that do not exist.
+                        "slice_of": "",
                     }
                 )
                 normalized.append(mapped)
@@ -512,6 +542,22 @@ class MissionService:
             if callable(profile_resolver)
             else None
         )
+        envelope_resolver = getattr(gateway, "capability_envelope", None)
+        builder_envelope = (
+            envelope_resolver(ModelRole.BUILDER, tools=AGENT_TOOL_SPECS)
+            if callable(envelope_resolver)
+            else None
+        )
+        # Sizes in bytes, straight from the index the planner was shown. A task
+        # is measured against the same numbers the planner was given, so a task
+        # that overruns here is one the planner got wrong rather than one this
+        # code and the planner disagree about.
+        index = indexer.load()
+        file_sizes = {item.path: item.size for item in index.files}
+        # Only ever read when a single file overruns the whole budget, which is
+        # rare — but the index is already in hand here, and re-loading it inside
+        # the loop would be a second full parse of the same JSON.
+        file_outlines = {item.path: outline_of(item.symbols) for item in index.files}
         context_reserve = min(2_048, max(512, model_budget // 4))
         compiler = ContextCompiler(
             workspace.path,
@@ -545,15 +591,36 @@ class MissionService:
                     )
                 ).all()
             )
+            # Tasks replaced by the slices cut out of them. `_load_plan` rebuilds
+            # the plan from every persisted row, so without this a resumed
+            # mission re-runs the oversized parent it already gave up on.
+            superseded = set(
+                session.scalars(
+                    select(Task.id).where(
+                        Task.mission_id == workspace.mission_id,
+                        Task.status == TaskStatus.CANCELLED.value,
+                    )
+                ).all()
+            )
         # A task that fails no longer aborts the whole mission: only its dependents
         # are skipped, so independent tasks still run and commit. The mission is
         # reported failed at the end if anything did not complete, but with the
         # completed work preserved rather than thrown away at the first failure.
         failed: dict[str, str] = {}
         skipped: dict[str, list[str]] = {}
+        # How many times each *root* task has been cut down. Keyed by root rather
+        # than by immediate parent so repeated splitting of one planned task is
+        # bounded however deep the slicing goes.
+        generations: dict[str, int] = {}
+        # root task id -> paths its slices have changed but not yet committed.
+        deferred: dict[str, list[str]] = {}
+        # A worklist rather than a materialised list: a split appends its slices
+        # to the front, and a `for` over a list built once would never visit them.
+        queue: deque[TaskSpec] = deque(validate_task_graph(plan))
         try:
-            for spec in validate_task_graph(plan):
-                if spec.id in completed:
+            while queue:
+                spec = queue.popleft()
+                if spec.id in completed or spec.id in superseded:
                     continue
                 blocked_by = sorted(set(spec.dependencies) & (failed.keys() | skipped.keys()))
                 if blocked_by:
@@ -611,7 +678,9 @@ class MissionService:
                     pending = [
                         item.title
                         for item in validate_task_graph(plan)
-                        if item.id not in completed and item.id != spec.id
+                        if item.id not in completed
+                        and item.id not in superseded
+                        and item.id != spec.id
                     ]
                     self.memory.update_task(
                         persistent.task_id,
@@ -619,6 +688,25 @@ class MissionService:
                         pending_steps=pending,
                         status=PersistentTaskStatus.IN_PROGRESS,
                     )
+                # Refuse an oversized task before spending a turn on it. The
+                # planner sizes tasks against this same envelope, so reaching
+                # here means its estimate was wrong — a file grew, a glob
+                # expanded, or no envelope was available when the plan was made.
+                too_big = self._scope_overrun(spec, file_sizes, builder_envelope, context)
+                if too_big and await self._replace_with_slices(
+                    workspace,
+                    plan,
+                    queue,
+                    spec,
+                    file_sizes,
+                    builder_envelope,
+                    generations,
+                    superseded,
+                    reason=too_big,
+                    gateway=gateway,
+                    outlines=file_outlines,
+                ):
+                    continue
                 # The agent was shown the compiled file contents, so they count
                 # as already read: edits to those files may land immediately,
                 # while any other existing file must be read first or the gate
@@ -645,10 +733,45 @@ class MissionService:
                         debugger=False,
                         attempts=0,
                     )
+                except IncompleteRun as exc:
+                    # A stall behind heavy compaction is not a stuck model: the
+                    # agent kept losing what it read and re-reading it. The task
+                    # is too large for this window, and splitting it is the only
+                    # thing that changes the outcome — a retry would thrash
+                    # identically. Anything else falls through to a failure.
+                    thrashed = (
+                        exc.outcome.stop_reason == "stall"
+                        and exc.outcome.compactions >= THRASHING_COMPACTIONS
+                    )
+                    if thrashed and await self._replace_with_slices(
+                        workspace,
+                        plan,
+                        queue,
+                        spec,
+                        file_sizes,
+                        builder_envelope,
+                        generations,
+                        superseded,
+                        gateway=gateway,
+                        outlines=file_outlines,
+                        reason=(
+                            f"the run compacted {exc.outcome.compactions} times without "
+                            "making progress"
+                        ),
+                        overran=True,
+                    ):
+                        continue
+                    self._record_task_failure(workspace, failed, spec, str(exc))
+                    continue
                 except RuntimeError as exc:
                     self._record_task_failure(workspace, failed, spec, str(exc))
                     continue
                 indexer.build()
+                # Re-measured, because this task may have created the file the
+                # next one is scoped to. Sizing task N+1 against an index taken
+                # before task N ran would score a new 20KB module as a nominal
+                # new file and wave an oversized task straight through.
+                file_sizes = {item.path: item.size for item in indexer.load().files}
                 self._update_task(spec.id, TaskStatus.VERIFYING)
                 engine = VerificationEngine(workspace.path, runtime)
                 # The approved task contract is authoritative. A builder may
@@ -810,11 +933,29 @@ class MissionService:
                     )
                     continue
                 revision = None
-                if commit_verified and self.settings.git.auto_commit_verified_tasks:
-                    changed_paths = sorted(set(changed))
+                # An intermediate slice is a third of a coherent change, and the
+                # verification that would prove it correct belongs to the last
+                # slice. Committing it anyway would put a state no check ever
+                # passed into the branch's history. The work stays in the working
+                # tree, and the final slice commits the whole change at once.
+                holds_commit = self._awaits_sibling_slices(spec, plan, completed, superseded)
+                root = spec.slice_of
+                changed_paths = sorted(set(changed) | set(deferred.get(root, ())))
+                if holds_commit:
+                    # Carried to the final slice. Without this the last slice
+                    # would commit only the files it touched itself, and the
+                    # earlier slices' work would sit uncommitted in the tree
+                    # while the mission reported the task complete.
+                    deferred[root] = changed_paths
+                elif (
+                    commit_verified
+                    and self.settings.git.auto_commit_verified_tasks
+                ):
+                    deferred.pop(root, None)
+                    title = spec.title.rsplit(" (", 1)[0] if root else spec.title
                     revision = (
                         GitClient(workspace.path).commit(
-                            f"{spec.title}\n\nDaino-Mission: {workspace.mission_id}",
+                            f"{title}\n\nDaino-Mission: {workspace.mission_id}",
                             paths=changed_paths,
                         )
                         if changed_paths
@@ -828,6 +969,7 @@ class MissionService:
                         {"verification": report.model_dump(mode="json")},
                         {"commit": revision},
                         {"files": sorted(set(changed))},
+                        *([{"committed": changed_paths}] if revision else []),
                     ],
                 )
                 self.events.publish(
@@ -845,7 +987,7 @@ class MissionService:
                         completed_steps=_append_unique(refreshed.completed_steps, spec.title),
                         current_step="",
                     )
-            self._raise_on_incomplete_plan(plan, completed, failed, skipped)
+            self._raise_on_incomplete_plan(plan, completed, failed, skipped, superseded)
         finally:
             await runtime.cleanup()
 
@@ -910,6 +1052,222 @@ class MissionService:
             "committed; fix the cross-task breakage and retry."
         )
 
+    #: How many times one planned task may be cut down before the system stops
+    #: and says so. Two generations turn a ten-file task into single files on any
+    #: window worth running; a third would mean the estimate is wrong in a way
+    #: more slicing will not fix.
+    _MAX_SPLIT_GENERATIONS = 2
+
+    def _scope_overrun(
+        self,
+        spec: TaskSpec,
+        sizes: dict[str, int],
+        envelope: CapabilityEnvelope | None,
+        context: ContextBundle,
+    ) -> str:
+        """Say why this task will not fit, or return "" if it will.
+
+        Checked before the turn is spent, because the alternative is finding out
+        by watching the agent thrash for nine steps.
+        """
+        if envelope is None:
+            return ""
+        measurement = measure_scope(spec, sizes)
+        if not measurement.fits(envelope):
+            return (
+                f"its scope of {measurement.entries} files (~{measurement.tokens} tokens) "
+                f"exceeds what {envelope.profile_name} can hold "
+                f"({envelope.max_files_per_task} files, "
+                f"{envelope.task_source_budget_tokens} tokens)"
+            )
+        # The compiler reports a scoped file it could not fit. That file is one
+        # the task is required to edit, so the agent would be working blind on it.
+        lost = [note for note in context.omitted_context if "in task scope" in note]
+        if lost:
+            return f"the context budget could not hold a file the task is scoped to ({lost[0]})"
+        return ""
+
+    async def _replace_with_slices(
+        self,
+        workspace: Workspace,
+        plan: TaskPlan,
+        queue: deque[TaskSpec],
+        spec: TaskSpec,
+        sizes: dict[str, int],
+        envelope: CapabilityEnvelope | None,
+        generations: dict[str, int],
+        superseded: set[str],
+        *,
+        reason: str,
+        overran: bool = False,
+        gateway: ModelGateway | None = None,
+        outlines: dict[str, str] | None = None,
+    ) -> bool:
+        """Cut *spec* into slices and put them at the front of the worklist.
+
+        Returns False when the task cannot be split, in which case the caller
+        carries on and fails it in the ordinary way. Everything here happens
+        together or not at all: a plan holding slices whose parent still exists,
+        or dependents pointing at a cancelled task, does not validate.
+
+        ``overran`` says the task was measured as fitting and thrashed anyway —
+        the field case exactly, where the estimate was optimistic rather than the
+        task oversized. Splitting against the same envelope that already said
+        "this fits" would return nothing at all, so the budget is tightened to
+        the extent the evidence contradicts it.
+        """
+        if envelope is None:
+            return False
+        root = spec.slice_of or spec.id
+        generation = generations.get(root, 0) + 1
+        if generation > self._MAX_SPLIT_GENERATIONS:
+            return False
+        target = _tightened(envelope, generation) if overran else envelope
+        slices, needs_replan = split_task(spec, sizes, target, generation=generation)
+        if not slices and needs_replan:
+            # One file that overruns the budget on its own. Packing files into
+            # groups has nothing left to do; the split has to run through the
+            # file, which is a judgement about what belongs together rather than
+            # arithmetic. This is the only place the model is asked.
+            slices = await self._resize_with_model(
+                workspace, spec, target, gateway, outlines or {}
+            )
+        if not slices:
+            return False
+
+        remaining = [task for task in plan.tasks if task.id != spec.id]
+        # Dependents must follow the *last* slice: the change is only complete
+        # when every slice has run, and a dependency on the cancelled parent
+        # fails validation outright.
+        for task in remaining:
+            if spec.id in task.dependencies:
+                task.dependencies[:] = [
+                    slices[-1].id if item == spec.id else item for item in task.dependencies
+                ]
+        candidate = TaskPlan(summary=plan.summary, mode=plan.mode, tasks=[*remaining, *slices])
+        try:
+            validate_task_graph(candidate)
+        except ValueError as exc:
+            # Fail fast rather than persisting a graph the loop cannot execute.
+            self.log.emit(
+                "task.split_rejected",
+                mission_id=workspace.mission_id,
+                task_id=spec.id,
+                error=str(exc),
+            )
+            return False
+
+        with self.database.session() as session:
+            parent = session.get(Task, spec.id)
+            if parent is not None:
+                parent.status = TaskStatus.CANCELLED.value
+                parent.evidence = [{"split_into": [item.id for item in slices], "reason": reason}]
+            for item in slices:
+                session.add(
+                    Task(
+                        id=item.id,
+                        mission_id=workspace.mission_id,
+                        title=item.title,
+                        objective=item.objective,
+                        status=TaskStatus.PENDING.value,
+                        risk_level=item.risk_level,
+                        specification=item.model_dump(mode="json"),
+                        assigned_model=item.assigned_model,
+                    )
+                )
+            for item in slices:
+                for dependency in item.dependencies:
+                    session.add(TaskDependency(task_id=item.id, depends_on_id=dependency))
+            # The dependents' rows are rewritten to match the remapping above,
+            # or a resume rebuilds the old edge to a task that no longer runs.
+            for task in remaining:
+                if slices[-1].id in task.dependencies:
+                    session.execute(
+                        delete(TaskDependency).where(
+                            TaskDependency.task_id == task.id,
+                            TaskDependency.depends_on_id == spec.id,
+                        )
+                    )
+                    session.add(
+                        TaskDependency(task_id=task.id, depends_on_id=slices[-1].id)
+                    )
+
+        plan.tasks[:] = candidate.tasks
+        superseded.add(spec.id)
+        generations[root] = generation
+        queue.extendleft(reversed(slices))
+        self.log.emit(
+            "task.split",
+            mission_id=workspace.mission_id,
+            task_id=spec.id,
+            reason=reason,
+            slices=[item.id for item in slices],
+        )
+        self.events.publish(
+            TaskSplit(
+                mission_id=workspace.mission_id,
+                task_id=spec.id,
+                title=spec.title,
+                reason=reason,
+                slices=[item.id for item in slices],
+            )
+        )
+        return True
+
+    async def _resize_with_model(
+        self,
+        workspace: Workspace,
+        spec: TaskSpec,
+        envelope: CapabilityEnvelope,
+        gateway: ModelGateway | None,
+        outlines: dict[str, str],
+    ) -> list[TaskSpec]:
+        """Ask the planner to cut one oversized file along its own structure."""
+        if gateway is None or not self._role_available(ModelRole.PLANNER):
+            return []
+        paths = [path for path in [*spec.expected_files, *spec.allowed_files] if "*" not in path]
+        if len(set(paths)) != 1:
+            return []
+        try:
+            slices = await Planner(gateway).resize(
+                workspace.mission_id, spec, envelope, outlines.get(paths[0], "")
+            )
+        except Exception as exc:  # noqa: BLE001 - a failed re-plan is not a failed mission
+            self.log.emit(
+                "task.resize_failed",
+                mission_id=workspace.mission_id,
+                task_id=spec.id,
+                error=str(exc),
+            )
+            return []
+        return slices
+
+    @staticmethod
+    def _awaits_sibling_slices(
+        spec: TaskSpec,
+        plan: TaskPlan,
+        completed: set[str],
+        superseded: set[str],
+    ) -> bool:
+        """True while a later slice of the same task has still to run.
+
+        Derived from the plan rather than remembered in a set, so it survives a
+        resume: the plan is rebuilt from the database and this answer has to be
+        the same on both sides of a restart.
+        """
+        if not spec.slice_of:
+            return False
+        return any(
+            task.slice_of == spec.slice_of
+            # Slice ids are zero-padded, so ordering them as strings is ordering
+            # them as slices — including across generations, where a re-split
+            # slice's children carry its id as their prefix.
+            and task.id > spec.id
+            and task.id not in completed
+            and task.id not in superseded
+            for task in plan.tasks
+        )
+
     def _record_task_failure(
         self,
         workspace: Workspace,
@@ -933,6 +1291,7 @@ class MissionService:
         completed: set[str],
         failed: dict[str, str],
         skipped: dict[str, list[str]],
+        superseded: set[str],
     ) -> None:
         """Fail the mission with a precise breakdown when any task did not finish.
 
@@ -942,8 +1301,11 @@ class MissionService:
         if not failed and not skipped:
             return
         by_id = {task.id: task for task in plan.tasks}
-        done = sum(1 for task in plan.tasks if task.id in completed)
-        parts = [f"Completed {done} of {len(plan.tasks)} tasks."]
+        # A task replaced by its slices is not outstanding work — the slices are.
+        # Counting it would report one fewer completed than actually finished.
+        live = [task for task in plan.tasks if task.id not in superseded]
+        done = sum(1 for task in live if task.id in completed)
+        parts = [f"Completed {done} of {len(live)} tasks."]
         failed_titles = [by_id[task_id].title for task_id in failed if task_id in by_id]
         skipped_titles = [by_id[task_id].title for task_id in skipped if task_id in by_id]
         if failed_titles:
@@ -1090,12 +1452,17 @@ class MissionService:
             on_action_start=started,
         ).run(workspace.mission_id, context, on_action=observe)
         if not outcome.completed:
-            raise RuntimeError(
+            # IncompleteRun rather than RuntimeError so the caller can read
+            # *why* — a task that overran this model's window is splittable,
+            # and a genuinely stuck one is not. Both were previously flattened
+            # into the same string.
+            raise IncompleteRun(
                 describe_incomplete_outcome(
                     outcome,
                     role_label=role.value,
                     pinned=bool(getattr(gateway, "profile_override", "")),
-                )
+                ),
+                outcome,
             )
         return outcome.implementation, outcome.changed
 
@@ -1395,6 +1762,22 @@ class MissionService:
                 task.attempt_count = attempt_count
             if evidence is not None:
                 task.evidence = evidence
+
+
+def _tightened(envelope: CapabilityEnvelope, generation: int) -> CapabilityEnvelope:
+    """Halve the budget once per splitting round.
+
+    Used only when a task that measured as fitting stalled anyway. The estimate
+    has been contradicted by an actual run, so the next attempt is sized by the
+    evidence rather than by the same arithmetic that was already wrong — and
+    halving each round means a task cannot be re-split into the same shape twice.
+    """
+    factor = 0.5**generation
+    return replace(
+        envelope,
+        max_files_per_task=max(1, int(envelope.max_files_per_task * factor)),
+        task_source_budget_tokens=max(1, int(envelope.task_source_budget_tokens * factor)),
+    )
 
 
 def _action_summary(result: ToolResult) -> str:

@@ -8,10 +8,12 @@ document. Mutations bump ``version`` and (when a bus is attached) publish
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from daino.config import paths
 from daino.design.models import (
@@ -23,9 +25,26 @@ from daino.design.models import (
 )
 from daino.events import DesignCreated, DesignUpdated, EventBus
 
+#: How many versions of one design are kept on disk. Deep enough that an
+#: afternoon's editing is recoverable, bounded so a canvas nobody prunes cannot
+#: fill the state directory.
+MAX_DESIGN_REVISIONS = 100
+
 
 class DesignError(Exception):
     """Raised for missing designs or invalid design mutations."""
+
+
+class DesignConflictError(DesignError):
+    """Raised when a save is based on a version the design no longer holds.
+
+    Carries the version actually stored so a caller can say what it collided
+    with instead of only that it collided.
+    """
+
+    def __init__(self, message: str, *, stored_version: int = 0) -> None:
+        super().__init__(message)
+        self.stored_version = stored_version
 
 
 def _slugify(name: str) -> str:
@@ -47,6 +66,12 @@ class DesignService:
 
     def _design_file(self, design_id: str) -> Path:
         return self._design_dir(design_id) / "design.json"
+
+    def _history_dir(self, design_id: str, *, create: bool = False) -> Path:
+        directory = self._design_dir(design_id) / "history"
+        if create:
+            directory.mkdir(parents=True, exist_ok=True)
+        return directory
 
     def prototype_dir(self, design_id: str, *, create: bool = False) -> Path:
         directory = self._design_dir(design_id) / "prototype"
@@ -108,6 +133,9 @@ class DesignService:
             metadata=metadata or {},
         )
         self._write(design)
+        # Version 1 is a version: without this the first state of a design is
+        # the only one that could never be restored.
+        self._snapshot(design)
         if self.events is not None:
             self.events.publish(
                 DesignCreated(design_id=design.id, name=design.name, design_type=design.type)
@@ -122,11 +150,78 @@ class DesignService:
             suffix += 1
         return candidate
 
-    def replace(self, design: Design) -> Design:
-        """Persist a full design document (used by manual canvas saves)."""
+    def replace(self, design: Design, *, expected_version: int | None = None) -> Design:
+        """Persist a full design document (used by manual canvas saves).
+
+        ``expected_version`` is optimistic concurrency: the version the editor
+        loaded before the user started moving nodes. When the stored design has
+        moved on — a second window, or the agent finishing a design tool call —
+        the save is refused rather than silently erasing that work. Passing
+        ``None`` keeps the old last-writer-wins behaviour for callers that have
+        genuinely just read the document.
+        """
         if not self.exists(design.id):
             raise DesignError(f"Unknown design {design.id!r}")
-        return self._save(design, change="replace")
+        stored = self.get(design.id)
+        if expected_version is not None and stored.version != expected_version:
+            raise DesignConflictError(
+                f"{design.name!r} was saved by someone else while you were editing "
+                f"(you have version {expected_version}, this is now version "
+                f"{stored.version}). Reload it, then reapply your change.",
+                stored_version=stored.version,
+            )
+        # The canvas posts back a whole document; its own idea of the version is
+        # the one it loaded, so the counter advances from what is stored.
+        return self._save(design.model_copy(update={"version": stored.version}), change="replace")
+
+    # --- revisions ---------------------------------------------------------
+    def revisions(self, design_id: str) -> list[dict[str, Any]]:
+        """Every kept version of this design, newest first.
+
+        A design is a document people edit for hours; "version" being a counter
+        that overwrote its own predecessor meant the number described nothing
+        anyone could go back to.
+        """
+        if not self.exists(design_id):
+            raise DesignError(f"Unknown design {design_id!r}")
+        directory = self._history_dir(design_id)
+        if not directory.is_dir():
+            return []
+        found: list[dict[str, Any]] = []
+        for file in directory.glob("*.json"):
+            try:
+                version = int(file.stem)
+            except ValueError:
+                continue
+            found.append(
+                {
+                    "version": version,
+                    "bytes": file.stat().st_size,
+                    "saved_at": datetime.fromtimestamp(file.stat().st_mtime, UTC).isoformat(),
+                }
+            )
+        found.sort(key=lambda item: item["version"], reverse=True)
+        return found
+
+    def revision(self, design_id: str, version: int) -> Design:
+        """One kept version, exactly as it was saved."""
+        file = self._history_dir(design_id) / f"{int(version)}.json"
+        if not file.is_file():
+            raise DesignError(f"Design {design_id!r} has no version {version}")
+        return self._read(file)
+
+    def restore(self, design_id: str, version: int) -> Design:
+        """Put an old version back as the newest one.
+
+        Restoring moves forward rather than backward: the current document is
+        snapshotted first, so undoing a restore is the same operation again.
+        """
+        old = self.revision(design_id, version)
+        current = self.get(design_id)
+        return self._save(
+            old.model_copy(update={"id": current.id, "version": current.version}),
+            change="restore",
+        )
 
     def add_node(
         self,
@@ -252,6 +347,80 @@ class DesignService:
             raise DesignError("No matching edge to disconnect")
         return self._save(design, change="disconnect")
 
+    # --- frames -----------------------------------------------------------
+    def add_frame(
+        self,
+        design_id: str,
+        *,
+        name: str = "",
+        frame_id: str | None = None,
+        width: int = 1440,
+        height: int = 900,
+        children: list[dict] | None = None,
+    ) -> Design:
+        """Add a UI mock-up frame — a device viewport with nested elements."""
+        design = self.get(design_id)
+        identifier = frame_id or self._unique_frame_id(design, _slugify(name) or "frame")
+        if any(frame.id == identifier for frame in design.frames):
+            raise DesignError(f"Frame {identifier!r} already exists")
+        design.frames.append(
+            DesignFrame(
+                id=identifier,
+                name=name,
+                width=width,
+                height=height,
+                children=list(children or []),
+            )
+        )
+        return self._save(design, change="add_frame")
+
+    @staticmethod
+    def _unique_frame_id(design: Design, base: str) -> str:
+        existing = {frame.id for frame in design.frames}
+        candidate = base
+        suffix = 2
+        while candidate in existing:
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+        return candidate
+
+    def update_frame(
+        self,
+        design_id: str,
+        frame_id: str,
+        *,
+        name: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        children: list[dict] | None = None,
+    ) -> Design:
+        """Change a frame. ``children`` replaces the list rather than merging it.
+
+        Replacing is right for a frame's children where merging is right for a
+        node's data bag: a frame's children are an ordered tree the editor owns
+        wholesale, and a merge would make removing an element impossible.
+        """
+        design = self.get(design_id)
+        frame = next((item for item in design.frames if item.id == frame_id), None)
+        if frame is None:
+            raise DesignError(f"Unknown frame {frame_id!r}")
+        if name is not None:
+            frame.name = name
+        if width is not None:
+            frame.width = width
+        if height is not None:
+            frame.height = height
+        if children is not None:
+            frame.children = list(children)
+        return self._save(design, change="update_frame")
+
+    def delete_frame(self, design_id: str, frame_id: str) -> Design:
+        design = self.get(design_id)
+        if not any(frame.id == frame_id for frame in design.frames):
+            raise DesignError(f"Unknown frame {frame_id!r}")
+        design.frames = [frame for frame in design.frames if frame.id != frame_id]
+        return self._save(design, change="delete_frame")
+
     def delete(self, design_id: str) -> None:
         directory = self._design_dir(design_id)
         if not directory.exists():
@@ -265,6 +434,7 @@ class DesignService:
         design.version += 1
         design.updated_at = datetime.now(UTC)
         self._write(design)
+        self._snapshot(design)
         if self.events is not None:
             self.events.publish(
                 DesignUpdated(
@@ -276,6 +446,36 @@ class DesignService:
                 )
             )
         return design
+
+    def _snapshot(self, design: Design) -> None:
+        """Keep this version alongside the live document.
+
+        Best effort: a design that cannot be archived is still a design that
+        saved, and failing the user's edit because the history directory is
+        read-only would be the wrong trade.
+        """
+        try:
+            directory = self._history_dir(design.id, create=True)
+            (directory / f"{design.version}.json").write_text(
+                json.dumps(design.model_dump(mode="json"), indent=2), encoding="utf-8"
+            )
+            self._trim_history(directory)
+        except OSError:
+            return
+
+    @staticmethod
+    def _trim_history(directory: Path) -> None:
+        """Bound the archive, oldest first."""
+        versions: list[tuple[int, Path]] = []
+        for file in directory.glob("*.json"):
+            try:
+                versions.append((int(file.stem), file))
+            except ValueError:
+                continue
+        versions.sort()
+        for _version, file in versions[:-MAX_DESIGN_REVISIONS]:
+            with contextlib.suppress(OSError):
+                file.unlink()
 
     def _write(self, design: Design) -> None:
         file = self._design_file(design.id)

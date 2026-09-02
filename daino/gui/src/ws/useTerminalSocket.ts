@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react";
 import type { Terminal } from "@xterm/xterm";
 import type { ServerTerminalMessage } from "../api/types";
+import { useTerminalStore } from "../store/terminalStore";
 import { wsUrl } from "./url";
 
 export interface TerminalSocket {
@@ -34,6 +35,15 @@ export function useTerminalSocket(
         onExit?.();
       } else if (msg.type === "error") {
         term.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
+      }
+    };
+
+    ws.onopen = () => {
+      // A task started this terminal and left its command waiting. Sending on
+      // open rather than on create is what makes Run work on the first click:
+      // the socket does not exist until the panel has mounted an xterm.
+      for (const queued of useTerminalStore.getState().drainInput(id)) {
+        ws.send(JSON.stringify({ type: "input", data: queued }));
       }
     };
 

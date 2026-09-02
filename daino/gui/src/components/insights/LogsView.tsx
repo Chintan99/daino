@@ -36,6 +36,10 @@ function liveSummary(event: WsEvent): string {
       return `Task started: ${get("title")}`;
     case "TaskCompleted":
       return `Task completed: ${get("title")}`;
+    case "TaskSplit":
+      return `Task split into ${
+        (event.slices as unknown[] | undefined)?.length ?? 0
+      } smaller tasks: ${get("title")} — ${get("reason")}`;
     case "FileChanged":
       return `Changed ${get("path")}`;
     case "TestsStarted":

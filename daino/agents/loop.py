@@ -105,6 +105,45 @@ class BuilderOutcome:
     #: guessing. "" when completed; "step_budget" when a finite ``max_agent_steps``
     #: ceiling was hit; "stall" when repeated failed/redundant actions gave up.
     stop_reason: str = ""
+    #: How many times the transcript had to be compacted. A stall with a high
+    #: count is a context problem wearing a stall's clothing: the agent kept
+    #: losing what it had just read and re-read it. Telling those apart matters,
+    #: because the advice for one ("say it more concretely") is useless for the
+    #: other and sends the user off rewording a prompt that was never the issue.
+    compactions: int = 0
+
+
+#: Compactions in one run past which a stall is really a context problem. Two or
+#: three are ordinary on a long task; this many means the transcript was being
+#: shed faster than the agent could build on it.
+#:
+#: Public because two things read it and they must not disagree: the message
+#: below, which tells the user this is "a window problem rather than a wording
+#: one", and the mission loop, which acts on that same judgement by splitting
+#: the task. A private copy in either place would let the advice and the
+#: behaviour drift apart.
+THRASHING_COMPACTIONS = 4
+#: Retained under the old name so nothing that imported it privately breaks.
+_THRASHING_COMPACTIONS = THRASHING_COMPACTIONS
+
+
+class IncompleteRun(RuntimeError):
+    """A run that stopped before finishing, carrying *why* alongside the message.
+
+    The message alone is what callers used to get, and a string cannot be acted
+    on: "too big for this model's window" and "the model is genuinely stuck"
+    read differently to a person and demand opposite responses from the system —
+    split the task, or stop and ask. Attaching the outcome is what lets the
+    mission loop tell them apart.
+
+    A ``RuntimeError`` subclass deliberately. Every existing handler catches
+    ``RuntimeError``, as do the ``pytest.raises`` assertions across the suite,
+    and none of them should have to change to gain a field they do not read.
+    """
+
+    def __init__(self, message: str, outcome: BuilderOutcome) -> None:
+        super().__init__(message)
+        self.outcome = outcome
 
 
 def describe_incomplete_outcome(
@@ -126,6 +165,20 @@ def describe_incomplete_outcome(
         "The agent made repeated actions that changed nothing and stopped before finishing."
     )
     message = f"The {role_label} agent stopped before finishing: {summary}"
+    if outcome.stop_reason == "stall" and outcome.compactions >= THRASHING_COMPACTIONS:
+        # A stall behind heavy compaction is not a stuck model, and saying so
+        # would send the user to reword a prompt that was never the problem.
+        # What happened is that the context could not hold what the agent read:
+        # each compaction shed the transcript, the file went with it, and the
+        # agent read it again until the guard fired.
+        return (
+            message
+            + f" The context was compacted {outcome.compactions} times during this run, "
+            "which means the agent kept losing what it had just read. This is a window "
+            "problem rather than a wording one: give the builder a model with a larger "
+            "context window, raise this profile's context_window if it is understated, "
+            "or point the request at a smaller file or a narrower part of one."
+        )
     if outcome.stop_reason == "stall":
         # The run already spent its full budget of strategy corrections on this
         # model, so the honest next step is a clearer request — not necessarily a
@@ -317,6 +370,7 @@ class ToolLoop:
                         escalated=self._escalated,
                         escalation_reason=self._escalation_reason,
                         stop_reason="stall",
+                        compactions=getattr(self, "_compactions", 0),
                     )
                 # Recovery is a strategy intervention first, a model swap only
                 # when a genuinely different model is reachable. A pinned session
@@ -371,6 +425,7 @@ class ToolLoop:
             escalated=self._escalated,
             escalation_reason=self._escalation_reason,
             stop_reason="step_budget",
+            compactions=getattr(self, "_compactions", 0),
         )
 
     def _escalation_changes_model(self, routing_context: RoutingContext) -> bool:
@@ -640,6 +695,7 @@ class ToolLoop:
         if after >= before:
             return
         messages[:] = best
+        self._compactions = getattr(self, "_compactions", 0) + 1
         # Anything whose body compaction just dropped must stop being a target
         # for "unchanged since step N": the copy it points at is gone.
         live = {id(item) for item in messages}

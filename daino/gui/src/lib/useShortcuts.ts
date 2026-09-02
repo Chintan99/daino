@@ -33,6 +33,25 @@ export function useShortcuts(): void {
         void cycleModel();
         return;
       }
+      // The debugger's function keys, which every editor shares. Checked before
+      // the modifier gate below because F5 and F10 carry no modifier.
+      if (!mod && !e.altKey && e.key.startsWith("F") && e.key.length >= 2) {
+        if (e.key === "F5") {
+          e.preventDefault();
+          void cmd.debugContinueOrStart();
+          return;
+        }
+        if (e.key === "F10") {
+          e.preventDefault();
+          void cmd.debugStep("step-over");
+          return;
+        }
+        if (e.key === "F11") {
+          e.preventDefault();
+          void cmd.debugStep(e.shiftKey ? "step-out" : "step-into");
+          return;
+        }
+      }
       // Ctrl+` opens a terminal on every platform (⌘` is taken by the OS).
       if (e.ctrlKey && !e.metaKey && e.key === "`") {
         e.preventDefault();
@@ -50,6 +69,20 @@ export function useShortcuts(): void {
       if (e.altKey && (e.key === "ArrowRight" || e.key === "ArrowLeft")) {
         e.preventDefault();
         cmd.cycleTab(e.key === "ArrowRight" ? 1 : -1);
+        return;
+      }
+
+      // ⇧⌘P opens the palette on tasks, ⌘T on symbols — the two conventions
+      // people arrive with. Plain ⌘P is the browser's print dialog and cannot
+      // be taken.
+      if (e.shiftKey && key === "p") {
+        e.preventDefault();
+        cmd.openTaskPalette();
+        return;
+      }
+      if (!e.shiftKey && key === "t") {
+        e.preventDefault();
+        cmd.openSymbolPalette();
         return;
       }
 

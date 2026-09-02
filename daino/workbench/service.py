@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -91,6 +91,18 @@ MAX_REVISIONS = 50
 
 class WorkbenchError(ValueError):
     """Raised for an unknown workspace, a bad path, or an unreadable file."""
+
+
+class StaleArtifactError(WorkbenchError):
+    """Raised when a write is based on a version the file no longer holds.
+
+    Carries the digest the file actually has, so a caller can offer "reload" and
+    "keep mine" without a second round trip to find out what it is now.
+    """
+
+    def __init__(self, message: str, *, current_digest: str = "") -> None:
+        super().__init__(message)
+        self.current_digest = current_digest
 
 
 class WorkbenchService:
@@ -374,6 +386,10 @@ class WorkbenchService:
                 content="",
                 readable=False,
             )
+        # Digested on the single-document read rather than in the folder scan:
+        # this is where an editable draft starts, and hashing every file to
+        # render a list would make opening a workspace pay for it.
+        described = described.model_copy(update={"digest": extraction.file_digest(path)})
         try:
             return ArtifactContent(
                 artifact=described,
@@ -389,12 +405,28 @@ class WorkbenchService:
         content: str,
         *,
         author: str = "user",
+        base_digest: str = "",
     ) -> Artifact:
-        """Create or replace an artifact, keeping the previous text as a revision."""
+        """Create or replace an artifact, keeping the previous text as a revision.
+
+        ``base_digest`` is optimistic concurrency: the digest the writer's draft
+        was based on. When it does not match what is on disk, somebody else — an
+        agent finishing a step, another window — has rewritten the document
+        since, and the write is refused. History makes such a loss recoverable;
+        refusing means it never happens.
+        """
         workspace = self.get(workspace_id)
         path = self._within_workspace(workspace, relative)
         if path.name in _RESERVED or _reserved_parent(path, self._within_root(workspace.folder)):
             raise WorkbenchError(f"{relative} is reserved by the workspace")
+        if base_digest:
+            current = extraction.file_digest(path) if path.is_file() else ""
+            if current != base_digest:
+                raise StaleArtifactError(
+                    f"{relative} has changed since you opened it — most likely the "
+                    "agent rewrote it. Reload it, or keep your version explicitly.",
+                    current_digest=current,
+                )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         # Recorded after the write, so a revision is a version that existed and
@@ -483,10 +515,44 @@ class WorkbenchService:
             }
         )
         if len(entries) > MAX_REVISIONS:
-            for stale in entries[:-MAX_REVISIONS]:
-                _unlink(directory / HISTORY_DIR / _history_stem(relative) / _blob_name(stale, path))
-            index[relative] = entries[-MAX_REVISIONS:]
+            # Trim the oldest, but never a version something still points at.
+            # Change sets record "this step moved the file from v3 to v4", and
+            # rejecting or diffing one reads those blobs back — so dropping a
+            # pinned revision turns an undo button into an error message.
+            cutoff = len(entries) - MAX_REVISIONS
+            kept: list[dict[str, Any]] = []
+            for position, entry in enumerate(entries):
+                if position >= cutoff or entry.get("pinned"):
+                    kept.append(entry)
+                    continue
+                _unlink(directory / HISTORY_DIR / _history_stem(relative) / _blob_name(entry, path))
+            index[relative] = kept
         _write_index(directory, index)
+
+    def pin_revisions(self, workspace_id: str, relative: str, versions: Iterable[int]) -> None:
+        """Exempt these versions of an artifact from history trimming.
+
+        Called when a change set starts referring to them. The retention cap is
+        a safety net against unbounded history, not a licence to delete a blob
+        another feature has promised to show: an old change set whose "before"
+        blob was pruned can be neither diffed nor rejected.
+        """
+        wanted = {int(version) for version in versions if int(version) > 0}
+        if not wanted:
+            return
+        workspace = self.get(workspace_id)
+        directory = self._within_root(workspace.folder)
+        index = _read_index(directory)
+        entries = index.get(relative)
+        if not entries:
+            return
+        changed = False
+        for entry in entries:
+            if int(entry.get("version", 0)) in wanted and not entry.get("pinned"):
+                entry["pinned"] = True
+                changed = True
+        if changed:
+            _write_index(directory, index)
 
     def revisions(self, workspace_id: str, relative: str) -> list[Revision]:
         workspace = self.get(workspace_id)

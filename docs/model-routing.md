@@ -62,3 +62,37 @@ stays pinned, so D[Ai]NO reports the escalation signal but never silently violat
 daino models route builder local-coder --fallback strong-cloud
 daino models route debugger strong-cloud
 ```
+
+## Task size follows the executing model
+
+The planner is told what the **builder** can hold, not what the planner itself can. The shipped
+configuration pairs a strong cloud planner with a local builder, and without this the planner writes
+tasks in its own terms: a scope the executor cannot fit, which it then thrashes on.
+
+Those limits are derived from the same arithmetic that sizes context packing — files per task,
+source tokens per task, and the working room left after that context is re-added on every compaction
+pass — and are rendered into the planning prompt as numbers, alongside the file sizes the repository
+map already reports.
+
+A task that overruns them anyway is split rather than failed:
+
+- **Before the turn.** If the scope no longer fits — a file grew, a glob expanded, or the plan was
+  made with no builder routed — the task is cut into slices without spending a model call.
+- **After a stall.** A run that stops having compacted repeatedly is a window problem, not a stuck
+  model, so the budget is tightened against that evidence and the task is split again.
+
+Slices are cut deterministically over the task's own file list, in the planner's order, and their
+union is exactly the parent's scope. They run in sequence, and only the last one carries the
+parent's verification commands — the earlier ones do not commit, so nothing enters the branch that
+no check has passed. Splitting is bounded: two rounds per planned task, never a slice of one file,
+and never a "split" into a single copy of the original.
+
+One case arithmetic cannot decide is a single file larger than the whole per-task budget, where the
+split has to run *through* the file. There the planner is asked once more, given that file's symbol
+outline so it can cut along real boundaries; the ids and dependencies it returns are rebuilt rather
+than trusted.
+
+A Workspace plan is prose and has no file scope to pack, so nothing is split automatically. Instead
+the plan is scaled up front — how many artifacts one step may produce, how much material it may read
+— and a step that stalls on compaction says so, naming the fix, rather than reporting a generic
+failure.

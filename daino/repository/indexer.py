@@ -12,8 +12,9 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
 from daino.config import paths
+from daino.repository.graph import is_test_path
 from daino.repository.languages import IGNORED_DIRS, language_for
-from daino.repository.syntax import extract_outline
+from daino.repository.syntax import extract_outlines
 from daino.schemas.core import RepositoryFile, RepositoryIndex, RepositorySymbol
 
 MAX_INDEX_FILE_BYTES = 1_000_000
@@ -188,6 +189,12 @@ class RepositoryIndexer:
         languages: Counter[str] = Counter()
         frameworks: set[str] = set()
         entrypoints: list[str] = []
+        # Tree-sitter runs in a child process for the whole build (see
+        # daino.repository.syntax.extract_outlines): the grammars are native
+        # code that can take the process down with a signal, and indexing must
+        # not be able to kill the server. Done as one batch up front rather than
+        # per file so the cost is one subprocess, not thousands.
+        outlines = self._syntax_outlines(previous)
         for path, relative_path in self._walk():
             if path.stat().st_size > MAX_INDEX_FILE_BYTES:
                 continue
@@ -208,12 +215,15 @@ class RepositoryIndexer:
                 if language == "Python":
                     symbols, imports = _python_outline(relative, text)
                 else:
-                    syntax = extract_outline(relative, data)
+                    parsed = outlines.get(relative)
                     if language in {"JavaScript", "TypeScript"}:
                         fallback_symbols, imports = _javascript_outline(relative, text)
                     else:
                         fallback_symbols, imports = _generic_outline(relative, text)
-                    symbols = syntax.symbols if syntax and syntax.symbols else fallback_symbols
+                    # A file the parser never reached falls back to the regex
+                    # outline. "No symbols" and "never parsed" are different
+                    # facts, and only the second one wants a fallback.
+                    symbols = parsed if parsed else fallback_symbols
                 item = RepositoryFile(
                     path=relative,
                     language=language,
@@ -258,6 +268,34 @@ class RepositoryIndexer:
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
         self.index_path.write_text(index.model_dump_json(indent=2), encoding="utf-8")
         return index
+
+    def _syntax_outlines(
+        self, previous: dict[str, RepositoryFile]
+    ) -> dict[str, list[RepositorySymbol]]:
+        """Parse every changed file that has a grammar, in one isolated batch.
+
+        Files whose digest is unchanged are skipped: their symbols are already
+        in the previous index, and re-parsing them would make an incremental
+        build cost the same as a first one.
+        """
+        candidates: list[str] = []
+        for path, relative_path in self._walk():
+            relative = relative_path.as_posix()
+            if language_for(path) == "Python":
+                continue
+            try:
+                if path.stat().st_size > MAX_INDEX_FILE_BYTES:
+                    continue
+                existing = previous.get(relative)
+                if existing and existing.digest == _digest(path.read_bytes()):
+                    continue
+            except OSError:
+                continue
+            candidates.append(relative)
+        if not candidates:
+            return {}
+        batch = extract_outlines(self.root, candidates)
+        return batch.outlines
 
     def load(self) -> RepositoryIndex:
         """Return the cached index, or an empty one when nothing is cached.
@@ -326,11 +364,10 @@ class RepositoryIndexer:
         ]
 
     def tests(self) -> list[str]:
-        return [
-            item.path
-            for item in self.load().files
-            if "test" in Path(item.path).name.lower() or "tests" in Path(item.path).parts
-        ]
+        # One shared predicate: this and the context compiler used to classify
+        # test files slightly differently, so a file could be a test to one and
+        # source to the other and land in the wrong half of a bundle.
+        return [item.path for item in self.load().files if is_test_path(item.path)]
 
     def dependencies(self) -> dict[str, list[str]]:
         return {item.path: item.imports for item in self.load().files if item.imports}

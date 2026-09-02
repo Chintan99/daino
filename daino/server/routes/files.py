@@ -12,6 +12,11 @@ from pydantic import BaseModel, Field
 
 from daino.config import paths
 from daino.events import GitChanged
+from daino.repository.search import (
+    SearchQuery,
+    apply_replacement,
+)
+from daino.repository.search import search as repo_search
 from daino.server.deps import content_hash, get_state, language_for, safe_path
 from daino.server.state import GuiState
 
@@ -212,13 +217,119 @@ def attach_file(
     }
 
 
+def _query(
+    q: str,
+    regex: bool,
+    case_sensitive: bool,
+    whole_word: bool,
+    include: str,
+    exclude: str,
+    limit: int,
+) -> SearchQuery:
+    """Build a query from the flat form the search box posts.
+
+    Include/exclude arrive comma-separated because that is what a single text
+    input can carry, and blanks are dropped so a trailing comma is harmless
+    rather than a filter that matches nothing.
+    """
+    return SearchQuery(
+        query=q,
+        regex=regex,
+        case_sensitive=case_sensitive,
+        whole_word=whole_word,
+        include=tuple(item.strip() for item in include.split(",") if item.strip()),
+        exclude=tuple(item.strip() for item in exclude.split(",") if item.strip()),
+        limit=limit,
+    )
+
+
 @router.get("/search")
 def search(
     state: Annotated[GuiState, Depends(get_state)],
     q: str = Query(..., min_length=1),
     regex: bool = Query(default=False),
-    limit: int = Query(default=200, ge=1, le=1000),
+    case_sensitive: bool = Query(default=False),
+    whole_word: bool = Query(default=False),
+    include: str = Query(default=""),
+    exclude: str = Query(default=""),
+    limit: int = Query(default=500, ge=1, le=5000),
+    replace: str | None = Query(default=None),
 ) -> dict:
-    result = state.files.grep(q, limit=limit) if regex else state.files.search_text(q)
-    matches = result.data.get("matches", []) if result.success else []
-    return {"query": q, "matches": matches[:limit], "success": result.success}
+    """Find text across the repository, with filters.
+
+    ``replace`` makes this a preview rather than a search: every match then
+    carries the line it *would* become, and nothing is written. Applying is a
+    separate POST, because a tree-wide replacement is one of the few editor
+    operations that can quietly ruin a working copy.
+    """
+    query = _query(q, regex, case_sensitive, whole_word, include, exclude, limit)
+    result = repo_search(state.root, query, replacement=replace)
+    return {
+        "query": q,
+        "success": not result.error,
+        "error": result.error,
+        "files": result.files,
+        "truncated": result.truncated,
+        "skipped": result.skipped,
+        "matches": [
+            {
+                "path": match.path,
+                "line": match.line,
+                "column": match.column,
+                "length": match.length,
+                "text": match.text,
+                "replacement": match.replacement,
+            }
+            for match in result.matches
+        ],
+    }
+
+
+class ReplaceRequest(BaseModel):
+    """Apply a previewed replacement."""
+
+    query: str = Field(min_length=1)
+    replacement: str
+    regex: bool = False
+    case_sensitive: bool = False
+    whole_word: bool = False
+    include: str = ""
+    exclude: str = ""
+    #: The files the user actually ticked. Empty means everything the filters
+    #: match, which is only what someone means if they said so.
+    paths: list[str] = Field(default_factory=list)
+
+
+@router.post("/replace")
+def replace_in_files(
+    state: Annotated[GuiState, Depends(get_state)], body: ReplaceRequest
+) -> dict:
+    """Write a replacement across the repository.
+
+    Recomputed from the query rather than applied from the preview's text: a
+    file edited between preview and apply must not be written from a stale
+    snapshot.
+    """
+    for path in body.paths:
+        safe_path(state, path)
+    query = _query(
+        body.query,
+        body.regex,
+        body.case_sensitive,
+        body.whole_word,
+        body.include,
+        body.exclude,
+        5_000,
+    )
+    summary = apply_replacement(
+        state.root, query, body.replacement, only_paths=body.paths or None
+    )
+    if summary.errors and not summary.files:
+        raise HTTPException(status_code=400, detail="; ".join(summary.errors))
+    if summary.files:
+        state.context.events.publish(GitChanged(paths=summary.files))
+    return {
+        "files": summary.files,
+        "replacements": summary.replacements,
+        "errors": summary.errors,
+    }

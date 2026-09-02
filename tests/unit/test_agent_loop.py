@@ -1697,3 +1697,40 @@ def test_max_agent_steps_accepts_a_ceiling_for_a_genuinely_long_task() -> None:
     assert ModelProfileConfig(provider="openrouter", model="glm").max_agent_steps == 0
     with pytest.raises(ValidationError):
         ModelProfileConfig(provider="openrouter", model="glm", max_agent_steps=10_001)
+
+
+def test_an_incomplete_run_carries_its_outcome() -> None:
+    """The message alone cannot be acted on.
+
+    "Too big for this model's window" and "the model is genuinely stuck" read
+    differently to a person and demand opposite responses from the system —
+    split the task, or stop and ask. Both were previously flattened into the
+    same string, so the mission loop could not tell them apart.
+    """
+    from daino.agents.loop import BuilderOutcome, IncompleteRun
+    from daino.schemas import Implementation
+
+    outcome = BuilderOutcome(
+        implementation=Implementation(summary="stalled", modifications=[]),
+        changed=[],
+        steps=9,
+        completed=False,
+        stop_reason="stall",
+        compactions=6,
+    )
+
+    error = IncompleteRun("the message", outcome)
+
+    assert error.outcome.stop_reason == "stall"
+    assert error.outcome.compactions == 6
+    assert str(error) == "the message"
+    # Every existing handler catches RuntimeError; none should have to change.
+    assert isinstance(error, RuntimeError)
+
+
+def test_the_thrashing_threshold_is_shared_not_copied() -> None:
+    """The message and the split trigger must not be able to disagree."""
+    from daino.agents import THRASHING_COMPACTIONS
+    from daino.agents.loop import _THRASHING_COMPACTIONS
+
+    assert THRASHING_COMPACTIONS == _THRASHING_COMPACTIONS

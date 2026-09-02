@@ -5,7 +5,7 @@
 // markdown, code, notes) are placed verbatim; binaries such as images can't be
 // read as text here, so the caller is told to drag them instead.
 import { api, ApiError } from "../api/client";
-import type { Design } from "../api/types";
+import type { Design, FileRead } from "../api/types";
 
 type PlaceKind = "html" | "svg" | "markdown" | "text";
 
@@ -70,10 +70,9 @@ export async function placeFileOnCanvas(
       ok: false,
       message: `Drag ${basename(path)} onto the canvas to place an image.`,
     };
-  let content: string;
+  let file: FileRead;
   try {
-    const file = await api.readFile(path);
-    content = file.content;
+    file = await api.readFile(path);
   } catch (err) {
     const message =
       err instanceof ApiError
@@ -85,6 +84,7 @@ export async function placeFileOnCanvas(
         : String(err);
     return { ok: false, message };
   }
+  const content = file.content;
   const kind = kindFor(path);
   const [width, height] = SIZES[kind];
   const design = await api.addNode(designId, {
@@ -92,7 +92,20 @@ export async function placeFileOnCanvas(
     node_type: "artifact",
     x: Math.round(at.x),
     y: Math.round(at.y),
-    data: { kind, content, filename: basename(path), width, height },
+    data: {
+      kind,
+      content,
+      filename: basename(path),
+      width,
+      height,
+      // Provenance, not decoration. Without the repository path and the digest
+      // of what was read, the node is a detached snapshot: nothing can tell
+      // whether the file has moved on, resync it, or write an edit back to the
+      // file it came from.
+      source_path: path,
+      source_digest: file.hash,
+      placed_at: new Date().toISOString(),
+    },
   });
   return { ok: true, design };
 }

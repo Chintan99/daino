@@ -49,6 +49,12 @@ const ICONS: Record<ActivityView | "panel", ReactNode> = {
       <path d="M9.2 6h3.4A4.4 4.4 0 0 1 17 7.8" />
     </Icon>
   ),
+  references: (
+    <Icon>
+      <path d="M8.5 4.5h9A1.5 1.5 0 0 1 19 6v13.5l-5.2-3-5.3 3z" />
+      <path d="M5 7.5v12l3.5-2" />
+    </Icon>
+  ),
   panel: (
     <Icon>
       <rect x="3.5" y="4.5" width="17" height="15" rx="1.8" />
@@ -61,6 +67,7 @@ const ITEMS: { id: ActivityView; title: string }[] = [
   { id: "explorer", title: "Explorer" },
   { id: "search", title: "Search" },
   { id: "scm", title: "Source Control" },
+  { id: "references", title: "References (Shift+F12 on a symbol)" },
 ];
 
 export function ActivityBar() {
