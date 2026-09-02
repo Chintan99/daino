@@ -205,6 +205,78 @@ async def test_openrouter_captures_usage_from_final_stream_chunk() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prompt_cache_hits_are_captured_so_they_can_be_seen() -> None:
+    """A turn that reuses its prefix and one that pays for it look identical
+    without this number, and they bill very differently."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        stream = "\n\n".join(
+            [
+                'data: {"choices":[{"delta":{"content":"hi"}}]}',
+                'data: {"choices":[],"usage":{"prompt_tokens":40000,'
+                '"completion_tokens":120,"prompt_tokens_details":{"cached_tokens":36000}}}',
+                "data: [DONE]",
+                "",
+            ]
+        )
+        return httpx.Response(200, text=stream, headers={"content-type": "text/event-stream"})
+
+    provider = OpenRouterProvider(
+        api_key="secret", model="mock", transport=httpx.MockTransport(handler)
+    )
+    [chunk async for chunk in provider.stream([Message(role="user", content="test")])]
+
+    assert provider.last_usage.input_tokens == 40_000
+    assert provider.last_usage.cached_tokens == 36_000
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_reports_no_cache_detail_reads_as_zero() -> None:
+    """Absent is not an error — most gateways simply do not say."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+            },
+        )
+
+    provider = OpenRouterProvider(
+        api_key="secret", model="mock", transport=httpx.MockTransport(handler)
+    )
+    response = await provider.complete([Message(role="user", content="test")])
+
+    assert response.input_tokens == 10
+    assert response.cached_tokens == 0
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_a_flattened_cache_field_is_read_too() -> None:
+    """Some gateways report it beside the totals rather than nested."""
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 100, "completion_tokens": 2, "cached_tokens": 80},
+            },
+        )
+
+    provider = OpenRouterProvider(
+        api_key="secret", model="mock", transport=httpx.MockTransport(handler)
+    )
+    response = await provider.complete([Message(role="user", content="test")])
+
+    assert response.cached_tokens == 80
+    await provider.close()
+
+
+@pytest.mark.asyncio
 async def test_ollama_stream_forwards_delta_reasoning_but_yields_only_answer() -> None:
     seen: list[dict[str, Any]] = []
     reasoning: list[str] = []

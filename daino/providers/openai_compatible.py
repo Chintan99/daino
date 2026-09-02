@@ -210,6 +210,7 @@ def _add_usage(left: ProviderUsage, right: ProviderUsage) -> ProviderUsage:
         input_tokens=left.input_tokens + right.input_tokens,
         output_tokens=left.output_tokens + right.output_tokens,
         cost=left.cost + right.cost,
+        cached_tokens=left.cached_tokens + right.cached_tokens,
     )
 
 
@@ -310,6 +311,7 @@ class _StreamAccumulator:
                 "prompt_tokens": self.usage.input_tokens,
                 "completion_tokens": self.usage.output_tokens,
                 "cost": self.usage.cost,
+                "prompt_tokens_details": {"cached_tokens": self.usage.cached_tokens},
             },
         }
 
@@ -557,6 +559,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 provider=self.name,
                 input_tokens=usage.input_tokens,
                 output_tokens=usage.output_tokens,
+                cached_tokens=usage.cached_tokens,
                 latency_ms=(time.monotonic() - started) * 1000,
                 finish_reason=choice.get("finish_reason"),
                 tool_calls=_parse_tool_calls(message.get("tool_calls")),
@@ -717,14 +720,25 @@ class OpenAICompatibleProvider(LLMProvider):
             input_tokens=self._safe_nonnegative_int(raw_usage.get("prompt_tokens")),
             output_tokens=self._safe_nonnegative_int(raw_usage.get("completion_tokens")),
             cost=self._safe_nonnegative_float(raw_usage.get("cost")),
+            cached_tokens=self._cached_tokens(raw_usage),
         )
         previous = self._last_usage
-        self._last_usage = ProviderUsage(
-            input_tokens=previous.input_tokens + usage.input_tokens,
-            output_tokens=previous.output_tokens + usage.output_tokens,
-            cost=previous.cost + usage.cost,
-        )
+        self._last_usage = _add_usage(previous, usage)
         return usage
+
+    def _cached_tokens(self, raw_usage: dict[str, Any]) -> int:
+        """Prompt tokens the provider served from cache, if it says so.
+
+        Worth having even though nothing acts on it yet: a cached prefix costs a
+        fraction of a fresh one, so without this number there is no way to tell a
+        turn that reused its prefix from one that paid for it 124 times over.
+        """
+        details = raw_usage.get("prompt_tokens_details")
+        if isinstance(details, dict):
+            return self._safe_nonnegative_int(details.get("cached_tokens"))
+        # Some gateways flatten it. Read that spelling too rather than reporting
+        # a zero that reads as "no cache".
+        return self._safe_nonnegative_int(raw_usage.get("cached_tokens"))
 
     @staticmethod
     def _safe_nonnegative_int(value: object) -> int:

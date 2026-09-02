@@ -1291,6 +1291,144 @@ def _compaction_loop(
     return loop, events
 
 
+@pytest.mark.asyncio
+async def test_re_reading_an_unchanged_file_costs_a_line_not_the_file(
+    tmp_path: Path,
+) -> None:
+    """The transcript already holds it, so sending it again is pure repetition."""
+    source = tmp_path / "app.py"
+    body = "".join(f"line_{index} = {index}\n" for index in range(400))
+    source.write_text(body, encoding="utf-8")
+    gateway = ScriptedGateway(
+        [
+            AgentAction(thought="read", action="read_file", path="app.py"),
+            AgentAction(thought="read it again", action="read_file", path="app.py"),
+            AgentAction(thought="done", action="finish", summary="looked"),
+        ]
+    )
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+
+    await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        require_verified_finish=False,
+    ).run("mission-1", context())
+
+    first, second = gateway.observations[0], gateway.observations[1]
+    assert "line_399" in first, "the first read must carry the file"
+    assert "line_399" not in second, "the second must not repeat it"
+    assert "byte-identical" in second and "step" in second
+    assert len(second) < len(first) / 10
+
+
+@pytest.mark.asyncio
+async def test_a_changed_file_is_always_sent_again(tmp_path: Path) -> None:
+    """The short-circuit is about identical bytes, never about having read it."""
+    source = tmp_path / "app.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+
+    class EditingGateway(ScriptedGateway):
+        async def structured(self, *args: Any, **kwargs: object) -> AgentAction:
+            action = await super().structured(*args, **kwargs)
+            if action.thought == "change it":
+                source.write_text("VALUE = 2\n", encoding="utf-8")
+            return action
+
+    gateway = EditingGateway(
+        [
+            AgentAction(thought="read", action="read_file", path="app.py"),
+            AgentAction(thought="change it", action="list_directory", path="."),
+            AgentAction(thought="read again", action="read_file", path="app.py"),
+            AgentAction(thought="done", action="finish", summary="looked"),
+        ]
+    )
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+
+    await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        require_verified_finish=False,
+    ).run("mission-1", context())
+
+    assert "VALUE = 2" in gateway.observations[-1]
+    assert "byte-identical" not in gateway.observations[-1]
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_copy_of_a_file_collapses_to_a_pointer(
+    tmp_path: Path,
+) -> None:
+    """Two versions of one file in a transcript is where a bad anchor comes from."""
+    source = tmp_path / "app.py"
+    source.write_text("OLD = 1\n" * 50, encoding="utf-8")
+    captured: list[list[Any]] = []
+
+    class Recording(ScriptedGateway):
+        async def structured(self, mission_id, role, messages, schema, **kwargs):  # type: ignore[no-untyped-def]
+            captured.append(list(messages))
+            action = await super().structured(mission_id, role, messages, schema, **kwargs)
+            if action.thought == "rewrite":
+                source.write_text("NEW = 2\n" * 50, encoding="utf-8")
+            return action
+
+    gateway = Recording(
+        [
+            AgentAction(thought="read", action="read_file", path="app.py"),
+            AgentAction(thought="rewrite", action="list_directory", path="."),
+            AgentAction(thought="read again", action="read_file", path="app.py"),
+            AgentAction(thought="done", action="finish", summary="looked"),
+        ]
+    )
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+
+    await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        require_verified_finish=False,
+    ).run("mission-1", context())
+
+    final = "\n".join(item.content for item in captured[-1])
+    assert "NEW = 2" in final, "the current content stays"
+    assert "OLD = 1" not in final, "the stale copy must not survive beside it"
+    assert "superseded by the newer read below" in final
+
+
+@pytest.mark.asyncio
+async def test_a_pointer_is_never_given_for_a_body_compaction_dropped(
+    tmp_path: Path,
+) -> None:
+    """"Unchanged since step 4" is worthless if step 4 is no longer in context."""
+    source = tmp_path / "app.py"
+    source.write_text("line\n" * 200, encoding="utf-8")
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+    loop = ToolLoop(
+        ScriptedGateway([]),  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        require_verified_finish=False,
+    )
+    loop._read_cache = {}
+    read = AgentAction(thought="read", action="read_file", path="app.py")
+    messages: list[Message] = [Message(role="system", content="system")]
+
+    await loop._execute(read, messages, [], {}, {}, None, tool_call_id="1")
+    assert "line" in messages[-1].content
+    # Compaction drops everything but the head, taking the body with it.
+    messages[:] = messages[:1]
+    await loop._execute(read, messages, [], {}, {}, None, tool_call_id="2")
+
+    assert "byte-identical" not in messages[-1].content
+    assert "line" in messages[-1].content, "the file has to be sent again"
+    # And the dead entry is not left behind to mislead a later read.
+    assert all(
+        any(item is record.message for item in messages)
+        for record in loop._read_cache.values()
+    )
+
+
 def _grounded_context(source_chars: int) -> ContextBundle:
     files = {f"app/mod{index}.py": "x = 1\n" * (source_chars // 6) for index in range(4)}
     return ContextBundle(
@@ -1344,6 +1482,55 @@ def test_compaction_brings_an_oversized_transcript_under_the_threshold(
     loop._maybe_compact_messages(messages, context, "mission-1", [])
     assert messages == settled
     assert len(events) == 1
+
+
+def test_compaction_keeps_the_cached_prefix_byte_identical(
+    executor: ActionExecutor,
+) -> None:
+    """Providers cache a prompt by its leading bytes.
+
+    Compaction used to rewrite message one — the task bundle — on its very first
+    stage, so the discount was forfeited on every later call in the turn. Shedding
+    transcript first costs nothing by comparison, and only when that is not enough
+    does the bundle get clipped.
+    """
+    budget = 40_000
+    loop, events = _compaction_loop(executor, budget)
+    context = _grounded_context(4_000)
+    head = [
+        Message(role="system", content="system prompt"),
+        Message(role="user", content=context.model_dump_json()),
+    ]
+    messages = [*head, *_transcript(context, turns=40)[1:]]
+    loop._head_length = len(head)
+    loop._read_cache = {}
+    before_head = [item.content for item in messages[: len(head)]]
+
+    loop._maybe_compact_messages(messages, context, "mission-1", [])
+
+    assert events, "the transcript was over the threshold and had to compact"
+    assert [item.content for item in messages[: len(head)]] == before_head
+
+
+def test_compaction_still_clips_the_bundle_when_shedding_is_not_enough(
+    executor: ActionExecutor,
+) -> None:
+    """Keeping the prefix is a preference, not a rule that can fail a turn."""
+    loop, events = _compaction_loop(executor, budget=6_000)
+    context = _grounded_context(20_000)
+    head = [
+        Message(role="system", content="system prompt"),
+        Message(role="user", content=context.model_dump_json()),
+    ]
+    messages = [*head, *_transcript(context, turns=12)[1:]]
+    loop._head_length = len(head)
+    loop._read_cache = {}
+
+    loop._maybe_compact_messages(messages, context, "mission-2", [])
+
+    body = "\n".join(item.content for item in messages)
+    assert events
+    assert "use read_file" in body, "an oversized bundle must still be clipped"
 
 
 def test_compaction_never_grows_the_transcript(executor: ActionExecutor) -> None:

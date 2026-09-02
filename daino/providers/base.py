@@ -27,6 +27,12 @@ class ProviderUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     cost: float = 0.0
+    #: How much of ``input_tokens`` the provider served from its prompt cache.
+    #: Reported by OpenAI-compatible endpoints as
+    #: ``usage.prompt_tokens_details.cached_tokens``. Zero means either no cache
+    #: hit or a provider that does not say — the two are indistinguishable on the
+    #: wire, which is why the number is recorded rather than inferred.
+    cached_tokens: int = 0
 
 
 class LLMProvider(ABC):

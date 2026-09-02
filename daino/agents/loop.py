@@ -18,6 +18,7 @@ expressed as schema-constrained JSON, which Ollama ``format`` and vLLM
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shlex
 from collections.abc import Callable
@@ -27,6 +28,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from daino.agents.gateway import ModelGateway
+from daino.agents.tokens import estimate_message
 from daino.agents.tool_schemas import (
     AGENT_TOOL_SPECS,
     action_arguments_invalid,
@@ -234,8 +236,23 @@ class ToolLoop:
             # Earlier turns sit between the system prompt and this turn's task, so
             # a follow-up like "now do the same for the footer" resolves.
             *prior,
-            Message(role="user", content=context.model_dump_json(indent=2)),
+            # Compact JSON throughout the transcript. Indentation is whitespace
+            # the model gains nothing from and the provider bills for on every
+            # call that carries the message — which, for an early observation in
+            # a long turn, is all of them.
+            Message(role="user", content=context.model_dump_json()),
         ]
+        # Everything above is fixed for the turn: the contract, the history, and
+        # the grounding. Providers cache a prompt by its leading bytes, so as
+        # long as compaction leaves this prefix alone, every call after the first
+        # pays a fraction of the price for it. Rewriting message one — which is
+        # what compaction used to do first — threw that away on the very step it
+        # was trying to economise on.
+        self._head_length = len(messages)
+        #: File views the transcript is still carrying, keyed by path and span.
+        #: What makes re-reading an unchanged file cheap — and what has to be
+        #: pruned the moment compaction drops the body it points at.
+        self._read_cache: dict[tuple[str, int, int], _ReadRecord] = {}
         routing_context = RoutingContext(
             failed_attempts=self.attempts,
             affected_files=len(context.included_paths),
@@ -503,17 +520,29 @@ class ToolLoop:
         memory_settings = getattr(gateway_settings, "memory", None)
         threshold = float(getattr(memory_settings, "compaction_threshold", 0.8))
         target = int(budget * threshold)
-        before = sum(_message_estimate(item) for item in messages)
+        model = self.gateway.selected_model(self.role) if hasattr(
+            self.gateway, "selected_model"
+        ) else ""
+        before = sum(_message_estimate(item, model) for item in messages)
         if before < target or len(messages) < 10:
             return
 
         recent_limit = (
             self.execution_profile.recent_tool_groups * 2 if self.execution_profile else 12
         )
-        recent = list(messages[-recent_limit:])
+        # The cached prefix, and everything after it. Only the tail is negotiable
+        # while the head is being kept. A head shorter than two messages means
+        # ``run`` never recorded one — the task bundle is then not inside it, so
+        # the head-preserving stages would drop the task rather than clip it, and
+        # they are skipped entirely.
+        head_length = min(getattr(self, "_head_length", 0), len(messages))
+        keep_head_possible = head_length >= 2
+        split = head_length if keep_head_possible else 1
+        tail = messages[split:]
+        recent = list(tail[-recent_limit:])
         while recent and recent[0].role == "tool":
             recent.pop(0)
-        older = messages[1 : max(1, len(messages) - len(recent))]
+        older = tail[: max(0, len(tail) - len(recent))]
         actions: list[str] = []
         errors: list[str] = []
         for item in older:
@@ -570,31 +599,53 @@ class ToolLoop:
         # progressively, shedding the most redundant material first, until the
         # rebuilt transcript actually fits.
         best: list[Message] | None = None
-        for source_fraction, keep_recent, keep_pinned in _COMPACTION_STAGES:
-            task_message = Message(
-                role="user",
-                content=_clip_bundle_sources(context, source_fraction).model_dump_json(indent=2),
-            )
-            # Avoid duplicating the task when it is already among the recent turns.
-            kept = [item for item in recent if item.content != task_message.content]
-            if keep_recent is not None:
-                kept = kept[-keep_recent:] if keep_recent else []
-                while kept and kept[0].role == "tool":
-                    kept.pop(0)
+        for keep_head, source_fraction, keep_recent, keep_pinned in _COMPACTION_STAGES:
+            if keep_head and not keep_head_possible:
+                continue
             pinned = pinned_files if keep_pinned else None
-            preserved = [item for item in (compacted, pinned, task_message) if item is not None]
-            best = [messages[0], *preserved, *kept]
-            if sum(_message_estimate(item) for item in best) <= target:
+            if keep_head:
+                kept = list(recent)
+                if keep_recent is not None:
+                    kept = kept[-keep_recent:] if keep_recent else []
+                    while kept and kept[0].role == "tool":
+                        kept.pop(0)
+                preserved = [item for item in (compacted, pinned) if item is not None]
+                candidate = [*messages[:head_length], *preserved, *kept]
+            else:
+                task_message = Message(
+                    role="user",
+                    content=_clip_bundle_sources(context, source_fraction).model_dump_json(
+                        indent=2
+                    ),
+                )
+                # Avoid duplicating the task when it is already among the recent turns.
+                kept = [item for item in recent if item.content != task_message.content]
+                if keep_recent is not None:
+                    kept = kept[-keep_recent:] if keep_recent else []
+                    while kept and kept[0].role == "tool":
+                        kept.pop(0)
+                preserved = [
+                    item for item in (compacted, pinned, task_message) if item is not None
+                ]
+                candidate = [messages[0], *preserved, *kept]
+            best = candidate
+            if sum(_message_estimate(item, model) for item in candidate) <= target:
                 break
         if best is None:
             return
-        after = sum(_message_estimate(item) for item in best)
+        after = sum(_message_estimate(item, model) for item in best)
         # Compaction that does not shrink the transcript is worse than none: it
         # costs a turn and re-adds scaffolding that can outweigh what it replaced
         # (the field case grew a 15.4k transcript to 26.6k on its first pass).
         if after >= before:
             return
         messages[:] = best
+        # Anything whose body compaction just dropped must stop being a target
+        # for "unchanged since step N": the copy it points at is gone.
+        live = {id(item) for item in messages}
+        for key, record in list(getattr(self, "_read_cache", {}).items()):
+            if id(record.message) not in live:
+                self._read_cache.pop(key, None)
         if self.gateway.events is not None:
             self.gateway.events.publish(
                 ContextCompacted(
@@ -664,7 +715,14 @@ class ToolLoop:
             routing_context=routing_context,
             included_files=context.included_paths,
         )
-        messages.append(Message(role="assistant", content=action.model_dump_json(indent=2)))
+        # Only the fields the model actually set. ``AgentAction`` is one flat
+        # object with ~30 fields covering every tool, so a serialized read_file
+        # carried 25 empty strings — 1,273 characters where 256 say the same
+        # thing. Every assistant message is re-sent on every later call in the
+        # turn, so the difference compounds with the transcript.
+        messages.append(
+            Message(role="assistant", content=action.model_dump_json(exclude_defaults=True))
+        )
         if action.action in _TERMINAL:
             problem = self._terminal_problem(
                 action,
@@ -678,7 +736,7 @@ class ToolLoop:
                         role="tool",
                         content=AgentObservation(
                             action=action.action, success=False, detail=problem
-                        ).model_dump_json(indent=2),
+                        ).model_dump_json(),
                         tool_call_id="",
                     )
                 )
@@ -730,7 +788,7 @@ class ToolLoop:
                 messages.append(
                     Message(
                         role="tool",
-                        content=observation.model_dump_json(indent=2),
+                        content=observation.model_dump_json(),
                         tool_call_id=call.id,
                     )
                 )
@@ -764,7 +822,7 @@ class ToolLoop:
                     messages.append(
                         Message(
                             role="tool",
-                            content=observation.model_dump_json(indent=2),
+                            content=observation.model_dump_json(),
                             tool_call_id=call.id,
                         )
                     )
@@ -805,7 +863,7 @@ class ToolLoop:
                         action=first.name,
                         success=False,
                         detail=action_arguments_invalid(exc),
-                    ).model_dump_json(indent=2),
+                    ).model_dump_json(),
                     tool_call_id=first.id,
                 )
             )
@@ -822,7 +880,7 @@ class ToolLoop:
                                 "Compact mode accepts exactly one action per turn; emit the "
                                 "terminal action by itself on the next turn."
                             ),
-                        ).model_dump_json(indent=2),
+                        ).model_dump_json(),
                         tool_call_id=first.id,
                     )
                 )
@@ -847,7 +905,7 @@ class ToolLoop:
                             "Deferred: compact mode accepts one bounded action per turn. "
                             "Reissue this action on a later turn if it is still needed."
                         ),
-                    ).model_dump_json(indent=2),
+                    ).model_dump_json(),
                     tool_call_id=call.id,
                 )
             )
@@ -904,15 +962,106 @@ class ToolLoop:
                 "Do not write it again; move on to the next unfinished step."
                 + (f"\n{detail}" if detail else "")
             )
+        reuse = self._unchanged_read(action, result, messages)
+        if reuse is not None:
+            detail = reuse
         observation = AgentObservation(action=action.action, success=result.success, detail=detail)
-        messages.append(
-            Message(
-                role="tool",
-                content=observation.model_dump_json(indent=2),
-                tool_call_id=tool_call_id,
-            )
+        message = Message(
+            role="tool",
+            content=observation.model_dump_json(),
+            tool_call_id=tool_call_id,
         )
+        messages.append(message)
+        if reuse is None:
+            self._remember_read(action, result, message, messages)
         return result
+
+    def _unchanged_read(
+        self, action: AgentAction, result: ToolResult, messages: list[Message]
+    ) -> str | None:
+        """A pointer instead of the file, when the transcript already has it.
+
+        Returns replacement detail text only when *all* of these hold: the same
+        path and the same line span, an identical digest, and the earlier body
+        still present in the live message list. That last condition is the whole
+        safety argument — an agent told "unchanged since step 4" when step 4 has
+        been compacted away has been told nothing, and would have to guess.
+
+        The saving is paid twice: this response carries a line instead of up to
+        14,000 characters, and every later request carries the line too.
+        """
+        digest = _read_digest(action, result)
+        if digest is None:
+            return None
+        path = self._normalized(action.path)
+        start, end = _read_span(result)
+        record = self._read_cache.get((path, start, end))
+        if record is None or record.digest != digest:
+            return None
+        if not any(item is record.message for item in messages):
+            # The body it points at is gone. Forget it and send the file.
+            self._read_cache.pop((path, start, end), None)
+            return None
+        span = "" if record.start == 1 and record.end >= end else f" (lines {start}-{end})"
+        return (
+            f"{path}{span} is byte-identical to the copy you already read at step "
+            f"{record.step}, which is still above in this conversation. Nothing has "
+            "changed, so it is not repeated here — use that copy."
+        )
+
+    def _remember_read(
+        self,
+        action: AgentAction,
+        result: ToolResult,
+        message: Message,
+        messages: list[Message],
+    ) -> None:
+        """Register a fresh file view, and collapse the copies it supersedes.
+
+        Two copies of one file at different versions in a single transcript is
+        not just waste, it is a hazard: it is where a ``replace`` anchor comes
+        from when the anchor no longer exists.
+        """
+        digest = _read_digest(action, result)
+        if digest is None:
+            return
+        path = self._normalized(action.path)
+        start, end = _read_span(result)
+        for key, record in list(self._read_cache.items()):
+            if key[0] != path or not _covers((start, end), (record.start, record.end)):
+                continue
+            self._read_cache.pop(key, None)
+            if any(item is record.message for item in messages):
+                record.message.content = AgentObservation(
+                    action="read_file",
+                    success=True,
+                    detail=(
+                        f"[{path} as read at step {record.step} — superseded by the newer "
+                        "read below, which is the current content.]"
+                    ),
+                ).model_dump_json()
+        self._read_cache[(path, start, end)] = _ReadRecord(
+            digest=digest,
+            step=len(messages),
+            start=start,
+            end=end,
+            message=message,
+        )
+
+    def _normalized(self, path: str) -> str:
+        """One spelling of a path, so two readings of one file share a key.
+
+        Through the executor's own normalizer where there is one; a bare string
+        otherwise, because a custom executor double must not turn a token saving
+        into an AttributeError mid-turn.
+        """
+        normalize = getattr(getattr(self.executor, "editor", None), "normalize", None)
+        if not callable(normalize):
+            return path.strip().lstrip("/")
+        try:
+            return str(normalize(path))
+        except Exception:  # noqa: BLE001 - an unresolvable path simply keys as written
+            return path.strip().lstrip("/")
 
     def _was_inert_edit(self, action: AgentAction, result: ToolResult) -> bool:
         """Report whether a successful mutation left the file byte-identical."""
@@ -1091,23 +1240,74 @@ _READ_FILE_MAX_CHARS = 14_000
 _PINNED_FILE_LIMIT = 2
 _PINNED_FILE_MAX_CHARS = 5_000
 
-#: Successive compaction attempts as ``(source_fraction, keep_recent, keep_pinned)``,
-#: ordered so the most redundant material goes first. Inlined bundle sources lead:
-#: the repository is on disk and the agent has read_file/grep, so that text is both
-#: the largest term and the one it can recover on demand. Recent turns and the
-#: pinned authoritative files are the working state, so they are surrendered last
-#: and never entirely — the final stage still carries a full exchange.
-_COMPACTION_STAGES: tuple[tuple[float, int | None, bool], ...] = (
-    (1.0, None, True),
-    (0.5, None, True),
-    (0.0, None, True),
-    (0.0, 4, True),
-    (0.0, 2, False),
+#: Successive compaction attempts as
+#: ``(keep_head, source_fraction, keep_recent, keep_pinned)``, ordered so the
+#: cheapest concession comes first.
+#:
+#: The first three stages keep the cached prefix — system prompt, prior turns and
+#: the task bundle — byte-identical and pay for the room out of the transcript
+#: instead. That ordering is the point: rewriting the bundle saves tokens on this
+#: request and forfeits the provider's cache discount on every request after it,
+#: which is a bad trade until it is the only trade left.
+#:
+#: The remaining stages are the original behaviour, reached only when shedding
+#: transcript was not enough. Inlined bundle sources lead there: the repository is
+#: on disk and the agent has read_file/grep, so that text is both the largest term
+#: and the one it can recover on demand. Recent turns and the pinned authoritative
+#: files are surrendered last, and never entirely — the final stage still carries a
+#: full exchange.
+_COMPACTION_STAGES: tuple[tuple[bool, float, int | None, bool], ...] = (
+    (True, 1.0, None, True),
+    (True, 1.0, 6, True),
+    (True, 1.0, 2, True),
+    (False, 1.0, None, True),
+    (False, 0.5, None, True),
+    (False, 0.0, None, True),
+    (False, 0.0, 4, True),
+    (False, 0.0, 2, False),
 )
 
 #: Never clip an inlined file below this; a few hundred characters of head and
 #: tail still tells the model what the file is before it pages in the rest.
 _COMPACTION_MIN_SOURCE_CHARS = 400
+
+
+@dataclass(slots=True)
+class _ReadRecord:
+    """One file view the transcript is still carrying verbatim.
+
+    ``message`` is held by identity rather than by index: compaction rebuilds the
+    list but reuses the message objects it keeps, so an identity check answers
+    exactly the question that matters — is this body still in front of the model?
+    """
+
+    digest: str
+    step: int
+    start: int
+    end: int
+    message: Message
+
+
+def _read_digest(action: AgentAction, result: ToolResult) -> str | None:
+    """A digest of exactly the bytes this observation would carry."""
+    if action.action != "read_file" or not result.success or not action.path:
+        return None
+    content = (result.data or {}).get("content")
+    if not isinstance(content, str) or not content:
+        return None
+    return hashlib.sha256(content.encode("utf-8", "replace")).hexdigest()
+
+
+def _read_span(result: ToolResult) -> tuple[int, int]:
+    data = result.data or {}
+    start = int(data.get("start_line") or 1)
+    end = int(data.get("end_line") or start)
+    return start, end
+
+
+def _covers(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
+    """Whether one read's line span contains another's."""
+    return outer[0] <= inner[0] and outer[1] >= inner[1]
 
 
 def _read_file_detail(result: ToolResult, *, max_chars: int = _READ_FILE_MAX_CHARS) -> str:
@@ -1242,12 +1442,9 @@ def _clip_bundle_sources(context: ContextBundle, fraction: float) -> ContextBund
     )
 
 
-def _message_estimate(message: Message) -> int:
-    tool_text = json.dumps(
-        [item.model_dump(mode="json") for item in message.tool_calls],
-        ensure_ascii=False,
-    )
-    return max(1, (len(message.content) + len(tool_text)) // 4) + 8
+def _message_estimate(message: Message, model: str = "") -> int:
+    """Estimate one message against what this model was last seen to charge."""
+    return estimate_message(message, model)
 
 
 def _recent_history(history: list[Message], tool_groups: int) -> list[Message]:

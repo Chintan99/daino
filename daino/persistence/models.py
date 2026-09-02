@@ -173,6 +173,10 @@ class ModelCall(Base, TimestampMixin):
     included_files: Mapped[list[str]] = mapped_column(JSON, default=list)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    #: Part of ``input_tokens`` the provider served from its prompt cache. A
+    #: turn that reuses its prefix and one that pays for it on every call look
+    #: identical without this column.
+    cached_tokens: Mapped[int] = mapped_column(Integer, default=0)
     latency_ms: Mapped[float] = mapped_column(Float, default=0)
     estimated_cost: Mapped[float] = mapped_column(Float, default=0)
     success: Mapped[bool] = mapped_column(Boolean, default=True)

@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
+from daino.agents.tokens import CALIBRATION, estimate_message, message_chars
 from daino.config.models import ProviderConfig, Settings
 from daino.context.profiles import ModelExecutionProfile
 from daino.events import AgentRoleChanged, EventBus, ModelReasoningChunk, ModelSelected
@@ -120,6 +121,44 @@ class ModelGateway:
 
         setter(publish)
 
+    @staticmethod
+    def _calibrate(
+        model: str,
+        messages: list[Message],
+        tools: list[dict[str, Any]] | None,
+        usage: ProviderUsage,
+    ) -> None:
+        """Teach the estimator what this request actually cost.
+
+        Tool schemas are counted because the provider charged for them: a ratio
+        derived from the messages alone would attribute their tokens to the
+        transcript and read as denser text than the transcript really is.
+        """
+        if not messages or usage.input_tokens <= 0:
+            return
+        chars = sum(message_chars(item) for item in messages)
+        if tools:
+            chars += len(json.dumps(tools, separators=(",", ":")))
+        CALIBRATION.observe(model, chars, usage.input_tokens)
+
+    def selected_model(
+        self,
+        role: ModelRole,
+        routing_context: RoutingContext | None = None,
+        *,
+        profile_override: str | None = None,
+    ) -> str:
+        """The model this role would use, so estimates use its calibration."""
+        try:
+            selection = self.router.select(
+                role,
+                routing_context,
+                profile_override=profile_override or self.profile_override,
+            )
+        except Exception:  # noqa: BLE001 - an unroutable role estimates at the default
+            return ""
+        return selection.profile.model
+
     def context_budget(
         self,
         role: ModelRole,
@@ -215,6 +254,7 @@ class ModelGateway:
                 usage = _provider_usage(provider)
                 record.input_tokens = usage.input_tokens
                 record.output_tokens = usage.output_tokens
+                record.cached_tokens = usage.cached_tokens
                 record.estimated_cost = usage.cost
                 record.latency_ms = (monotonic() - started) * 1000
                 await provider.close()
@@ -277,6 +317,7 @@ class ModelGateway:
             self._attach_reasoning_handler(provider, mission_id, role, selection)
             effective_tools = tools if provider.supports_tools() else None
             response: LLMResponse | None = None
+            fitted: list[Message] = []
             try:
                 fitted = _fit_messages(messages, _input_budget(selection, effective_tools))
                 response = await provider.complete(
@@ -286,6 +327,11 @@ class ModelGateway:
                 last_failure = exc
             finally:
                 usage = _provider_usage(provider)
+                # What the provider charged for the request just sent is the
+                # only honest measurement of how this model tokenizes this
+                # workload. Feeding it back is what stops every budget in the
+                # agent from being computed against a guess.
+                self._calibrate(selection.profile.model, fitted, effective_tools, usage)
                 await provider.close()
                 with self.database.session() as session:
                     session.add(
@@ -302,6 +348,9 @@ class ModelGateway:
                             ),
                             output_tokens=(
                                 usage.output_tokens or (response.output_tokens if response else 0)
+                            ),
+                            cached_tokens=(
+                                usage.cached_tokens or (response.cached_tokens if response else 0)
                             ),
                             latency_ms=response.latency_ms if response else 0,
                             # This column predates provider-side accounting. When
@@ -372,6 +421,7 @@ class ModelGateway:
                             included_files=included_files or [],
                             input_tokens=usage.input_tokens,
                             output_tokens=usage.output_tokens,
+                            cached_tokens=usage.cached_tokens,
                             latency_ms=(monotonic() - started) * 1000,
                             estimated_cost=usage.cost,
                             success=success,
@@ -438,13 +488,9 @@ def _input_budget(selection: ModelSelection, tools: list[dict[str, Any]] | None 
     )
 
 
-def _message_tokens(message: Message) -> int:
-    tool_json = (
-        json.dumps([item.model_dump(mode="json") for item in message.tool_calls])
-        if message.tool_calls
-        else ""
-    )
-    return max(1, (len(message.content) + len(tool_json)) // 4) + 8
+def _message_tokens(message: Message, model: str = "") -> int:
+    """Estimate one message against what this model was last seen to charge."""
+    return estimate_message(message, model)
 
 
 def _clip_text(text: str, chars: int) -> str:

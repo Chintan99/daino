@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 import { EditorWorkspace } from "../components/editor/EditorWorkspace";
 import { DesignWorkspace } from "../components/design/DesignWorkspace";
 import { WorkbenchWorkspace } from "../components/workbench/WorkbenchWorkspace";
+import { WorkspaceMark } from "../components/workbench/WorkspaceMark";
 import { InspectorMark } from "../components/inspector/InspectorMark";
 import { InspectorWorkspace } from "../components/inspector/InspectorWorkspace";
 import { InsightsWorkspace } from "../components/insights/InsightsWorkspace";
@@ -20,8 +21,8 @@ export interface WorkspaceTab {
    * A small indicator rendered inside the tab button.
    *
    * A tab that carries a result worth seeing from anywhere — the Inspector's
-   * verdict, work in flight — declares it here rather than the chrome
-   * special-casing tab ids.
+   * verdict, a maturity label, work in flight — declares it here rather than
+   * the chrome special-casing tab ids.
    */
   mark?: ComponentType;
 }
@@ -50,6 +51,7 @@ export const WORKSPACE_TABS: WorkspaceTab[] = [
     component: WorkbenchWorkspace,
     showSidebar: false,
     showBottomPanel: false,
+    mark: WorkspaceMark,
   },
   {
     id: "inspector",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -284,9 +285,11 @@ class ScriptedGateway:
         **kwargs: object,
     ) -> Any:
         # The task text carries the member's objective, which is how the double
-        # tells members apart without the loop having to pass the id.
-        task = str(messages[1].content)  # type: ignore[index]
-        name = task.split('"task": "do ', 1)[-1].split("\\n", 1)[0]
+        # tells members apart without the loop having to pass the id. Parsed as
+        # JSON rather than by punctuation: how the bundle is serialized is not
+        # what this test is about.
+        task = json.loads(str(messages[1].content))["task"]  # type: ignore[index]
+        name = task.removeprefix("do ").split("\n", 1)[0]
         self.structured_calls.append(name)
         self.concurrent += 1
         self.peak_concurrent = max(self.peak_concurrent, self.concurrent)
@@ -355,7 +358,7 @@ async def test_dependent_member_receives_its_predecessor_summary(tmp_path: Path)
         require_read_before_write=False,
     ).run("mission-1", plan, context())
 
-    web_turns = [text for text in seen if '"task": "do web' in text]
+    web_turns = [text for text in seen if json.loads(text)["task"].startswith("do web")]
     assert web_turns, "the dependent member never ran"
     assert "builder api: api done" in web_turns[0]
 
@@ -371,7 +374,9 @@ async def test_a_failing_member_skips_its_dependents_but_not_its_peers(tmp_path:
             schema: type[Any],
             **kwargs: object,
         ) -> Any:
-            if '"task": "do api' in str(messages[1].content):  # type: ignore[index]
+            if json.loads(str(messages[1].content))["task"].startswith(  # type: ignore[index]
+                "do api"
+            ):
                 raise RuntimeError("api model unreachable")
             return await super().structured(mission_id, role, messages, schema, **kwargs)
 

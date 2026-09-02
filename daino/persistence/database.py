@@ -70,6 +70,7 @@ class Database:
             return
         self._add_session_workspace_column()
         self._add_executable_task_columns()
+        self._add_cached_token_column()
         inspector = inspect(self.engine)
         if "memory_records" not in inspector.get_table_names():
             return
@@ -153,6 +154,19 @@ class Database:
         with self.engine.begin() as connection:
             for name, sql in missing:
                 connection.execute(text(f"ALTER TABLE workspace_tasks ADD COLUMN {name} {sql}"))
+
+    def _add_cached_token_column(self) -> None:
+        """Give an existing accounting table its prompt-cache column."""
+        inspector = inspect(self.engine)
+        if "model_calls" not in inspector.get_table_names():
+            return
+        existing = {item["name"] for item in inspector.get_columns("model_calls")}
+        if "cached_tokens" in existing:
+            return
+        with self.engine.begin() as connection:
+            connection.execute(
+                text("ALTER TABLE model_calls ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0")
+            )
 
     @contextmanager
     def session(self) -> Iterator[Session]:
