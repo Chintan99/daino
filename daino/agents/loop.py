@@ -990,11 +990,20 @@ class ToolLoop:
         failed = _command_key(action.command)
         evidence = _command_key(action.evidence_command)
         recovery = command_recoveries.get(failed)
+        if recovery is None and len(command_recoveries) == 1:
+            # Exact argv equality asks a model to retype the failed command
+            # byte for byte, which it cannot do for the ``python3 -c '<40 lines
+            # of script>'`` it ran ten steps ago — one dropped quote and the
+            # tool becomes unusable, which is exactly how a real run stalled
+            # five times in a row. With a single unresolved failure there is
+            # nothing to confuse it with, so take it. The evidence check below
+            # is untouched: a green command must still actually have run.
+            failed, recovery = next(iter(command_recoveries.items()))
         if recovery is None:
             return ToolResult(
                 tool="resolve_command_failure",
                 success=False,
-                error=f"No unresolved failed command matches: {failed}",
+                error=_unresolved_failure_error(action.command, command_recoveries),
             )
         if recovery:
             missing = [item for item in recovery if command_results.get(item) is not True]
@@ -1257,6 +1266,27 @@ def _command_key(command: str) -> str:
         return shlex.join(shlex.split(command))
     except ValueError:
         return command.strip()
+
+
+def _unresolved_failure_error(written: str, pending: dict[str, tuple[str, ...]]) -> str:
+    """Explain a miss in the model's own words, and name what is waiting.
+
+    Deliberately echoes the command as the model wrote it rather than the
+    normalized key the lookup uses: the key is an argv round-trip, so a
+    mis-quoted script comes back visibly mangled, and a model shown its own
+    input mangled concludes the tool broke it.
+    """
+    quoted = " ".join(written.split())[:200]
+    if not pending:
+        return (
+            f"No command has failed in this run, so there is nothing to resolve: {quoted}. "
+            "Use this only after run_command reported a failure."
+        )
+    waiting = "; ".join(sorted(pending)[:3])
+    return (
+        f"No unresolved failed command matches: {quoted}. "
+        f"Still waiting on: {waiting}. Copy one of those exactly as the command argument."
+    )
 
 
 def _command_recovery_keys(command: str, error: str) -> tuple[str, ...]:

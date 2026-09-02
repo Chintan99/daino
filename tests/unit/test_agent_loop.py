@@ -747,6 +747,111 @@ async def test_a_successful_equivalent_command_can_resolve_an_environment_failur
 
 
 @pytest.mark.asyncio
+async def test_a_retyped_command_still_resolves_the_one_failure_waiting(
+    tmp_path: Path,
+) -> None:
+    """Exact argv equality asked a model to retype a long script perfectly.
+
+    It cannot: the command that failed was a forty-line ``python3 -c`` script,
+    and a single dropped quote left the failure permanently unresolvable — a
+    real run stalled on this five times. With exactly one failure outstanding
+    there is nothing to confuse it with, so an approximate reference resolves
+    it. The evidence requirement is unchanged.
+    """
+    script = 'python3 -c "import app; print(app.check())"'
+
+    class Runner:
+        async def run(self, command: str, *, timeout: int | None = None) -> ToolResult:
+            return ToolResult(
+                tool="run_command",
+                success=command != script,
+                data={"command": command},
+                error="Traceback: ImportError" if command == script else None,
+            )
+
+    gateway = ScriptedGateway(
+        [
+            AgentAction(thought="write", action="write", path="app.py", content="VALUE = 1\n"),
+            AgentAction(thought="check", action="run_command", command=script),
+            AgentAction(thought="simpler check", action="run_command", command="pytest -q"),
+            # The model's recollection of its own script, quotes mangled.
+            AgentAction(
+                thought="the import check is covered by the suite",
+                action="resolve_command_failure",
+                command="python3 -c import app; print(app.check())",
+                evidence_command="pytest -q",
+            ),
+            AgentAction(
+                thought="done",
+                action="finish",
+                summary="fixed and checked",
+                verification_commands=["pytest -q"],
+            ),
+        ]
+    )
+    executor = ActionExecutor(
+        EditTools(tmp_path, require_read_before_write=False),
+        Runner(),  # type: ignore[arg-type]
+    )
+
+    outcome = await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        require_verified_finish=True,
+    ).run("mission-1", context())
+
+    assert outcome.completed
+    assert outcome.implementation.summary == "fixed and checked"
+
+
+@pytest.mark.asyncio
+async def test_an_unmatched_resolution_names_what_is_actually_waiting(
+    tmp_path: Path,
+) -> None:
+    """The refusal has to be actionable, and quote the model rather than shlex."""
+
+    class Runner:
+        async def run(self, command: str, *, timeout: int | None = None) -> ToolResult:
+            return ToolResult(
+                tool="run_command",
+                success=command == "pytest -q",
+                data={"command": command},
+                error=None if command == "pytest -q" else "boom",
+            )
+
+    gateway = ScriptedGateway(
+        [
+            AgentAction(thought="a", action="run_command", command="npm run build"),
+            AgentAction(thought="b", action="run_command", command="npm test"),
+            AgentAction(thought="c", action="run_command", command="pytest -q"),
+            AgentAction(
+                thought="wrong one",
+                action="resolve_command_failure",
+                command="cargo build",
+                evidence_command="pytest -q",
+            ),
+            AgentAction(thought="done", action="finish", summary="stop"),
+        ]
+    )
+    executor = ActionExecutor(
+        EditTools(tmp_path, require_read_before_write=False),
+        Runner(),  # type: ignore[arg-type]
+    )
+
+    await ToolLoop(
+        gateway,  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        require_verified_finish=False,
+    ).run("mission-1", context())
+
+    refusal = next(item for item in gateway.observations if "No unresolved failed" in item)
+    assert "cargo build" in refusal
+    assert "npm run build" in refusal and "npm test" in refusal
+
+
+@pytest.mark.asyncio
 async def test_the_step_budget_ends_a_looping_agent(tmp_path: Path) -> None:
     executor = ActionExecutor(EditTools(tmp_path))
     never_finishes = [

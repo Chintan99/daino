@@ -153,6 +153,50 @@ def test_provider_service_configures_local_openai_compatible_model(
     context.close()
 
 
+def test_a_catalog_context_window_reaches_the_profile(
+    project: tuple[Path, object, object],
+) -> None:
+    """Every budget the agent computes is derived from this one number.
+
+    It used to be the 32k default whatever model was chosen, so a 400k model
+    was budgeted as a 32k one: the loop compacted transcripts that would have
+    fitted, dropped context it then had to re-read, and burned several times
+    the tokens the work actually needed.
+    """
+    root, _, _ = project
+    context = open_project(root)
+    service = ProviderApplicationService(context)
+
+    service.add(
+        name="roomy",
+        provider_type="openai-compatible",
+        base_url="https://models.example.invalid/v1",
+        model="big-window",
+        context_window=400_000,
+    )
+
+    assert context.settings.models["roomy"].context_window == 400_000
+    context.close()
+
+
+def test_a_provider_that_cannot_report_a_window_keeps_the_safe_default(
+    project: tuple[Path, object, object],
+) -> None:
+    root, _, _ = project
+    context = open_project(root)
+    service = ProviderApplicationService(context)
+
+    service.add(
+        name="unknown",
+        provider_type="vllm",
+        base_url="http://127.0.0.1:8000/v1",
+        model="mystery",
+    )
+
+    assert context.settings.models["unknown"].context_window == 32_768
+    context.close()
+
+
 def test_session_effort_updates_selected_remote_profile_only(
     project: tuple[Path, object, object],
 ) -> None:

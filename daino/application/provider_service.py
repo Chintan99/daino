@@ -182,8 +182,18 @@ class ProviderApplicationService:
         api_key_reference: str = "",
         make_default: bool = True,
         scope: str = "project",
+        context_window: int = 0,
     ) -> list[str]:
         """Add or update a provider without accepting literal secret values.
+
+        ``context_window`` is the model's real input window when the provider's
+        catalog reports one. Leaving it at zero keeps
+        :class:`ModelProfileConfig`'s conservative default, which is the right
+        answer for a provider that cannot say — and the wrong one for a model
+        that can: every budget in the agent is derived from this number, so an
+        understated window makes the loop compact a transcript that would have
+        fitted, drop context it then has to re-read, and spend several times the
+        tokens the work needed.
 
         Returns the agent roles that were re-routed to the provider.
         """
@@ -207,11 +217,14 @@ class ProviderApplicationService:
         else:
             raise ValueError(f"Unknown provider scope {scope}")
         target_settings.providers[normalized] = provider
-        target_settings.models[normalized] = ModelProfileConfig(
-            provider=normalized,
-            model=provider.model,
-            local=local,
-        )
+        profile_fields: dict[str, Any] = {
+            "provider": normalized,
+            "model": provider.model,
+            "local": local,
+        }
+        if context_window > 0:
+            profile_fields["context_window"] = context_window
+        target_settings.models[normalized] = ModelProfileConfig(**profile_fields)
         rerouted = self._apply_routing(
             normalized,
             make_default=make_default,
@@ -396,6 +409,10 @@ class ProviderApplicationService:
                 else store_project_secret(self.context.root, f"{normalized}-openrouter", api_key)
             )
         )
+        # The catalog was just fetched to validate the model id, and it carries
+        # the model's real context length. Using it is the difference between
+        # budgeting against the truth and budgeting against a default.
+        chosen = next((item for item in models if item.id == model), None)
         rerouted = self.add(
             name=normalized,
             provider_type="openrouter",
@@ -404,6 +421,7 @@ class ProviderApplicationService:
             api_key_reference=reference,
             make_default=make_default,
             scope=scope,
+            context_window=chosen.context_length if chosen else 0,
         )
         label = str(key_details.get("label") or "validated key")
         remaining = key_details.get("limit_remaining")
