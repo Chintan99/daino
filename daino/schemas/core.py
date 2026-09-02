@@ -250,6 +250,9 @@ class AgentAction(StrictModel):
         "workspace_read",
         "workspace_plan",
         "workspace_task",
+        "workspace_link",
+        "workspace_code",
+        "workspace_deliverable",
         "respond",
         "finish",
     ]
@@ -294,6 +297,18 @@ class AgentAction(StrictModel):
     #: For ``workspace_task``: which step, and what it becomes.
     task_id: str = ""
     task_status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
+    #: For ``workspace_link``: what this document was made from, and how.
+    source_path: str = ""
+    target_path: str = ""
+    relation: str = "references"
+    #: For ``workspace_code``: what the coding work should achieve, and which
+    #: workspace documents it needs. Paths, never pasted content.
+    request: str = ""
+    context_paths: list[str] = Field(default_factory=list)
+    #: For ``workspace_deliverable``: the finished-file format to produce, and
+    #: where it should land in the workspace folder.
+    format: str = ""
+    title: str = ""
     #: Controlled memory operations. The database is never exposed to the LLM.
     memory_id: str = ""
     memory_type: str = "semantic"
@@ -365,6 +380,9 @@ class AgentAction(StrictModel):
             "connect_design_nodes": ("design_id", "source_node", "target_node"),
             "disconnect_design_nodes": ("design_id",),
             "workspace_task": ("task_id",),
+            "workspace_link": ("source_path", "target_path"),
+            "workspace_code": ("request",),
+            "workspace_deliverable": ("path", "format"),
             "respond": ("message",),
             "finish": ("summary",),
         }
@@ -601,6 +619,60 @@ class QAReport(StrictModel):
     #: The release gate's answer, and the specific reasons behind it.
     verdict: QAVerdict = "unknown"
     gate_reasons: list[str] = Field(default_factory=list)
+
+
+#: What a change review was pointed at.
+#: "working" is the uncommitted tree, "staged" is what is about to be committed,
+#: "branch" is this branch against its base — the closest thing to a pull
+#: request in a tool that never pushes — and "range" is an explicit ref spec.
+ReviewScope = Literal["working", "staged", "branch", "range"]
+
+ChangeKind = Literal["added", "modified", "deleted", "renamed", "binary"]
+
+
+class ChangedFile(StrictModel):
+    """One file's part of a change, without its content."""
+
+    path: str
+    kind: ChangeKind = "modified"
+    #: Set only for a rename, so a move reads as a move.
+    previous_path: str = ""
+    insertions: int = 0
+    deletions: int = 0
+    binary: bool = False
+    #: How many findings point at this file, for the file list's own summary.
+    findings: int = 0
+
+
+class ChangeReview(StrictModel):
+    """A review of one change: what it does, what is wrong, what is missing."""
+
+    id: str
+    status: QARunStatus = "pending"
+    started_at: datetime
+    finished_at: datetime | None = None
+    project_root: str = ""
+    scope: ReviewScope = "working"
+    #: The refs the diff was taken between; empty for an uncommitted tree.
+    base_ref: str = ""
+    head_ref: str = ""
+    #: Human-readable description of exactly what was compared.
+    subject: str = ""
+    #: Commit subjects in the range, newest first.
+    commits: list[str] = Field(default_factory=list)
+    files: list[ChangedFile] = Field(default_factory=list)
+    insertions: int = 0
+    deletions: int = 0
+    #: The narrative: what this change does and why, written by the reviewer.
+    summary: str = ""
+    #: One line of inferred intent, for a list view.
+    intent: str = ""
+    checks: list[QACheck] = Field(default_factory=list)
+    specialists: list[QASpecialist] = Field(default_factory=list)
+    findings: list[QAFinding] = Field(default_factory=list)
+    verdict: QAVerdict = "unknown"
+    gate_reasons: list[str] = Field(default_factory=list)
+    mission_id: str = ""
 
 
 class ReviewFinding(StrictModel):

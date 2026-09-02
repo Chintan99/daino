@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from daino.agents.tool_schemas import CHAT_TOOL_SPECS
+from daino.agents.tool_schemas import CHAT_TOOL_SPECS, WORKSPACE_TOOL_SPECS
 from daino.config import default_settings, save_settings
 from daino.model_router import ModelRole
 from daino.persistence import Database
@@ -38,16 +38,24 @@ def _executor(
     )
 
 
-async def test_the_agent_gets_only_the_three_tools_a_file_cannot_replace() -> None:
-    """Documents are real files, so no new file tools are needed — or wanted."""
-    names = {spec["function"]["name"] for spec in CHAT_TOOL_SPECS}
+async def test_the_agent_gets_only_the_verbs_a_file_cannot_replace() -> None:
+    """Documents are real files, so no new file tools are needed — or wanted.
 
-    assert {"workspace_read", "workspace_plan", "workspace_task"} <= names
-    # No workspace_write / workspace_delete: write and replace already do that.
-    assert not {name for name in names if name.startswith("workspace_")} - {
+    The workspace verbs each cover something a file genuinely cannot say: what
+    the workspace holds, what the plan is, where a document came from, what a
+    rendering of it should be, and what should be built elsewhere. There is
+    still no workspace_write or workspace_delete, because write and replace
+    already do that.
+    """
+    names = {spec["function"]["name"] for spec in WORKSPACE_TOOL_SPECS}
+
+    assert {name for name in names if name.startswith("workspace_")} == {
         "workspace_read",
         "workspace_plan",
         "workspace_task",
+        "workspace_link",
+        "workspace_code",
+        "workspace_deliverable",
     }
     assert {"read_file", "write", "replace", "grep"} <= names
 
@@ -268,3 +276,60 @@ def test_a_team_without_a_web_tool_still_refuses_research() -> None:
     runner = TeamRunner(object(), _Path("."))  # type: ignore[arg-type]
 
     assert runner.web is None
+
+
+async def test_workspace_tools_stay_out_of_a_repository_chat() -> None:
+    """A code session must not be offered verbs it can only be refused for.
+
+    Advertising them anyway is how a build task ended up calling workspace_plan
+    and being told "No workspace is open": a wasted turn the model reads as a
+    failure, on the way to the no-progress guard.
+    """
+    code = {spec["function"]["name"] for spec in CHAT_TOOL_SPECS}
+
+    assert not {name for name in code if name.startswith("workspace_")}
+    # The repository surface keeps everything a code session actually uses.
+    assert {"read_file", "write", "replace", "grep", "run_command"} <= code
+
+
+async def test_a_workspace_can_draw_but_a_repository_chat_cannot_orchestrate() -> None:
+    """The surfaces overlap in one direction only, and deliberately.
+
+    Design was once withheld from workspaces on the grounds that knowledge work
+    and repository design are separate activities. A proposal whose architecture
+    section is three paragraphs because the agent had no way to draw it says
+    otherwise, so a workspace now reaches the same canvas DESIGN edits. The
+    other direction stays shut: a repository chat has no workspace open, so
+    offering it workspace verbs only earns a refusal.
+    """
+    workspace = {spec["function"]["name"] for spec in WORKSPACE_TOOL_SPECS}
+    code = {spec["function"]["name"] for spec in CHAT_TOOL_SPECS}
+
+    assert {name for name in workspace if "design" in name}
+    assert {name for name in code if "design" in name}
+    assert not {name for name in code if name.startswith("workspace_")}
+    # Both still get the shared file/web/memory surface they are built on.
+    assert {"read_file", "write", "replace", "grep"} <= workspace & code
+
+
+def test_the_session_type_decides_which_tool_surface_the_agent_is_handed(
+    tmp_path: Path, workbench: WorkbenchService
+) -> None:
+    """The wiring, not just the lists: a code session must not be given workspace verbs.
+
+    mission_service already branched on the open workspace for the role, the
+    system prompt and require_verified_finish, but passed CHAT_TOOL_SPECS
+    unconditionally — so a repository chat was still offered workspace_plan.
+    """
+    from daino.application.mission_service import MissionApplicationService
+
+    select = MissionApplicationService._chat_tool_specs
+    workspace = workbench.create("Research", goal="Compare vendors", kind="research")
+
+    code_tools = {spec["function"]["name"] for spec in select(None)}
+    workspace_tools = {spec["function"]["name"] for spec in select(workspace)}
+
+    # The reported bug: a code session offered verbs it can only be refused for.
+    assert not {name for name in code_tools if name.startswith("workspace_")}
+    assert {"workspace_read", "workspace_plan", "workspace_task"} <= workspace_tools
+    assert {"read_file", "write", "replace", "grep"} <= code_tools & workspace_tools

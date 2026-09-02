@@ -251,7 +251,8 @@ export type WsEventKind =
   | "PreviewStarted"
   | "PreviewStopped"
   | "WorkspaceCreated"
-  | "WorkspaceUpdated";
+  | "WorkspaceUpdated"
+  | "WorkspaceRunUpdated";
 
 export interface WsEvent {
   kind: WsEventKind | string;
@@ -456,6 +457,75 @@ export interface RunInspectionRequest {
   profile: QAScanProfile;
   target_url: string;
   authorize_remote_target: boolean;
+}
+
+// ---- Change review (Inspector ▸ Review) ----
+
+export type ReviewScope = "working" | "staged" | "branch" | "range";
+
+export type ChangeKind = "added" | "modified" | "deleted" | "renamed" | "binary";
+
+export interface ChangedFile {
+  path: string;
+  kind: ChangeKind;
+  previous_path: string;
+  insertions: number;
+  deletions: number;
+  binary: boolean;
+  /** How many findings point at this file. */
+  findings: number;
+}
+
+export interface ChangeReview {
+  id: string;
+  status: QAStatus;
+  started_at: string;
+  finished_at: string | null;
+  project_root: string;
+  scope: ReviewScope;
+  base_ref: string;
+  head_ref: string;
+  subject: string;
+  commits: string[];
+  files: ChangedFile[];
+  insertions: number;
+  deletions: number;
+  summary: string;
+  intent: string;
+  checks: QACheck[];
+  specialists: QASpecialist[];
+  findings: QAFinding[];
+  verdict: QAVerdict;
+  gate_reasons: string[];
+  mission_id: string;
+}
+
+/** What a review of a scope would cover, resolved without running one. */
+export interface ReviewSubject {
+  scope: ReviewScope;
+  base_ref: string;
+  head_ref: string;
+  label: string;
+  commits: string[];
+  files: number;
+  untracked: string[];
+  empty: boolean;
+}
+
+export interface ReviewLatest {
+  running: boolean;
+  review: ChangeReview | null;
+}
+
+export interface ReviewHistory {
+  running: boolean;
+  reviews: ChangeReview[];
+}
+
+export interface RunReviewRequest {
+  scope: ReviewScope;
+  base_ref: string;
+  head_ref: string;
 }
 
 export interface QALatest {
@@ -748,8 +818,164 @@ export interface WorkspaceTask {
   position: number;
   notes: string;
   artifact_path: string;
+  /** Steps that must finish before this one may run. */
+  depends_on: string[];
+  /** How many times the executor has tried this step. */
+  attempts: number;
+  /** Why the last attempt failed, when one did. */
+  error: string;
   created_at: string;
   updated_at: string;
+}
+
+export type RunStatus =
+  | "pending"
+  | "running"
+  | "paused"
+  | "waiting_for_user"
+  | "waiting_for_approval"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export type RunStepKind =
+  | "run_started"
+  | "run_finished"
+  | "task_started"
+  | "task_completed"
+  | "task_failed"
+  | "task_skipped"
+  | "artifact"
+  | "source"
+  | "note"
+  | "steer"
+  | "approval";
+
+export interface RunStep {
+  id: string;
+  kind: RunStepKind;
+  task_id: string;
+  message: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface PendingApproval {
+  id: string;
+  action: string;
+  reason: string;
+  level: string;
+  requested_at: string;
+}
+
+/** One execution of a workspace's plan. */
+export interface WorkspaceRun {
+  id: string;
+  workspace_id: string;
+  goal: string;
+  status: RunStatus;
+  current_task_id: string;
+  error: string;
+  skill: string;
+  profile: string;
+  started_at: string | null;
+  finished_at: string | null;
+  total_tasks: number;
+  completed_tasks: number;
+  pending_approval: PendingApproval | null;
+  steps: RunStep[];
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export type LinkTargetKind = "artifact" | "design" | "code" | "upload";
+export type LinkRelation =
+  | "derived_from"
+  | "generated_from"
+  | "depends_on"
+  | "implements"
+  | "describes"
+  | "references";
+
+/** One relationship: `source_path` was made from `target_path`. */
+export interface ArtifactLink {
+  id: string;
+  source_path: string;
+  source_kind: LinkTargetKind;
+  target_path: string;
+  target_kind: LinkTargetKind;
+  relation: LinkRelation;
+  title: string;
+  target_revision: number;
+  created_at: string;
+}
+
+/** A document written against something that has since changed. */
+export interface StaleArtifact {
+  link_id: string;
+  path: string;
+  source_of_truth: string;
+  relation: LinkRelation;
+  seen_revision: number;
+  current_revision: number;
+  reason: string;
+}
+
+export type ChangeAction = "created" | "updated" | "deleted";
+export type ChangeStatus = "pending" | "accepted" | "rejected";
+export type ChangeSetStatus = "open" | "accepted" | "rejected" | "partial";
+
+export interface ChangeEntry {
+  id: string;
+  /** Workspace-relative path of the artifact that changed. */
+  path: string;
+  action: ChangeAction;
+  /** The revision it had before this change; 0 means it did not exist. */
+  before_version: number;
+  after_version: number;
+  status: ChangeStatus;
+  summary: string;
+}
+
+/** Everything one agent operation changed, reviewed together. */
+export interface ChangeSet {
+  id: string;
+  workspace_id: string;
+  run_id: string;
+  task_id: string;
+  summary: string;
+  status: ChangeSetStatus;
+  entries: ChangeEntry[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChangeDiffLine {
+  marker: string;
+  number: number;
+  text: string;
+}
+
+export interface ChangeDiff {
+  path: string;
+  change: string;
+  lines: ChangeDiffLine[];
+  added: number;
+  removed: number;
+  note: string;
+}
+
+export interface Skill {
+  name: string;
+  title: string;
+  description: string;
+  instructions: string;
+  preferred_tools: string[];
+  expected_artifacts: string[];
+  checklist: string[];
+  triggers: string[];
+  kinds: string[];
 }
 
 export interface Artifact {

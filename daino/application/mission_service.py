@@ -16,7 +16,11 @@ from sqlalchemy import func, select
 
 from daino.agents import ReviewerAgent, TeamLead, TeamRunner, validate_team_plan
 from daino.agents.loop import ToolLoop, describe_incomplete_outcome
-from daino.agents.tool_schemas import AGENT_TOOL_SPECS, CHAT_TOOL_SPECS
+from daino.agents.tool_schemas import (
+    AGENT_TOOL_SPECS,
+    CHAT_TOOL_SPECS,
+    WORKSPACE_TOOL_SPECS,
+)
 from daino.application.attention import TurnAttention
 from daino.application.context import ProjectContext
 from daino.application.view_models import ConversationItem, MissionSummary
@@ -77,7 +81,13 @@ from daino.schemas import (
     ToolResult,
 )
 from daino.security.commands import CommandGate
-from daino.tools import EditTools, RecordingActionExecutor, WebResearchTool, build_file_diff
+from daino.tools import (
+    ActionApprovalCallback,
+    EditTools,
+    RecordingActionExecutor,
+    WebResearchTool,
+    build_file_diff,
+)
 from daino.tools.commands import ApprovalCallback, CommandRunner
 from daino.tools.diffing import render as render_diff
 from daino.utils.ids import new_id
@@ -864,6 +874,18 @@ class MissionApplicationService:
             approve=approve,
         )
 
+    @staticmethod
+    def _chat_tool_specs(workspace: Workspace | None) -> list[dict[str, Any]]:
+        """The tool surface for a chat turn, chosen by what the session is.
+
+        Kept separate from the code and design surfaces on purpose. A repository
+        session was previously handed the workspace verbs too, so a build task
+        would call ``workspace_plan`` and be told "No workspace is open" — a
+        wasted turn the model reads as a failure, and a needless push toward the
+        no-progress guard.
+        """
+        return WORKSPACE_TOOL_SPECS if workspace else CHAT_TOOL_SPECS
+
     async def chat(
         self,
         instruction: str,
@@ -871,6 +893,7 @@ class MissionApplicationService:
         *,
         profile_override: str = "",
         approve: ApprovalCallback | None = None,
+        approve_action: ActionApprovalCallback | None = None,
     ) -> ChatOutcome:
         """Run the agent on one chat turn: it answers, or it edits and reports the diff.
 
@@ -898,15 +921,22 @@ class MissionApplicationService:
         # agent writes to the real working tree, not a worktree.
         self._checkpoint_working_tree(mission.id)
         gateway = self.core.gateway.with_profile(profile_override)
+        # Resolved before budgeting because it selects the tool surface, and the
+        # tool schemas are part of what the context budget has to account for.
+        workbench = WorkbenchService(
+            self.context.root, self.context.database, events=self.context.events
+        )
+        workspace = self._session_workspace(session_id, workbench)
+        tools = self._chat_tool_specs(workspace)
         budgeter = getattr(gateway, "context_budget", None)
         model_budget = (
-            budgeter(ModelRole.BUILDER, tools=CHAT_TOOL_SPECS)
+            budgeter(ModelRole.BUILDER, tools=tools)
             if callable(budgeter)
             else self.context.settings.project.context_budget_tokens
         )
         profile_resolver = getattr(gateway, "execution_profile", None)
         execution_profile = (
-            profile_resolver(ModelRole.BUILDER, tools=CHAT_TOOL_SPECS)
+            profile_resolver(ModelRole.BUILDER, tools=tools)
             if callable(profile_resolver)
             else None
         )
@@ -962,10 +992,6 @@ class MissionApplicationService:
                 ),
                 mission_id=mission.id,
             )
-        workbench = WorkbenchService(
-            self.context.root, self.context.database, events=self.context.events
-        )
-        workspace = self._session_workspace(session_id, workbench)
         executor = RecordingActionExecutor(
             editor,
             runner,
@@ -983,6 +1009,9 @@ class MissionApplicationService:
             design=DesignService(self.context.root, events=self.context.events),
             workbench=workbench,
             workspace_id=workspace.id if workspace else "",
+            # Set only when a workspace run is driving the turn: an unattended
+            # plan needs a gate on each action, a watched chat does not.
+            approve_action=approve_action,
         )
         loop = ToolLoop(
             gateway,
@@ -997,7 +1026,7 @@ class MissionApplicationService:
                 if workspace
                 else CHAT_AGENT_SYSTEM
             ),
-            tools=CHAT_TOOL_SPECS,
+            tools=tools,
             require_verified_finish=workspace is None,
             execution_profile=execution_profile,
         )

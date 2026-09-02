@@ -46,7 +46,7 @@ from daino.application.view_models import (
 from daino.events import MissionEvent
 from daino.observability import AuditLog
 from daino.playbooks import PlaybookLoader
-from daino.schemas import QAReport
+from daino.schemas import ChangeReview, QAReport
 from daino.security import redact
 from daino.tui.highlight import highlight_unified_diff
 from daino.tui.keybindings import SHORTCUTS, SLASH_COMMANDS
@@ -128,24 +128,75 @@ _VERDICTS = {
 }
 
 
-class QAView(ViewPanel):
-    """Live progress and persisted evidence for a comprehensive QA run."""
+#: The merge gate. Same shape as the push gate above, different decision.
+_MERGE_VERDICTS = {
+    "pass": "[green]READY TO MERGE[/]",
+    "warn": "[yellow]NEEDS A LOOK[/]",
+    "blocked": "[red]DO NOT MERGE[/]",
+    "unknown": "[dim]NO VERDICT[/]",
+}
 
-    title = "Quality assurance"
+
+class InspectorView(ViewPanel):
+    """The Inspector: scan the repository, and review one change.
+
+    Two subjects, one panel. A scan asks whether the repository is sound before
+    a push; a review asks whether the change in front of you is sound before it
+    lands. They sit together because they answer the same question at different
+    scopes, and the terminal has no room to make that two screens.
+    """
+
+    title = "Inspector"
+
+    #: Scopes offered for a review, in the order they are usually wanted.
+    SCOPES: tuple[tuple[str, str], ...] = (
+        ("Working tree — everything uncommitted", "working"),
+        ("Staged — as it would be committed", "staged"),
+        ("Branch — against its base", "branch"),
+    )
 
     def __init__(self) -> None:
-        super().__init__(id="qa-view")
+        super().__init__(id="inspector-view")
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="qa-scroll"):
+        with VerticalScroll(id="inspector-scroll"):
             yield Label(self.title, classes="view-title")
+
+            # Both actions sit at the top together: the panel has two subjects
+            # and burying one of them under the other's tables would make it
+            # the half nobody uses.
             with Horizontal(classes="toolbar"):
-                yield Button("Run QA", id="run-qa", variant="primary")
+                yield Button("Run scan", id="run-qa", variant="primary")
+                yield Button("Review change", id="run-review", variant="primary")
+                yield Select(
+                    self.SCOPES,
+                    value="working",
+                    allow_blank=False,
+                    id="review-scope",
+                )
                 yield Button("Refresh scans", id="refresh-qa-history")
             yield Static(
                 "Parallel read-only reviewers + tests, Playwright, and dependency audits",
                 id="qa-state",
             )
+            yield Static(
+                "Syntax, credentials, conflict markers, debugging left in, test gaps, "
+                "then reviewers read the diff.",
+                id="review-state",
+            )
+
+            # --- change review ------------------------------------------------
+            yield Label("Change review — files", classes="section-title")
+            yield DataTable(id="review-files", cursor_type="row")
+            yield Label("Change review — findings", classes="section-title")
+            yield DataTable(id="review-findings", cursor_type="row")
+            yield Label("The review", classes="section-title")
+            yield Markdown(
+                "No review yet. Select Review change to read the change in front of you.",
+                id="review-report",
+            )
+
+            # --- repository scan ----------------------------------------------
             yield Label("Saved scans — select a row to load", classes="section-title")
             yield Static("No saved scans for this repository.", id="qa-history-state")
             yield DataTable(id="qa-history", cursor_type="row")
@@ -155,10 +206,14 @@ class QAView(ViewPanel):
             yield DataTable(id="qa-checks", cursor_type="row")
             yield Label("Consolidated report", classes="section-title")
             yield Markdown(
-                "No QA report yet. Select Run QA to inspect this project.", id="qa-report"
+                "No scan report yet. Select Run scan to inspect this project.", id="qa-report"
             )
 
     def on_mount(self) -> None:
+        self.query_one("#review-files", DataTable).add_columns(
+            "File", "Change", "Added", "Removed", "Findings"
+        )
+        self.query_one("#review-findings", DataTable).add_columns("Severity", "Finding", "Location")
         self.query_one("#qa-history", DataTable).add_columns(
             "Started", "Status", "Profile", "Failures", "Report"
         )
@@ -166,6 +221,11 @@ class QAView(ViewPanel):
             "Specialist", "Role", "Status", "Result"
         )
         self.query_one("#qa-checks", DataTable).add_columns("Check", "Category", "Status", "Result")
+
+    def review_scope(self) -> str:
+        """The scope the user has selected for a review."""
+        value = self.query_one("#review-scope", Select).value
+        return str(value) if value is not None else "working"
 
     def set_history(self, reports: list[QAReport]) -> None:
         table = self.query_one("#qa-history", DataTable)
@@ -193,6 +253,44 @@ class QAView(ViewPanel):
         screen = self.screen
         if hasattr(screen, "load_qa_report"):
             screen.load_qa_report(str(event.row_key.value))
+
+    def show_review(self, review: ChangeReview) -> None:
+        """Render one change review: its verdict, its files, its findings."""
+        self.query_one("#run-review", Button).disabled = review.status == "running"
+        counts = severity_counts(review.findings)
+        tally = ", ".join(f"{count} {level}" for level, count in counts.items() if count)
+        self.query_one("#review-state", Static).update(
+            f"{_MERGE_VERDICTS[review.verdict]}  •  {review.subject}  •  "
+            f"{len(review.files)} file(s)  •  [green]+{review.insertions}[/] "
+            f"[red]-{review.deletions}[/]  •  {tally or 'no findings'}"
+        )
+
+        files = self.query_one("#review-files", DataTable)
+        files.clear()
+        for item in review.files:
+            files.add_row(
+                item.path,
+                item.kind.upper()[:1],
+                f"+{item.insertions}",
+                f"-{item.deletions}",
+                str(item.findings) if item.findings else "—",
+                key=item.path,
+            )
+
+        findings = self.query_one("#review-findings", DataTable)
+        findings.clear()
+        for finding in review.findings:
+            where = finding.location or "change"
+            if finding.line:
+                where = f"{where}:{finding.line}"
+            findings.add_row(
+                finding.severity.upper(),
+                finding.title[:90],
+                where,
+                key=finding.id,
+            )
+
+        self.query_one("#review-report", Markdown).update(review.summary or "Reading the change…")
 
     def show_report(self, report: QAReport) -> None:
         self.query_one("#run-qa", Button).disabled = report.status == "running"
@@ -229,7 +327,9 @@ class QAView(ViewPanel):
                 (_first_line(check.summary) or "—")[:100],
                 key=check.id,
             )
-        self.query_one("#qa-report", Markdown).update(report.summary or "QA is gathering evidence…")
+        self.query_one("#qa-report", Markdown).update(
+            report.summary or "The scan is gathering evidence…"
+        )
 
 
 def _first_line(value: str) -> str:

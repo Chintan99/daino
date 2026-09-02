@@ -49,12 +49,14 @@ Items grey out when they cannot act rather than failing after the click.
   and the folder's files**. Manual and agent edits mutate the same document under
   `.daino/designs/<id>/design.json`. See [the visual editor](#the-visual-html-editor).
 - **Workspace** — the work that is not code: documents, research, planning, and analysis. A
-  workspace is a goal plus a real folder in your project (`workspace/<name>/`), so its documents are
-  greppable, diffable, and openable in CODE like anything else. See
-  [Workspace](workspace.md).
-- **Inspector** — the pre-production check, in two views. **Scan** runs end-to-end QA and a
-  vulnerability assessment and answers one question: can this be pushed? **Live app** runs your
-  project's dev server (detected from `package.json` / `pyproject.toml` / `compose.yaml`, started
+  workspace is a goal plus a real folder in your project (`.daino/workspaces/<name>/`), so its
+  documents are ordinary files — greppable by the agent and openable in CODE — while staying out of
+  your source tree and your diffs. **Run Plan** executes the plan a step at a time, steerable from
+  the chat and pausable mid-plan; **CHANGES** reviews what it wrote. See [Workspace](workspace.md).
+- **Inspector** — the pre-production check, in three views. **Scan** runs end-to-end QA and a
+  vulnerability assessment and answers one question: can this be pushed? **Review** reads one change
+  — working tree, staged, or this branch against its base — and answers whether it can be merged.
+  **Live app** runs your project's dev server (detected from `package.json` / `pyproject.toml` / `compose.yaml`, started
   through the approval flow), embeds the running app, and becomes the scan's live target. See
   [the Inspector](#the-inspector).
 - **Insights** — the browser counterpart of the TUI's views behind one segmented control: per-prompt
@@ -173,6 +175,56 @@ fixture, for instance) stay in the report but can never be what blocks a release
 When the scan lands, your desktop gets a notification carrying the verdict, the browser tab is
 marked if you are looking elsewhere, and the **INSPECTOR** tab keeps a coloured dot showing whether
 this checkout is currently cleared to push.
+
+### Review
+
+The other half of the Inspector. A scan asks whether the repository is sound; a review asks whether
+the **change in front of you** is sound before it lands.
+
+Pick what to review:
+
+| Scope | What it covers |
+|---|---|
+| **Working** | Everything uncommitted — including files you have just created, which `git diff` never mentions |
+| **Staged** | Only what is staged, read from the index rather than from a file that may have moved on |
+| **Branch** | This branch against its base, using the merge base — the pull request you would open |
+
+Two layers run, in this order:
+
+**Mechanical, and deterministic.** It reads only the lines the change *introduced*, so a file you
+merely touched is never blamed for what was already in it:
+
+- **Syntax** — every changed file is re-parsed. Python and JSON/YAML/TOML through their own parsers,
+  and JavaScript, TypeScript, Go, Rust, Java, Kotlin, Ruby, PHP, C and C++ through their grammars. A
+  language with no bundled grammar gets *no opinion* rather than a false all-clear.
+- **Left behind** — merge conflict markers, `console.log`, `debugger`, `pdb.set_trace`, `dbg!`,
+  focused or skipped tests, new TODO/FIXME markers.
+- **Deceptive characters** — bidirectional overrides and zero-width characters, the trick that makes
+  source read one way to you and compile another.
+- **Introduced risk** — the repository audit's own credential and insecure-code rules, applied to the
+  added lines and reported at the line they landed on.
+- **Gaps** — source changed with no test touched, a test that removes more assertions than it adds, a
+  manifest changed without its lockfile, a schema changed without a migration, a removed public
+  definition.
+- **Shape** — change size, files touched across many areas, very long lines, binaries added.
+
+**Reviewers.** Four read-only agents then read the diff *and the code around it* — correctness,
+gaps, impact and compatibility, security — and a synthesis step writes the review: what the change
+does and why, blockers, findings by severity, what is missing, and what it could not determine. They
+are told to triage the mechanical findings rather than repeat them.
+
+The review ends in a merge verdict — **ready to merge**, **needs a look**, or **do not merge** —
+decided the same deterministic way as the scan's. A change that stops a file parsing, leaves a
+conflict marker, or adds a credential is blocked outright: unlike a pre-existing problem, it was
+introduced here, by someone who is still looking at it.
+
+Click a file to read its patch inline, or open it in CODE.
+
+Two things worth knowing about what it deliberately does not do. It does not re-run your lint, type
+or test commands — SCAN does that across the whole repository, and duplicating it per change would
+only tell you the same thing more slowly. And a finding in a test or fixture path is kept but
+demoted and marked low confidence, because a security test has to contain the very pattern it
+asserts is caught.
 
 ### Live app
 

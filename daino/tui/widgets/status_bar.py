@@ -21,7 +21,7 @@ from daino.tui.render import join
 PRIMARY_TABS: tuple[tuple[str, str], ...] = (
     ("chat", "chat-view"),
     ("missions", "missions-view"),
-    ("qa", "qa-view"),
+    ("inspector", "inspector-view"),
     ("files", "files-view"),
     ("changes", "changes-view"),
     ("tests", "tests-view"),

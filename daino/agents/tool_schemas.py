@@ -523,13 +523,116 @@ _WORKSPACE_TOOLS = [
     ),
 ]
 
+#: Tools that reach out of the workspace into Daino's other tabs, and the two
+#: that make a workspace's outputs legible as a body of work rather than a
+#: folder. Kept apart from ``_WORKSPACE_TOOLS`` above because those describe the
+#: workspace and these one change what exists outside it.
+_WORKSPACE_OUTPUT_TOOLS = [
+    _tool(
+        "workspace_link",
+        "Record that one document was made from another, so Daino can warn the "
+        "user when the source changes and the derived document falls behind. "
+        "Call it whenever you write a document from another document, an "
+        "upload, or a design.",
+        {
+            "workspace_id": {"type": "string"},
+            "source_path": {
+                "type": "string",
+                "description": "The document you produced.",
+            },
+            "target_path": {
+                "type": "string",
+                "description": "What it was produced from.",
+            },
+            "relation": {
+                "type": "string",
+                "enum": [
+                    "derived_from",
+                    "generated_from",
+                    "depends_on",
+                    "implements",
+                    "describes",
+                    "references",
+                ],
+            },
+            "title": {"type": "string"},
+        },
+        ["source_path", "target_path"],
+    ),
+    _tool(
+        "workspace_deliverable",
+        "Render a workspace document into a finished file people can open: "
+        "docx, xlsx, pptx or pdf. The markdown stays the source of truth — the "
+        "rendering is regenerated from it, never edited — so write the document "
+        "well first and render it last. A table becomes a real table, a heading "
+        "a real heading, a section a real slide.",
+        {
+            "workspace_id": {"type": "string"},
+            "path": {
+                "type": "string",
+                "description": "The markdown document to render.",
+            },
+            "format": {"type": "string", "enum": ["docx", "xlsx", "pptx", "pdf"]},
+            "title": {"type": "string", "description": "Overrides the document's own title."},
+        },
+        ["path", "format"],
+    ),
+    _tool(
+        "workspace_code",
+        "Prepare coding work in the CODE tab from what this workspace holds — "
+        "a prototype, a script, an implementation of a spec written here. It "
+        "writes a brief naming the request and the documents that define it, "
+        "and links it to the workspace; the user starts it in CODE. Use it "
+        "instead of writing application code yourself: a workspace produces "
+        "documents, and CODE builds software.",
+        {
+            "workspace_id": {"type": "string"},
+            "request": {
+                "type": "string",
+                "description": "What should be built, in a sentence or two.",
+            },
+            "context_paths": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Workspace documents that define the work.",
+            },
+        },
+        ["request"],
+    ),
+]
+
+#: What a repository chat gets. Deliberately without the workspace tools: a
+#: repository session has no workspace open, so advertising them only invited
+#: the model to call ``workspace_plan`` for a coding task and be told "No
+#: workspace is open" — a wasted turn that reads to the model as a failure and
+#: pushes it toward the no-progress guard.
 CHAT_TOOL_SPECS: list[dict[str, Any]] = [
     *AGENT_TOOL_SPECS,
     _WEB_SEARCH,
     _FETCH_URL,
     *_MEMORY_TOOLS,
     *_DESIGN_TOOLS,
+    _RESPOND,
+]
+
+#: What a workspace chat gets: the same file, web and memory surface, the
+#: workspace verbs, the outputs that reach into the other tabs — and the design
+#: tools.
+#:
+#: Design was previously withheld here, on the reasoning that knowledge work and
+#: repository design are separate activities. That was wrong in one direction: a
+#: proposal whose architecture section is prose because the agent had no way to
+#: draw it is a worse proposal. A workspace can now create a diagram on the very
+#: same canvas the DESIGN tab edits — it orchestrates the work, DESIGN remains
+#: where the work is edited, and neither owns the other.
+WORKSPACE_TOOL_SPECS: list[dict[str, Any]] = [
+    *AGENT_TOOL_SPECS,
+    _WEB_SEARCH,
+    _FETCH_URL,
+    *_MEMORY_TOOLS,
     *_WORKSPACE_TOOLS,
+    *_WORKSPACE_OUTPUT_TOOLS,
+    *_DESIGN_TOOLS,
     _RESPOND,
 ]
 

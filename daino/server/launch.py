@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 import webbrowser
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from daino import branding
@@ -330,7 +330,7 @@ def launch_gui_background(
             "host": host,
             "port": resolved_port,
             "pid": proc.pid,
-            "started": datetime.now(timezone.utc).isoformat(),
+            "started": datetime.now(UTC).isoformat(),
             "log": str(log_path),
             "url": url,
         }

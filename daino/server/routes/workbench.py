@@ -26,6 +26,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from daino.application.workspace_run_service import RunError
 from daino.server.deps import get_state
 from daino.server.state import GuiState
 from daino.workbench.models import TaskStatus
@@ -42,7 +43,7 @@ class CreateWorkspaceRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     goal: str = ""
     kind: str = "general"
-    #: Repository-relative folder. Empty picks ``workspace/<slug>``.
+    #: Repository-relative folder. Empty picks ``.daino/workspaces/<slug>``.
     folder: str = ""
 
 
@@ -85,6 +86,53 @@ class UploadRequest(BaseModel):
 
 class AttachSessionRequest(BaseModel):
     session_id: str = Field(min_length=1)
+
+
+class StartRunRequest(BaseModel):
+    """Execute this workspace's plan."""
+
+    #: What the run is for. Empty falls back to the workspace's own goal.
+    goal: str = ""
+    #: Model profile to pin for every turn of the run, as the composer does.
+    profile: str = ""
+    #: Skill to work by. Empty lets Daino choose one from the goal.
+    skill: str = ""
+
+
+class SteerRequest(BaseModel):
+    instruction: str = Field(min_length=1)
+
+
+class ApprovalRequest(BaseModel):
+    approval_id: str = Field(min_length=1)
+    approved: bool
+
+
+class LinkRequest(BaseModel):
+    """Record that one document was made from another."""
+
+    source_path: str = Field(min_length=1)
+    target_path: str = ""
+    relation: str = "derived_from"
+    source_kind: str = "artifact"
+    target_kind: str = "artifact"
+    title: str = ""
+
+
+class DeliverableRequest(BaseModel):
+    """Render a workspace document into a file people can open."""
+
+    path: str = Field(min_length=1)
+    format: str = Field(min_length=2, max_length=8)
+    title: str = ""
+
+
+class DecideChangeRequest(BaseModel):
+    """Keep or undo a change — one artifact, or the whole set."""
+
+    accepted: bool
+    #: Empty decides every still-pending artifact in the set.
+    path: str = ""
 
 
 # ------------------------------------------------------------------ workspaces
@@ -370,4 +418,260 @@ async def upload(
         )
     except WorkbenchError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return artifact.model_dump(mode="json")
+
+
+# ------------------------------------------------------------------- runs
+#
+# A run is long-lived, so these routes start it and report on it rather than
+# holding a request open for its duration — the same shape QA and change review
+# already use. Progress arrives over the session WebSocket as
+# ``WorkspaceRunUpdated`` events; this is what a reconnecting client reads to
+# catch up.
+
+
+def _run_payload(state: GuiState, run: object | None) -> dict[str, Any]:
+    return {"run": run.model_dump(mode="json") if run is not None else None}
+
+
+@router.get("/{workspace_id}/run")
+def current_run(
+    state: Annotated[GuiState, Depends(get_state)], workspace_id: str
+) -> dict[str, Any]:
+    """The active run, or the most recent one, so a reopened tab can report."""
+    return _run_payload(state, state.runs.latest(workspace_id))
+
+
+@router.get("/{workspace_id}/runs")
+def run_history(
+    state: Annotated[GuiState, Depends(get_state)], workspace_id: str
+) -> dict[str, Any]:
+    return {
+        "runs": [item.model_dump(mode="json") for item in state.runs.runs.history_for(workspace_id)]
+    }
+
+
+@router.post("/{workspace_id}/run")
+async def start_run(
+    state: Annotated[GuiState, Depends(get_state)],
+    workspace_id: str,
+    body: StartRunRequest,
+) -> dict[str, Any]:
+    try:
+        run = await state.runs.start(
+            workspace_id, goal=body.goal, profile=body.profile, skill=body.skill
+        )
+    except RunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _run_payload(state, run)
+
+
+@router.post("/runs/{run_id}/pause")
+def pause_run(state: Annotated[GuiState, Depends(get_state)], run_id: str) -> dict[str, Any]:
+    return _run_payload(state, _guard(lambda: state.runs.pause(run_id)))
+
+
+@router.post("/runs/{run_id}/resume")
+async def resume_run(state: Annotated[GuiState, Depends(get_state)], run_id: str) -> dict[str, Any]:
+    try:
+        run = await state.runs.resume(run_id)
+    except RunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _run_payload(state, run)
+
+
+@router.post("/runs/{run_id}/stop")
+def stop_run(state: Annotated[GuiState, Depends(get_state)], run_id: str) -> dict[str, Any]:
+    return _run_payload(state, _guard(lambda: state.runs.stop(run_id)))
+
+
+@router.post("/runs/{run_id}/steer")
+def steer_run(
+    state: Annotated[GuiState, Depends(get_state)], run_id: str, body: SteerRequest
+) -> dict[str, Any]:
+    """Take new direction mid-run without discarding finished work."""
+    return _run_payload(state, _guard(lambda: state.runs.steer(run_id, body.instruction)))
+
+
+@router.post("/runs/{run_id}/approval")
+def resolve_run_approval(
+    state: Annotated[GuiState, Depends(get_state)], run_id: str, body: ApprovalRequest
+) -> dict[str, Any]:
+    return _run_payload(
+        state,
+        _guard(lambda: state.runs.resolve_approval(run_id, body.approval_id, body.approved)),
+    )
+
+
+@router.post("/runs/{run_id}/tasks/{task_id}/retry")
+async def retry_task(
+    state: Annotated[GuiState, Depends(get_state)], run_id: str, task_id: str
+) -> dict[str, Any]:
+    """Reopen a failed step and continue the run from it."""
+    run = _guard(lambda: state.runs.get(run_id))
+    state.workbench.update_task(run.workspace_id, task_id, status="pending", error="")
+    state.runs.runs.add_step(run_id, "note", "Retrying the failed step.", task_id=task_id)
+    try:
+        resumed = await state.runs.resume(run_id)
+    except RunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _run_payload(state, resumed)
+
+
+@router.post("/runs/{run_id}/tasks/{task_id}/skip")
+async def skip_task(
+    state: Annotated[GuiState, Depends(get_state)], run_id: str, task_id: str
+) -> dict[str, Any]:
+    """Leave a step undone and carry on with the rest of the plan.
+
+    Recorded as failed rather than completed on purpose: the step did not
+    happen, and a progress count that says otherwise is the one number a reader
+    trusts.
+    """
+    run = _guard(lambda: state.runs.get(run_id))
+    state.workbench.update_task(
+        run.workspace_id, task_id, status="failed", error="Skipped by the user."
+    )
+    state.runs.runs.add_step(run_id, "task_skipped", "Skipped by the user.", task_id=task_id)
+    try:
+        resumed = await state.runs.resume(run_id)
+    except RunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _run_payload(state, resumed)
+
+
+@router.get("/meta/skills")
+def list_skills(state: Annotated[GuiState, Depends(get_state)]) -> dict[str, Any]:
+    """Every skill available here, built-ins plus the project's own."""
+    return {"skills": [item.model_dump(mode="json") for item in state.runs.skills.list()]}
+
+
+def _guard(call: Any) -> Any:
+    try:
+        return call()
+    except RunError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+# --------------------------------------------------------------- change sets
+#
+# The revision history is untouched and still the source of truth. These routes
+# read the index that says which revisions were one act, and express every
+# decision in terms of that history: rejecting restores the artifact's previous
+# revision through the same path the History panel uses.
+
+
+@router.get("/{workspace_id}/changes")
+def list_changes(
+    state: Annotated[GuiState, Depends(get_state)],
+    workspace_id: str,
+    run_id: str = Query(default=""),
+) -> dict[str, Any]:
+    changes = state.runs.changes.list_for(workspace_id, run_id=run_id)
+    return {"changes": [item.model_dump(mode="json") for item in changes]}
+
+
+@router.get("/{workspace_id}/changes/{change_set_id}")
+def read_change(
+    state: Annotated[GuiState, Depends(get_state)], workspace_id: str, change_set_id: str
+) -> dict[str, Any]:
+    return state.runs.changes.get(change_set_id).model_dump(mode="json")
+
+
+@router.get("/{workspace_id}/changes/{change_set_id}/diff")
+def read_change_diff(
+    state: Annotated[GuiState, Depends(get_state)],
+    workspace_id: str,
+    change_set_id: str,
+    path: str = Query(...),
+) -> dict[str, Any]:
+    """What this change did to one artifact, both sides read from history."""
+    return state.runs.changes.diff(change_set_id, path).model_dump(mode="json")
+
+
+@router.post("/{workspace_id}/changes/{change_set_id}/decide")
+def decide_change(
+    state: Annotated[GuiState, Depends(get_state)],
+    workspace_id: str,
+    change_set_id: str,
+    body: DecideChangeRequest,
+) -> dict[str, Any]:
+    changes = state.runs.changes
+    result = (
+        changes.decide(change_set_id, body.path, accepted=body.accepted)
+        if body.path
+        else changes.decide_all(change_set_id, accepted=body.accepted)
+    )
+    return result.model_dump(mode="json")
+
+
+# --------------------------------------------------- relationships and output
+
+
+@router.get("/{workspace_id}/links")
+def list_links(
+    state: Annotated[GuiState, Depends(get_state)], workspace_id: str
+) -> dict[str, Any]:
+    """How this workspace's outputs relate, and which may have gone stale."""
+    return {
+        "links": [item.model_dump(mode="json") for item in state.links.links_for(workspace_id)],
+        "stale": [item.model_dump(mode="json") for item in state.links.stale(workspace_id)],
+    }
+
+
+@router.post("/{workspace_id}/links")
+def create_link(
+    state: Annotated[GuiState, Depends(get_state)], workspace_id: str, body: LinkRequest
+) -> dict[str, Any]:
+    link = state.links.link(
+        workspace_id,
+        source_path=body.source_path,
+        target_path=body.target_path,
+        relation=body.relation,
+        source_kind=body.source_kind,
+        target_kind=body.target_kind,
+        title=body.title,
+    )
+    return link.model_dump(mode="json")
+
+
+@router.delete("/{workspace_id}/links/{link_id}")
+def delete_link(
+    state: Annotated[GuiState, Depends(get_state)], workspace_id: str, link_id: str
+) -> dict[str, Any]:
+    state.links.unlink(workspace_id, link_id)
+    return {"deleted": link_id}
+
+
+@router.post("/{workspace_id}/links/{link_id}/acknowledge")
+def acknowledge_link(
+    state: Annotated[GuiState, Depends(get_state)], workspace_id: str, link_id: str
+) -> dict[str, Any]:
+    """Dismiss a staleness warning without changing the document.
+
+    Durable on purpose: a warning that returns after being dismissed teaches
+    people to ignore warnings.
+    """
+    state.links.acknowledge(workspace_id, link_id)
+    return {"acknowledged": link_id}
+
+
+@router.post("/{workspace_id}/deliverable")
+async def create_deliverable(
+    state: Annotated[GuiState, Depends(get_state)],
+    workspace_id: str,
+    body: DeliverableRequest,
+) -> dict[str, Any]:
+    """Render a document into docx, xlsx, pptx or pdf, beside the source.
+
+    In a thread: a large deck takes a moment to build, and the event loop is
+    also serving the agent's own turn.
+    """
+    artifact = await asyncio.to_thread(
+        state.workbench.save_deliverable,
+        workspace_id,
+        body.path,
+        body.format.strip().lstrip(".").casefold(),
+        title=body.title,
+    )
     return artifact.model_dump(mode="json")

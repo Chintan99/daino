@@ -6,6 +6,7 @@ import re
 import time
 from pathlib import Path, PurePosixPath
 
+from daino.config import paths
 from daino.schemas import ToolResult
 
 #: Directories never worth searching: version control internals, Daino's own
@@ -27,6 +28,25 @@ _IGNORED_DIRS = frozenset(
         ".tox",
     }
 )
+
+
+#: What ``search_text`` alone skips: version control and Daino's own state.
+#: Narrower than ``_IGNORED_DIRS`` on purpose — a literal substring search is
+#: sometimes aimed at a dependency — and kept as it was.
+_STATE_DIRS = frozenset({".git", ".daino", ".vasuki"})
+
+
+def _ignored(relative: PurePosixPath | Path, ignored: frozenset[str] = _IGNORED_DIRS) -> bool:
+    """Whether a repository-relative path is one a search should skip.
+
+    Workspace documents live inside ``.daino`` — Daino's own state directory,
+    and therefore ignored wholesale — but they are the user's writing, not
+    Daino's bookkeeping. Searching has to reach them, or the workspace agent
+    cannot grep the documents it just wrote.
+    """
+    if paths.in_workspaces(relative):
+        return False
+    return any(part in ignored for part in relative.parts)
 
 
 def _undecodable(relative: str) -> str:
@@ -163,9 +183,7 @@ class FileTools:
         matches: list[dict[str, str | int]] = []
         for path in self.root.rglob("*"):
             relative = path.relative_to(self.root)
-            if not path.is_file() or any(
-                part in {".git", ".daino", ".vasuki"} for part in relative.parts
-            ):
+            if not path.is_file() or _ignored(relative, _STATE_DIRS):
                 continue
             try:
                 for line_number, line in enumerate(
@@ -192,7 +210,7 @@ class FileTools:
             if not path.is_file():
                 continue
             relative = path.relative_to(self.root)
-            if any(part in _IGNORED_DIRS for part in relative.parts):
+            if _ignored(relative):
                 continue
             matches.append(relative.as_posix())
         truncated = len(matches) > limit
@@ -229,7 +247,7 @@ class FileTools:
             if not path.is_file():
                 continue
             relative = path.relative_to(self.root)
-            if any(part in _IGNORED_DIRS for part in relative.parts):
+            if _ignored(relative):
                 continue
             try:
                 for line_number, line in enumerate(

@@ -1,0 +1,21 @@
+name: data-analysis
+title: Data Analysis
+description: Work through a dataset and report what it actually supports.
+triggers: [analyze, analysis, dataset, data, spreadsheet, trends, metrics, numbers, csv, xlsx]
+kinds: [analysis]
+preferred_tools: [workspace_read, read_file, run_command, write]
+expected_artifacts:
+  - An analysis document stating the question, the data's shape, the method and the caveats
+instructions: |
+  Report the shape of the data before any conclusion drawn from it: row count,
+  date range, missing values, and anything that looks like a duplicate or an
+  outlier. A finding computed over a column that is 40% empty is a different
+  finding, and the reader has to know that.
+
+  State the method plainly enough to be repeated. Distinguish what the data
+  shows from what you think it means. Never round a caveat away to make a
+  result cleaner, and never present a correlation as a cause.
+checklist:
+  - Is the data's shape reported before its conclusions?
+  - Could someone repeat the method from what is written?
+  - Is every caveat that would change a decision stated?

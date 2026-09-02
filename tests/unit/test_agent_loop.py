@@ -9,9 +9,10 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from daino.agents.gateway import ModelGateway, _fit_messages, _message_tokens, _resolved_config
-from daino.agents.loop import ToolLoop
+from daino.agents.loop import ToolLoop, _clip_bundle_sources, _message_estimate
 from daino.config.models import ModelProfileConfig, ProviderConfig, Settings
 from daino.context import ModelExecutionProfile
 from daino.exceptions import ProviderError, ToolCallingUnsupported
@@ -1160,3 +1161,247 @@ def test_partial_range_read_reports_its_position_in_the_file() -> None:
     detail = _read_file_detail(result)
     assert "Showing lines 200-201 of 480" in detail
     assert "offset:202" in detail
+
+
+def _compaction_loop(
+    executor: ActionExecutor, budget: int, threshold: float = 0.8
+) -> tuple[ToolLoop, list[tuple[int, int]]]:
+    """A loop whose gateway reports a fixed context budget and records compactions."""
+    events: list[tuple[int, int]] = []
+
+    class Bus:
+        def publish(self, event: object) -> None:
+            events.append((event.before_tokens, event.after_tokens))  # type: ignore[attr-defined]
+
+    class Gateway(NativeGateway):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.events = Bus()
+            self.settings = SimpleNamespace(memory=SimpleNamespace(compaction_threshold=threshold))
+
+        def context_budget(self, role: object, tools: object = None) -> int:
+            return budget
+
+    loop = ToolLoop(executor=executor, gateway=Gateway(), role=ModelRole.BUILDER)  # type: ignore[arg-type]
+    return loop, events
+
+
+def _grounded_context(source_chars: int) -> ContextBundle:
+    files = {f"app/mod{index}.py": "x = 1\n" * (source_chars // 6) for index in range(4)}
+    return ContextBundle(
+        task="Build the backend",
+        acceptance_criteria=["it runs"],
+        files=files,
+        included_paths=list(files),
+    )
+
+
+def _transcript(context: ContextBundle, turns: int) -> list[Message]:
+    messages = [
+        Message(role="system", content="system prompt " * 200),
+        Message(role="user", content=context.model_dump_json(indent=2)),
+    ]
+    for index in range(turns):
+        messages.append(Message(role="assistant", content=f"thought {index}: listing files"))
+        messages.append(Message(role="tool", content="observation " * 200))
+    return messages
+
+
+def test_compaction_brings_an_oversized_transcript_under_the_threshold(
+    executor: ActionExecutor,
+) -> None:
+    """The field failure: a transcript pinned above the threshold, compacting forever.
+
+    A bundle sized against most of the input budget made the rebuilt transcript's
+    floor exceed the threshold, so compaction fired every turn, reclaimed almost
+    nothing, and handed the model a byte-identical prompt. The model repeated the
+    same action until the no-progress guard failed the mission.
+    """
+    budget = 21_249  # A 32k window after its output reservation, as in the field.
+    loop, events = _compaction_loop(executor, budget)
+    # Sized as the field bundle was: ~16k tokens of inlined source, enough that
+    # rebuilding at full fidelity alone overshoots the threshold.
+    context = _grounded_context(16_000)
+    messages = _transcript(context, turns=20)
+    target = int(budget * 0.8)
+    assert sum(_message_estimate(item) for item in messages) > target
+
+    loop._maybe_compact_messages(messages, context, "mission-1", [])
+
+    assert events, "an oversized transcript must actually compact"
+    before, after = events[-1]
+    assert after <= target
+    assert after < before
+
+    # And it converges: a second pass on the compacted transcript is a no-op,
+    # rather than the every-turn churn that produced the fixed point.
+    settled = list(messages)
+    loop._maybe_compact_messages(messages, context, "mission-1", [])
+    assert messages == settled
+    assert len(events) == 1
+
+
+def test_compaction_never_grows_the_transcript(executor: ActionExecutor) -> None:
+    """Re-added scaffolding once turned a 15.4k transcript into a 26.6k one."""
+    loop, events = _compaction_loop(executor, budget=1_000)
+    # A huge bundle with a short transcript: rebuilding costs more than it saves.
+    context = _grounded_context(40_000)
+    messages = _transcript(context, turns=5)
+    before = sum(_message_estimate(item) for item in messages)
+
+    loop._maybe_compact_messages(messages, context, "mission-2", [])
+
+    assert sum(_message_estimate(item) for item in messages) <= before
+    assert all(after < grew for grew, after in events)
+
+
+def test_compaction_clips_bundle_sources_before_dropping_working_state(
+    executor: ActionExecutor,
+) -> None:
+    """Inlined source goes first: it is the largest term and read_file recovers it."""
+    loop, _ = _compaction_loop(executor, budget=6_000)
+    context = _grounded_context(20_000)
+    messages = _transcript(context, turns=12)
+    marker = messages[-1].content
+
+    loop._maybe_compact_messages(messages, context, "mission-3", [])
+
+    body = "\n".join(item.content for item in messages)
+    assert "use read_file" in body, "the model must be told what was dropped"
+    assert marker in body, "the newest observation is working state and must survive"
+
+
+def test_clip_bundle_sources_keeps_head_and_tail_and_records_the_omission() -> None:
+    context = ContextBundle(
+        task="t",
+        acceptance_criteria=["a"],
+        files={"app/big.py": "HEAD\n" + ("filler\n" * 4_000) + "TAIL\n"},
+        included_paths=["app/big.py"],
+    )
+
+    clipped = _clip_bundle_sources(context, 0.25)
+    body = clipped.files["app/big.py"]
+    assert body.startswith("HEAD")
+    assert body.endswith("TAIL\n")
+    assert len(body) < len(context.files["app/big.py"])
+    assert any("app/big.py" in note for note in clipped.omitted_context)
+
+    dropped = _clip_bundle_sources(context, 0.0)
+    assert dropped.files == {}
+    assert any("read_file" in note for note in dropped.omitted_context)
+    # The originals are never mutated in place; each stage re-derives from them.
+    assert context.files["app/big.py"].count("filler") == 4_000
+
+
+def _stall_profile(no_progress_limit: int = 3) -> ModelExecutionProfile:
+    return ModelExecutionProfile.resolve(
+        "openrouter",
+        ModelProfileConfig(
+            provider="openrouter",
+            model="glm",
+            context_window=32_768,
+            max_output_tokens=16_384,
+            no_progress_limit=no_progress_limit,
+        ),
+        input_budget_tokens=21_249,
+        project_budget_tokens=24_000,
+        memory_items=6,
+        memory_tokens=2_000,
+    )
+
+
+def _productive(index: int, count: int) -> list[AgentAction]:
+    """Real work: each write lands different content in a different file."""
+    return [
+        AgentAction(thought="work", action="write", path=f"f{index}_{n}.txt", content=f"{index}{n}")
+        for n in range(count)
+    ]
+
+
+def _stall_burst(size: int = 5) -> list[AgentAction]:
+    """Enough repeats of one no-op action to trip the no-progress limit."""
+    return [AgentAction(thought="stuck", action="list_directory", path=".") for _ in range(size)]
+
+
+@pytest.mark.asyncio
+async def test_a_long_run_is_not_killed_by_stalls_it_already_recovered_from(
+    tmp_path: Path,
+) -> None:
+    """The intervention budget bounds consecutive failed corrections, not a whole run.
+
+    It was only ever zeroed in __init__, so a long task that stalled and
+    recovered four separate times — with real work in between — died on the
+    fourth, claiming three corrections had failed when all three had worked.
+    """
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+    actions: list[AgentAction] = []
+    for index in range(6):
+        actions += _productive(index, 6) + _stall_burst()
+    actions.append(AgentAction(thought="done", action="finish", summary="all done"))
+
+    outcome = await ToolLoop(
+        ScriptedGateway(actions),  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        execution_profile=_stall_profile(),
+    ).run("mission-long", context())
+
+    assert outcome.completed, outcome.implementation.summary
+    assert outcome.stop_reason == ""
+    assert len(outcome.changed) == 36
+
+
+@pytest.mark.asyncio
+async def test_a_genuinely_stuck_run_still_gives_up(tmp_path: Path) -> None:
+    """The refund must not disarm the guard the field case depends on."""
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+    actions = _stall_burst(200)
+    actions.append(AgentAction(thought="done", action="finish", summary="unreachable"))
+
+    outcome = await ToolLoop(
+        ScriptedGateway(actions),  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        execution_profile=_stall_profile(),
+    ).run("mission-stuck", context())
+
+    assert not outcome.completed
+    assert outcome.stop_reason == "stall"
+
+
+@pytest.mark.asyncio
+async def test_alternating_one_real_action_with_no_ops_cannot_farm_the_budget(
+    tmp_path: Path,
+) -> None:
+    """A single good action must not refund the budget, or churn spins forever.
+
+    Refunding on one action lets an agent alternate a token write with a burst of
+    no-ops indefinitely — the exact loop the cumulative counter existed to stop.
+    """
+    executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
+    actions: list[AgentAction] = []
+    for index in range(40):
+        actions += _productive(index, 1) + _stall_burst()
+    actions.append(AgentAction(thought="done", action="finish", summary="unreachable"))
+
+    outcome = await ToolLoop(
+        ScriptedGateway(actions),  # type: ignore[arg-type]
+        ModelRole.BUILDER,
+        executor,
+        execution_profile=_stall_profile(),
+    ).run("mission-churn", context())
+
+    assert not outcome.completed
+    assert outcome.stop_reason == "stall"
+    # It stopped early rather than burning all 40 cycles of churn.
+    assert outcome.steps < len(actions) // 2
+
+
+def test_max_agent_steps_accepts_a_ceiling_for_a_genuinely_long_task() -> None:
+    """The loop and TUI tell operators to raise this; the cap must allow it."""
+    profile = ModelProfileConfig(provider="openrouter", model="glm", max_agent_steps=2_000)
+    assert profile.max_agent_steps == 2_000
+    # Zero still means unlimited, and runaway values are still rejected.
+    assert ModelProfileConfig(provider="openrouter", model="glm").max_agent_steps == 0
+    with pytest.raises(ValidationError):
+        ModelProfileConfig(provider="openrouter", model="glm", max_agent_steps=10_001)

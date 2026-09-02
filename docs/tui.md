@@ -200,9 +200,13 @@ team runs in an isolated Git worktree with a checkpoint taken first, so `/diff`,
 `/restore` all apply. A failed member does not abort its peers; dependents are reported skipped.
 Teams cap at eight members, and deployment is deliberately not a team role.
 
-## Quality assurance
+## Inspector
 
-The **QA** tab (or `/qa run`) runs a repository-wide, read-only audit *and* a vulnerability
+The **inspector** tab has two halves, reachable with `/inspector`, `/review`, or the older `/qa`.
+
+### Repository scan
+
+**Run scan** (or `/qa run`) runs a repository-wide, read-only audit *and* a vulnerability
 assessment. D[Ai]NO detects the project stacks and collects deterministic evidence — configured
 lint/type/test/build commands, Playwright e2e tests when present, dependency audits
 (`npm`/`pnpm`/`yarn`/`bun`, bundled `pip-audit`, installed `cargo-audit`/`govulncheck`), and
@@ -220,6 +224,21 @@ table reloads any prior run.
 
 The live probe of a running application is browser-only; the terminal client has no app to point it
 at. See [the Inspector](gui.md#the-inspector).
+
+### Change review
+
+**Review change** reads the change in front of you rather than the whole repository. Pick the scope
+beside the button — the working tree (including files you have just created), what is staged, or
+this branch against its base.
+
+It runs mechanically first, over only the lines the change introduced: every changed file is
+re-parsed for syntax, and it looks for conflict markers, debugging left in, credentials, deceptive
+unicode, missing or weakened tests, lockfile and migration drift, and removed public definitions.
+Then four read-only reviewers — correctness, gaps, impact, security — read the diff and the code
+around it, and a synthesis step writes up what the change does, what blocks it, and what is missing.
+
+It ends in a merge verdict: **ready to merge**, **needs a look**, or **do not merge**. Reviews are
+saved under `.daino/reviews/`. See [Review](gui.md#review) for the full rule list.
 
 ## Providers
 

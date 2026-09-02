@@ -192,7 +192,7 @@ Screen {
     height: 3;
 }
 
-.very-narrow #tab-qa-view, .very-narrow #tab-logs-view, .very-narrow #tab-map-view {
+.very-narrow #tab-inspector-view, .very-narrow #tab-logs-view, .very-narrow #tab-map-view {
     display: none;
 }
 
@@ -317,7 +317,7 @@ Screen {
 
 /* ── shared view chrome ─────────────────────────────────────────────── */
 
-#missions-view, #qa-view, #repository-view, #files-view, #changes-view, #tests-view,
+#missions-view, #inspector-view, #repository-view, #files-view, #changes-view, #tests-view,
 #approvals-view, #checkpoints-view, #playbooks-view, #deployments-view,
 #providers-view, #settings-view, #logs-view, #map-view, #help-view {
     width: 100%;
@@ -669,12 +669,12 @@ Button.-primary, Button.-success, Button.-warning, Button.-error {
     border-top: solid $rule;
 }
 
-#qa-state {
+#qa-state, #review-state {
     height: 2;
     color: $faint;
 }
 
-#qa-scroll {
+#inspector-scroll {
     width: 100%;
     height: 1fr;
     scrollbar-size: 1 1;
@@ -695,7 +695,15 @@ Button.-primary, Button.-success, Button.-warning, Button.-error {
     min-height: 8;
 }
 
-#qa-report {
+/* A change is two files or forty, so these grow to what they hold rather than
+   leaving a fixed hole when it is small. */
+#review-files, #review-findings {
+    height: auto;
+    min-height: 3;
+    max-height: 14;
+}
+
+#qa-report, #review-report {
     height: auto;
     min-height: 12;
     padding: 0 1;

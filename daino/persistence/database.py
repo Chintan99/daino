@@ -69,6 +69,7 @@ class Database:
         if self.engine.url.get_backend_name() != "sqlite":
             return
         self._add_session_workspace_column()
+        self._add_executable_task_columns()
         inspector = inspect(self.engine)
         if "memory_records" not in inspector.get_table_names():
             return
@@ -129,6 +130,29 @@ class Database:
             connection.execute(
                 text("ALTER TABLE conversation_sessions ADD COLUMN workspace_id VARCHAR(64)")
             )
+
+    def _add_executable_task_columns(self) -> None:
+        """Give an existing plan the columns an executed plan needs.
+
+        Same bridge as the two above: ``create_all`` adds the new run tables
+        happily but cannot widen ``workspace_tasks``, and a database written
+        before plans could be executed would otherwise fail on every task read.
+        """
+        inspector = inspect(self.engine)
+        if "workspace_tasks" not in inspector.get_table_names():
+            return
+        existing = {item["name"] for item in inspector.get_columns("workspace_tasks")}
+        definitions = {
+            "depends_on": "JSON NOT NULL DEFAULT '[]'",
+            "attempts": "INTEGER NOT NULL DEFAULT 0",
+            "error": "TEXT NOT NULL DEFAULT ''",
+        }
+        missing = [(name, sql) for name, sql in definitions.items() if name not in existing]
+        if not missing:
+            return
+        with self.engine.begin() as connection:
+            for name, sql in missing:
+                connection.execute(text(f"ALTER TABLE workspace_tasks ADD COLUMN {name} {sql}"))
 
     @contextmanager
     def session(self) -> Iterator[Session]:

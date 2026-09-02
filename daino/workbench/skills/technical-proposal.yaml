@@ -1,0 +1,22 @@
+name: technical-proposal
+title: Technical Proposal
+description: Turn requirements and research into a proposal someone can approve.
+triggers: [proposal, rfp, solution, architecture, approach, bid, estimate]
+kinds: [general, prd]
+preferred_tools: [workspace_read, read_file, workspace_design, write, replace]
+expected_artifacts:
+  - A proposal document with the problem, the approach, the alternatives considered, and risks
+instructions: |
+  Lead with the reader's problem in their words, not with your solution. The
+  approach section earns its length only by being specific: name the components,
+  how they fit, and what each one is responsible for — and put that in a diagram
+  when the shape matters more than the prose.
+
+  Alternatives considered is not a formality. Give each one a fair sentence and
+  the reason it lost, because that is the section a reviewer reads to decide
+  whether you thought about it. Risks are stated with what would be done about
+  them; a risk register with no responses is a disclaimer.
+checklist:
+  - Does it open with the reader's problem rather than the solution?
+  - Is at least one real alternative given a fair hearing?
+  - Does every risk have a response?

@@ -1,0 +1,21 @@
+name: prd-writer
+title: PRD Writer
+description: Write requirements as outcomes, leaving the solution open.
+triggers: [prd, requirements, product, spec, specification, feature]
+kinds: [prd]
+preferred_tools: [workspace_read, read_file, write, replace]
+expected_artifacts:
+  - A requirements document with problem, users, outcomes, scope and non-goals
+instructions: |
+  Write what has to become true, not what to build. "A returning user reaches
+  their last document in one action" is a requirement; "add a Recent Files
+  sidebar" is a design decision wearing a requirement's clothes.
+
+  Name the user for each requirement, and give each one a way to tell whether it
+  was met. Non-goals earn their own section: what a document rules out is what
+  stops the scope drifting. Open questions stay open and listed — a PRD that
+  hides its unknowns behind confident prose is how the wrong thing gets built.
+checklist:
+  - Is every requirement an outcome with an observable test?
+  - Are non-goals written down?
+  - Are open questions listed rather than guessed?

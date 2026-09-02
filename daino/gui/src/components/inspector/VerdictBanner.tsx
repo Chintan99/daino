@@ -1,5 +1,12 @@
-import type { QAReport } from "../../api/types";
-import { SEVERITY_ORDER, VERDICT, countBySeverity } from "./severity";
+import type { QAFinding, QAVerdict } from "../../api/types";
+import { SEVERITY_ORDER, VERDICT, countBySeverity, type VerdictLook } from "./severity";
+
+/** The three fields a verdict needs — shared by a scan report and a review. */
+export interface Gated {
+  findings: QAFinding[];
+  verdict: QAVerdict;
+  gate_reasons: string[];
+}
 
 /**
  * The release gate's answer, stated before any evidence.
@@ -12,24 +19,25 @@ import { SEVERITY_ORDER, VERDICT, countBySeverity } from "./severity";
 export function VerdictBanner({
   report,
   running,
+  wording = VERDICT,
+  runningLabel = "INSPECTING…",
+  runningHint = "Evidence appears as each stage lands; the verdict is set when the scan ends.",
 }: {
-  report: QAReport;
+  report: Gated;
   running: boolean;
+  /** Swapped for a review, where the decision is about merging, not pushing. */
+  wording?: Record<QAVerdict, VerdictLook>;
+  runningLabel?: string;
+  runningHint?: string;
 }) {
-  const look = VERDICT[running ? "unknown" : report.verdict];
+  const look = wording[running ? "unknown" : report.verdict];
   const counts = countBySeverity(report.findings);
 
   return (
     <div className={`verdict verdict-${running ? "running" : look.tone}`}>
       <div className="verdict-head">
-        <span className="verdict-label">
-          {running ? "INSPECTING…" : look.label}
-        </span>
-        <span className="verdict-hint">
-          {running
-            ? "Evidence appears as each stage lands; the verdict is set when the scan ends."
-            : look.hint}
-        </span>
+        <span className="verdict-label">{running ? runningLabel : look.label}</span>
+        <span className="verdict-hint">{running ? runningHint : look.hint}</span>
       </div>
 
       <div className="verdict-counts">

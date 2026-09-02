@@ -1,0 +1,22 @@
+name: incident-review
+title: Incident Review
+description: Reconstruct an incident and decide what changes, without blame.
+triggers: [incident, outage, postmortem, rca, "root cause", failure, degradation]
+kinds: [incident-review]
+preferred_tools: [workspace_read, read_file, grep, write]
+expected_artifacts:
+  - A review with a timestamped timeline, impact, contributing causes and follow-up actions
+instructions: |
+  Write causes as conditions of the system, never as people's mistakes: "the
+  deploy had no staged rollout" rather than "someone deployed carelessly". The
+  second phrasing is both unkind and useless — you cannot fix a person.
+
+  Anchor the timeline in timestamped evidence and mark anything reconstructed
+  from memory as such. Impact is measured, not adjectival: how many users, for
+  how long, losing what. Each follow-up action names the specific failure it
+  would have caught, because an action that catches nothing in particular never
+  gets done.
+checklist:
+  - Is every cause written as a system condition?
+  - Is impact quantified with a duration?
+  - Does each action name the failure it would have caught?

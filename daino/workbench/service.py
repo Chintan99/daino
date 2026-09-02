@@ -11,6 +11,12 @@ work on any path under the repository root. The database row is an index for
 listing and querying; the folder is the truth. Delete the row and the work
 survives; delete the folder and the row is describing nothing.
 
+Those folders live under ``.daino/workspaces/`` rather than in the working tree.
+Knowledge work is the project's, but it is not its source: a documents folder at
+the repository root turns up in every diff, every file tree, and every package
+listing. Inside the state directory it stays out of the way, and the search
+tools are told to look there anyway (:func:`daino.config.paths.in_workspaces`).
+
 Everything that accepts a caller-supplied path resolves it and checks
 containment before touching the disk. A workspace is a boundary, not a hint.
 """
@@ -29,6 +35,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from daino.config import paths
 from daino.events import (
     EventBus,
     EventSubscription,
@@ -44,7 +51,7 @@ from daino.persistence.models import Workspace as WorkspaceRow
 from daino.persistence.models import WorkspaceSource as SourceRow
 from daino.persistence.models import WorkspaceTask as TaskRow
 from daino.utils.ids import new_id
-from daino.workbench import extraction
+from daino.workbench import deliverables, extraction
 from daino.workbench.models import (
     Artifact,
     ArtifactContent,
@@ -60,8 +67,10 @@ from daino.workbench.models import (
 )
 from daino.workbench.templates import TemplateLoader
 
-#: Default parent for new workspace folders, relative to the repository root.
-WORKSPACES_DIR = "workspace"
+#: Default parent for new workspace folders, relative to the repository root:
+#: ``.daino/workspaces`` (or ``.vasuki/workspaces`` in a legacy checkout).
+#: Resolved per service instance because the state directory depends on which
+#: marker the project already carries.
 
 #: Subdirectories the workspace owns. None of them is an artifact.
 UPLOADS_DIR = "uploads"
@@ -98,6 +107,11 @@ class WorkbenchService:
         self.database = database
         self.events = events
         self.templates = TemplateLoader(self.root)
+        #: Repository-relative parent for new workspaces, e.g.
+        #: ``.daino/workspaces``. A workspace still records its own folder, so
+        #: one created elsewhere — before this default moved, or with an
+        #: explicit folder — keeps working exactly where it is.
+        self.workspaces_folder = paths.workspaces_dir(self.root).relative_to(self.root).as_posix()
 
     # ------------------------------------------------------------ workspaces
 
@@ -124,7 +138,7 @@ class WorkbenchService:
         cleaned = name.strip() or "Untitled workspace"
         template = self.templates.get(kind)
         slug = _slug(cleaned)
-        relative = folder.strip().strip("/") or f"{WORKSPACES_DIR}/{slug}"
+        relative = folder.strip().strip("/") or f"{self.workspaces_folder}/{slug}"
         relative = self._unique_folder(relative)
         directory = self._within_root(relative)
         directory.mkdir(parents=True, exist_ok=True)
@@ -294,6 +308,17 @@ class WorkbenchService:
                 raise WorkbenchError(f"Unknown workspace {workspace_id}")
             row.workspace_id = workspace_id
 
+    def workspace_for_session(self, session_id: str) -> str | None:
+        """Which workspace a conversation belongs to, if any.
+
+        The inverse of :meth:`attach_session`, and the lookup that lets a
+        message typed into the shared agent panel be recognised as direction for
+        a running plan rather than as a new turn.
+        """
+        with self.database.session() as session:
+            row = session.get(ConversationSession, session_id)
+            return row.workspace_id if row is not None else None
+
     def watch_file_changes(self, events: EventBus) -> EventSubscription:
         """Record a revision whenever a workspace document changes on disk.
 
@@ -375,6 +400,38 @@ class WorkbenchService:
         # Recorded after the write, so a revision is a version that existed and
         # its author is whoever wrote it — not whoever happened to overwrite it.
         self.record_revision(workspace_id, relative, author=author)
+        self._publish(WorkspaceUpdated(workspace_id=workspace_id, change="artifact", path=relative))
+        return self._describe(path, workspace)
+
+    def save_deliverable(
+        self, workspace_id: str, source_relative: str, fmt: str, *, title: str = ""
+    ) -> Artifact:
+        """Render a workspace document into a finished file beside it.
+
+        The markdown stays authoritative; this is a rendering of it, which is
+        why it is regenerated rather than edited. Written through the same
+        containment check and revision recording as any other artifact, so a
+        regenerated deck is as recoverable as a rewritten document.
+        """
+        source = self.artifact(workspace_id, source_relative)
+        if not source.readable:
+            raise WorkbenchError(
+                f"{source_relative} cannot be read as text, so it cannot be rendered."
+            )
+        try:
+            payload = deliverables.render(
+                source.content, fmt, title=title or source.artifact.title
+            )
+        except deliverables.DeliverableError as exc:
+            raise WorkbenchError(str(exc)) from exc
+        relative = deliverables.deliverable_path(source_relative, fmt)
+        workspace = self.get(workspace_id)
+        path = self._within_workspace(workspace, relative)
+        if path.name in _RESERVED or _reserved_parent(path, self._within_root(workspace.folder)):
+            raise WorkbenchError(f"{relative} is reserved by the workspace")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        self.record_revision(workspace_id, relative, author="agent")
         self._publish(WorkspaceUpdated(workspace_id=workspace_id, change="artifact", path=relative))
         return self._describe(path, workspace)
 
@@ -537,6 +594,8 @@ class WorkbenchService:
         status: TaskStatus | None = None,
         notes: str | None = None,
         artifact_path: str | None = None,
+        depends_on: list[str] | None = None,
+        error: str | None = None,
     ) -> WorkspaceTask:
         with self.database.session() as session:
             row = session.get(TaskRow, task_id)
@@ -550,6 +609,14 @@ class WorkbenchService:
                 row.notes = notes
             if artifact_path is not None:
                 row.artifact_path = artifact_path
+            if depends_on is not None:
+                row.depends_on = [item for item in depends_on if item and item != task_id]
+            if error is not None:
+                row.error = error
+            if status == "in_progress":
+                # Counted here rather than by the executor so a hand-run step
+                # and an executed one are tallied the same way.
+                row.attempts = (row.attempts or 0) + 1
         self._publish(WorkspaceUpdated(workspace_id=workspace_id, change="tasks"))
         return next(item for item in self.get(workspace_id).tasks if item.id == task_id)
 
@@ -843,10 +910,12 @@ def _is_reserved(relative: str) -> bool:
 
 
 def _prune_empty_parent(directory: Path, root: Path) -> None:
-    """Remove ``workspace/`` once it holds nothing, rather than leaving cruft.
+    """Remove ``.daino/workspaces/`` once it holds nothing, rather than leaving
+    cruft.
 
     Deleting the last workspace should leave the project as it was found.
-    Anything the user put there keeps the directory alive.
+    Anything the user put there keeps the directory alive. Only the immediate
+    parent is pruned, so the state directory itself is never touched.
     """
     try:
         if directory == root or not directory.is_dir() or any(directory.iterdir()):
@@ -874,7 +943,9 @@ def _reserved_parent(path: Path, directory: Path) -> bool:
 
 def _kind(path: Path) -> ArtifactKind:
     suffix = path.suffix.casefold()
-    if suffix in {".md", ".markdown", ".rst", ".txt", ".html", ".htm"}:
+    # Rendered deliverables count as documents: a .docx of the proposal is the
+    # proposal, and filing it as "note" would bury it in the list.
+    if suffix in {".md", ".markdown", ".rst", ".txt", ".html", ".htm", ".docx", ".pdf", ".pptx"}:
         return "document"
     if suffix in {".csv", ".tsv", ".json", ".yaml", ".yml", ".xlsx"}:
         return "data"
@@ -1008,6 +1079,9 @@ def _task(row: TaskRow) -> WorkspaceTask:
         position=row.position,
         notes=row.notes,
         artifact_path=row.artifact_path,
+        depends_on=list(row.depends_on or []),
+        attempts=row.attempts or 0,
+        error=row.error or "",
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

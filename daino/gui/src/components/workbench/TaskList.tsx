@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
-import { qk } from "../../api/hooks";
+import { qk, useWorkspaceRun } from "../../api/hooks";
 import type { Workspace, WorkspaceTask, WorkspaceTaskStatus } from "../../api/types";
+import { RunControls, isActive } from "./RunControls";
+import { RunTimeline } from "./RunTimeline";
 
 /** Clicking a task walks it round the cycle rather than opening a menu. */
 const NEXT: Record<WorkspaceTaskStatus, WorkspaceTaskStatus> = {
@@ -28,6 +30,9 @@ const MARK: Record<WorkspaceTaskStatus, string> = {
  */
 export function TaskList({ workspace }: { workspace: Workspace }) {
   const qc = useQueryClient();
+  const { data: runData } = useWorkspaceRun(workspace.id);
+  const run = runData?.run ?? null;
+  const running = isActive(run);
   const [adding, setAdding] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -75,6 +80,8 @@ export function TaskList({ workspace }: { workspace: Workspace }) {
         Plan — {done}/{workspace.tasks.length} done
       </div>
 
+      <RunControls workspace={workspace} run={run} />
+
       {workspace.tasks.length === 0 && (
         <div className="empty">
           No steps yet. Add them here, or ask the agent to plan the work.
@@ -83,10 +90,20 @@ export function TaskList({ workspace }: { workspace: Workspace }) {
 
       <ul className="ws-task-list">
         {workspace.tasks.map((task, index) => (
-          <li key={task.id} className={`ws-task ${task.status}`}>
+          <li
+            key={task.id}
+            className={`ws-task ${task.status}${
+              run?.current_task_id === task.id ? " current" : ""
+            }`}
+          >
             <button
               className="ws-task-mark"
-              title={`Mark ${NEXT[task.status].replace("_", " ")}`}
+              disabled={running}
+              title={
+                running
+                  ? "The run owns the plan while it is working"
+                  : `Mark ${NEXT[task.status].replace("_", " ")}`
+              }
               onClick={() =>
                 void act(() =>
                   api.updateWorkspaceTask(workspace.id, task.id, {
@@ -122,6 +139,8 @@ export function TaskList({ workspace }: { workspace: Workspace }) {
                 {task.content}
               </span>
             )}
+
+            {task.error && <span className="ws-task-error">{task.error}</span>}
 
             <span className="ws-task-actions">
               <button className="btn icon" title="Move up" onClick={() => move(index, -1)}>
@@ -160,6 +179,8 @@ export function TaskList({ workspace }: { workspace: Workspace }) {
           Add
         </button>
       </div>
+
+      {run && <RunTimeline run={run} />}
     </div>
   );
 }

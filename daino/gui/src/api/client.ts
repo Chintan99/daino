@@ -37,7 +37,18 @@ import type {
   QALatest,
   QAScanProfile,
   RepositoryInfo,
+  ArtifactLink,
+  ChangeDiff,
+  ChangeSet,
+  StaleArtifact,
+  ReviewHistory,
+  Skill,
+  WorkspaceRun,
+  ReviewLatest,
+  ReviewScope,
+  ReviewSubject,
   RunInspectionRequest,
+  RunReviewRequest,
   SearchResult,
   SessionList,
   SessionMessages,
@@ -324,6 +335,35 @@ export const api = {
       {},
     ),
 
+  // Change review (Inspector ▸ Review)
+  reviewSubject: (scope: ReviewScope, baseRef = "") =>
+    request<ReviewSubject>(
+      "GET",
+      `/api/review/subject${qs({ scope, base_ref: baseRef || undefined })}`,
+    ),
+  reviewLatest: () => request<ReviewLatest>("GET", "/api/review/latest"),
+  reviewHistory: (limit = 50) =>
+    request<ReviewHistory>("GET", `/api/review/history${qs({ limit })}`),
+  reviewReport: (id: string) =>
+    request<ReviewLatest>("GET", `/api/review/reports/${encodeURIComponent(id)}`),
+  reviewFileDiff: (path: string, scope: ReviewScope, baseRef = "") =>
+    request<{ path: string; patch: string; readable: boolean }>(
+      "GET",
+      `/api/review/diff${qs({ path, scope, base_ref: baseRef || undefined })}`,
+    ),
+  reviewRun: (options: Partial<RunReviewRequest> = {}) =>
+    request<{ running: boolean; scope: ReviewScope; subject: string }>(
+      "POST",
+      "/api/review/run",
+      {
+        scope: options.scope ?? "working",
+        base_ref: options.base_ref ?? "",
+        head_ref: options.head_ref ?? "",
+      },
+    ),
+  reviewCancel: () =>
+    request<{ cancelled: boolean }>("POST", "/api/review/cancel", {}),
+
   // Preview
   previewDetect: () => request<PreviewDetect>("GET", "/api/preview/detect"),
   previewStatus: () => request<PreviewStatus>("GET", "/api/preview/status"),
@@ -504,6 +544,118 @@ export const api = {
       "DELETE",
       `/api/workspaces/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}`,
     ),
+
+  // Runs: executing the plan rather than only recording it.
+  workspaceRun: (id: string) =>
+    request<{ run: WorkspaceRun | null }>(
+      "GET",
+      `/api/workspaces/${encodeURIComponent(id)}/run`,
+    ),
+  startWorkspaceRun: (
+    id: string,
+    body: { goal?: string; profile?: string; skill?: string } = {},
+  ) =>
+    request<{ run: WorkspaceRun }>("POST", `/api/workspaces/${encodeURIComponent(id)}/run`, {
+      goal: body.goal ?? "",
+      profile: body.profile ?? "",
+      skill: body.skill ?? "",
+    }),
+  pauseWorkspaceRun: (runId: string) =>
+    request<{ run: WorkspaceRun }>(
+      "POST",
+      `/api/workspaces/runs/${encodeURIComponent(runId)}/pause`,
+      {},
+    ),
+  resumeWorkspaceRun: (runId: string) =>
+    request<{ run: WorkspaceRun }>(
+      "POST",
+      `/api/workspaces/runs/${encodeURIComponent(runId)}/resume`,
+      {},
+    ),
+  stopWorkspaceRun: (runId: string) =>
+    request<{ run: WorkspaceRun }>(
+      "POST",
+      `/api/workspaces/runs/${encodeURIComponent(runId)}/stop`,
+      {},
+    ),
+  steerWorkspaceRun: (runId: string, instruction: string) =>
+    request<{ run: WorkspaceRun }>(
+      "POST",
+      `/api/workspaces/runs/${encodeURIComponent(runId)}/steer`,
+      { instruction },
+    ),
+  resolveRunApproval: (runId: string, approvalId: string, approved: boolean) =>
+    request<{ run: WorkspaceRun }>(
+      "POST",
+      `/api/workspaces/runs/${encodeURIComponent(runId)}/approval`,
+      { approval_id: approvalId, approved },
+    ),
+  retryRunTask: (runId: string, taskId: string) =>
+    request<{ run: WorkspaceRun }>(
+      "POST",
+      `/api/workspaces/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/retry`,
+      {},
+    ),
+  skipRunTask: (runId: string, taskId: string) =>
+    request<{ run: WorkspaceRun }>(
+      "POST",
+      `/api/workspaces/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/skip`,
+      {},
+    ),
+  // Provenance: what came from what, and what has fallen behind.
+  workspaceLinks: (id: string) =>
+    request<{ links: ArtifactLink[]; stale: StaleArtifact[] }>(
+      "GET",
+      `/api/workspaces/${encodeURIComponent(id)}/links`,
+    ),
+  linkWorkspaceArtifacts: (
+    id: string,
+    body: { source_path: string; target_path: string; relation?: string; title?: string },
+  ) => request<ArtifactLink>("POST", `/api/workspaces/${encodeURIComponent(id)}/links`, body),
+  acknowledgeWorkspaceLink: (id: string, linkId: string) =>
+    request<{ acknowledged: string }>(
+      "POST",
+      `/api/workspaces/${encodeURIComponent(id)}/links/${encodeURIComponent(linkId)}/acknowledge`,
+      {},
+    ),
+  createWorkspaceDeliverable: (
+    id: string,
+    body: { path: string; format: string; title?: string },
+  ) =>
+    request<Artifact>("POST", `/api/workspaces/${encodeURIComponent(id)}/deliverable`, {
+      path: body.path,
+      format: body.format,
+      title: body.title ?? "",
+    }),
+
+  // Change sets: the group of artifacts one step touched.
+  workspaceChanges: (id: string, runId = "") =>
+    request<{ changes: ChangeSet[] }>(
+      "GET",
+      `/api/workspaces/${encodeURIComponent(id)}/changes${qs({ run_id: runId || undefined })}`,
+    ),
+  workspaceChangeDiff: (id: string, changeSetId: string, path: string) =>
+    request<ChangeDiff>(
+      "GET",
+      `/api/workspaces/${encodeURIComponent(id)}/changes/${encodeURIComponent(
+        changeSetId,
+      )}/diff${qs({ path })}`,
+    ),
+  decideWorkspaceChange: (
+    id: string,
+    changeSetId: string,
+    body: { accepted: boolean; path?: string },
+  ) =>
+    request<ChangeSet>(
+      "POST",
+      `/api/workspaces/${encodeURIComponent(id)}/changes/${encodeURIComponent(
+        changeSetId,
+      )}/decide`,
+      { accepted: body.accepted, path: body.path ?? "" },
+    ),
+
+  workspaceSkills: () =>
+    request<{ skills: Skill[] }>("GET", "/api/workspaces/meta/skills"),
 
   workspaceSources: (id: string) =>
     request<{ sources: ResearchSource[] }>(

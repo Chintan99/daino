@@ -1,0 +1,24 @@
+name: competitive-research
+title: Competitive Research
+description: Compare products or vendors on evidence, not on their own marketing.
+triggers: [competitor, competitors, competitive, vendor, vendors, alternatives, market, benchmark]
+kinds: [research, analysis]
+preferred_tools: [web_search, fetch_url, workspace_read, write, replace]
+expected_artifacts:
+  - A markdown findings document with one section per competitor and a comparison table
+  - Every claim footnoted to a source in the Sources panel
+instructions: |
+  Establish the comparison axes before gathering anything, and keep them fixed
+  across every candidate — an analysis that compares one product on price and
+  another on features is not a comparison. Prefer the vendor's own
+  documentation, pricing pages and changelogs over articles about them, and say
+  when a number is list price rather than what anyone pays.
+
+  Read more than one source per candidate. When two sources disagree, report
+  both and say which you believe and why rather than averaging them. Anything
+  you could not establish for a candidate is a gap in the table, written as
+  "not published" — never inferred from a competitor's numbers.
+checklist:
+  - Does every candidate have the same axes filled in, or an explicit gap?
+  - Is every factual claim traceable to a source?
+  - Is the recommendation stated with the condition under which it changes?

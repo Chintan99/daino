@@ -311,14 +311,15 @@ daino --gui</code></pre>
             <article class="tab-row">
               <div class="tab-row-intro">
                 <span>INSPECTOR</span>
-                <h3>QA and security before you push</h3>
+                <h3>QA, security, and change review</h3>
                 <p>End-to-end quality assurance and a vulnerability assessment in one pass, ending in a decision rather than a report.</p>
               </div>
               <div class="workspace-columns">
                 <div><strong>Works with no tools installed</strong><p>A built-in offline audit reads the working tree for credentials, insecure code patterns, and weak container, IaC, and CI configuration.</p></div>
                 <div><strong>Uses what you already have</strong><p>Your own lint, type, test, and build commands, plus whichever scanners are on the host. Missing ones are listed as skipped, never implied as passing.</p></div>
                 <div><strong>Checks the running app</strong><p>A non-destructive probe of security headers, cookie flags, exposed paths, error pages, and CORS. Loopback only unless you confirm you own the target.</p></div>
-                <div><strong>One deterministic verdict</strong><p>Safe to push, review first, or do not push — with every reason it depended on, and no model opinion in the gate.</p></div>
+                <div><strong>Reviews one change too</strong><p>Working tree, staged, or this branch against its base. Re-parses every file it touches, finds conflict markers, debugging and credentials left in, and missing or weakened tests.</p></div>
+                <div><strong>One deterministic verdict</strong><p>Safe to push, or ready to merge — with every reason it depended on, and no model opinion in the gate.</p></div>
               </div>
             </article>
 

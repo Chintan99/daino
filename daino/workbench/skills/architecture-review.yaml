@@ -1,0 +1,23 @@
+name: architecture-review
+title: Architecture Review
+description: Assess a design against what it will actually have to survive.
+triggers: [architecture, design review, system design, scalability, topology, deployment]
+kinds: [general, analysis]
+preferred_tools: [workspace_read, read_file, grep, workspace_design]
+expected_artifacts:
+  - A review naming the constraints, the risks in the current shape, and what to change
+instructions: |
+  Start from the constraints the system has to hold: load, latency, data
+  volume, failure domains, team size, and what the operators can actually run.
+  A design is only good or bad relative to those, and a review that skips them
+  is a matter of taste.
+
+  Trace the paths that matter — the write path, the failure path, the recovery
+  path — and say what happens at each hop when the next one is down. Name the
+  places the design is load-bearing on an assumption, and what would break if
+  the assumption is wrong. Draw the topology when words are doing worse than a
+  picture would.
+checklist:
+  - Are the constraints stated before the judgements?
+  - Is the failure path traced, not just the happy path?
+  - Is every risk tied to an assumption that could be checked?

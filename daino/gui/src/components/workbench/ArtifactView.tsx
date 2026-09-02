@@ -39,6 +39,8 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
   const [draft, setDraft] = useState("");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState("");
+  const setArtifactPath = useUIStore((s) => s.setActiveArtifactPath);
   const theme = useMonacoTheme();
   const options = useEditorOptions({ wordWrap: "on", renderOverviewRuler: false });
 
@@ -54,6 +56,8 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
     setMode("read");
     setDirty(false);
   }, [path]);
+
+  const isMarkdown = !!path && /\.(md|markdown)$/i.test(path);
 
   const language = useMemo(() => {
     const suffix = path ? path.slice(path.lastIndexOf(".")) : "";
@@ -84,6 +88,26 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
       window.alert(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * Render this document into a file someone can open.
+   *
+   * Only offered for markdown: the renderings are made *from* the markdown, so
+   * exporting a .docx would mean exporting a rendering of a rendering.
+   */
+  const exportAs = async (format: string) => {
+    if (!path) return;
+    setExporting(format);
+    try {
+      const artifact = await api.createWorkspaceDeliverable(workspace.id, { path, format });
+      await qc.invalidateQueries({ queryKey: qk.workspaceItem(workspace.id) });
+      setArtifactPath(artifact.path);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting("");
     }
   };
 
@@ -137,6 +161,9 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
         <button className="btn subtle" onClick={ask} title="Ask the agent to revise it">
           Ask
         </button>
+        {isMarkdown && (
+          <ExportMenu workspace={workspace} path={path ?? ""} busy={exporting} onExport={exportAs} />
+        )}
         <button
           className="btn subtle"
           title="Open in CODE"
@@ -179,5 +206,39 @@ export function ArtifactView({ workspace }: { workspace: Workspace }) {
 
       {mode === "history" && <HistoryPanel workspace={workspace} path={path} />}
     </div>
+  );
+}
+
+
+/** Word, Excel, PowerPoint, PDF — created beside the document they come from. */
+function ExportMenu({
+  busy,
+  onExport,
+}: {
+  workspace: Workspace;
+  path: string;
+  busy: string;
+  onExport: (format: string) => Promise<void>;
+}) {
+  const formats: [string, string][] = [
+    ["docx", "Word"],
+    ["pptx", "Deck"],
+    ["xlsx", "Sheet"],
+    ["pdf", "PDF"],
+  ];
+  return (
+    <span className="ws-export">
+      {formats.map(([format, label]) => (
+        <button
+          key={format}
+          className="btn subtle sm"
+          disabled={!!busy}
+          title={`Create a .${format} from this document`}
+          onClick={() => void onExport(format)}
+        >
+          {busy === format ? "…" : label}
+        </button>
+      ))}
+    </span>
   );
 }

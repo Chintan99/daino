@@ -146,8 +146,12 @@ class ModelProfileConfig(BaseModel):
     #: a safe value from the model window and project context budget.
     initial_context_tokens: int = Field(default=0, ge=0)
     #: Optional per-run hard ceiling. Zero leaves productive runs unlimited;
-    #: repeated low-value actions are handled separately by escalation.
-    max_agent_steps: int = Field(default=0, ge=0, le=100)
+    #: repeated low-value actions are handled separately by escalation. The
+    #: ceiling was capped at 100, which contradicted the advice the loop and TUI
+    #: give on hitting it ("increase max_agent_steps for genuinely long tasks"):
+    #: a task needing a large but finite budget could not express one. Bounded
+    #: only against runaway config now — a stall still ends a run in ~12 actions.
+    max_agent_steps: int = Field(default=0, ge=0, le=10_000)
     no_progress_limit: int = Field(default=3, ge=2, le=12)
     staged_retrieval: bool = True
 

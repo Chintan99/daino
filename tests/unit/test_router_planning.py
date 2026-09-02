@@ -155,7 +155,12 @@ def test_unrated_local_model_keeps_the_full_window() -> None:
 
     assert profile.mode == ExecutionMode.STANDARD
     assert not profile.one_action_per_turn
-    assert profile.initial_context_tokens == 22_000
+    # Far above the 8k compact clamp this test exists to rule out, but not the
+    # whole budget: standard mode reserves a share for the system prompt and the
+    # working transcript, without which the first prompt already sits over the
+    # compaction threshold and every later turn compacts for no gain.
+    assert profile.initial_context_tokens == 22_000 * 3 // 5
+    assert profile.initial_context_tokens > 8_192
 
 
 def test_a_starved_input_budget_still_forces_compact_mode() -> None:

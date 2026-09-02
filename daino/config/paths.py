@@ -44,6 +44,13 @@ LEGACY_GLOBAL_DIR_NAME = "vasuki"
 INSTRUCTION_FILENAME = "DAINO.md"
 LEGACY_INSTRUCTION_FILENAME = "VASUKI.md"
 
+#: Where Workspace folders live, inside the state directory. Knowledge work is
+#: Daino's own state rather than part of the user's source tree, so it belongs
+#: beside the database and the logs instead of scattering folders through the
+#: working tree. Named here rather than in :mod:`daino.workbench` because every
+#: ignore list that hides the state directory has to let this subtree back in.
+WORKSPACES_DIR = "workspaces"
+
 
 def state_dir(root: Path, *, create: bool = False) -> Path:
     """Return the project state directory, honouring the legacy fallback.
@@ -72,6 +79,25 @@ def state_path(root: Path, *parts: str, create_parents: bool = False) -> Path:
     if create_parents:
         path.parent.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def workspaces_dir(root: Path, *, create: bool = False) -> Path:
+    """Return the directory that holds this project's workspaces."""
+    path = state_dir(root, create=create) / WORKSPACES_DIR
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def in_workspaces(relative: Path | str) -> bool:
+    """Whether a project-relative path lies inside the workspaces subtree.
+
+    The state directory is hidden from every search and listing in Daino;
+    workspace documents live inside it but are the user's own writing, so the
+    filters that hide the rest of it consult this to let them through.
+    """
+    parts = Path(str(relative).replace("\\", "/")).parts
+    return len(parts) >= 2 and parts[0] in STATE_DIR_NAMES and parts[1] == WORKSPACES_DIR
 
 
 def is_project(root: Path) -> bool:

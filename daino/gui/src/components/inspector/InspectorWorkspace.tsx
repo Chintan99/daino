@@ -1,6 +1,7 @@
 import { useUIStore, type InspectorView } from "../../store/uiStore";
-import { usePreviewStatus, useQALatest } from "../../api/hooks";
+import { usePreviewStatus, useQALatest, useReviewLatest } from "../../api/hooks";
 import { ScanView } from "./ScanView";
+import { ReviewView } from "./ReviewView";
 import { LiveAppView } from "./LiveAppView";
 
 const VIEWS: { id: InspectorView; label: string; hint: string }[] = [
@@ -8,6 +9,11 @@ const VIEWS: { id: InspectorView; label: string; hint: string }[] = [
     id: "scan",
     label: "SCAN",
     hint: "End-to-end QA and vulnerability assessment, with a pre-push verdict",
+  },
+  {
+    id: "review",
+    label: "REVIEW",
+    hint: "Review one change before it lands: what it does, what is wrong, what is missing",
   },
   {
     id: "live",
@@ -28,6 +34,7 @@ export function InspectorWorkspace() {
   const view = useUIStore((s) => s.inspectorView);
   const setView = useUIStore((s) => s.setInspectorView);
   const { data: qa } = useQALatest();
+  const { data: review } = useReviewLatest();
   const { data: preview } = usePreviewStatus(4000);
 
   return (
@@ -43,6 +50,7 @@ export function InspectorWorkspace() {
             >
               {v.label}
               {v.id === "scan" && qa?.running ? " ●" : ""}
+              {v.id === "review" && review?.running ? " ●" : ""}
               {v.id === "live" && preview?.running ? " ●" : ""}
             </button>
           ))}
@@ -54,6 +62,7 @@ export function InspectorWorkspace() {
       </div>
       <div className="insights-body">
         {view === "scan" && <ScanView />}
+        {view === "review" && <ReviewView />}
         {view === "live" && <LiveAppView />}
       </div>
     </div>

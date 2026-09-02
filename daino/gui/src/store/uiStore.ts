@@ -13,9 +13,14 @@ export type InsightsView =
   | "approvals"
   | "repository";
 /** The Inspector's two halves: the pre-push scan, and the app it probes. */
-export type InspectorView = "scan" | "live";
+export type InspectorView = "scan" | "review" | "live";
 /** What the Workspace tab is showing about the selected workspace. */
-export type WorkbenchView = "documents" | "tasks" | "uploads" | "sources";
+export type WorkbenchView =
+  | "documents"
+  | "tasks"
+  | "uploads"
+  | "sources"
+  | "changes";
 
 interface UIState {
   activeWorkspaceTab: string; // id from the tab registry

@@ -10,12 +10,15 @@ import { ArtifactView } from "./ArtifactView";
 import { TaskList } from "./TaskList";
 import { UploadPanel } from "./UploadPanel";
 import { SourcesPanel } from "./SourcesPanel";
+import { ChangesPanel } from "./ChangesPanel";
+import { LinksPanel } from "./LinksPanel";
 
 const VIEWS: { id: WorkbenchView; label: string; hint: string }[] = [
   { id: "documents", label: "DOCUMENTS", hint: "What this workspace is producing" },
   { id: "tasks", label: "PLAN", hint: "The steps, editable by you and the agent" },
   { id: "uploads", label: "UPLOADS", hint: "Files brought in, and the text read from them" },
   { id: "sources", label: "SOURCES", hint: "Every page the agent read while researching" },
+  { id: "changes", label: "CHANGES", hint: "What Daino changed, grouped by the step that changed it" },
 ];
 
 /**
@@ -178,7 +181,12 @@ export function WorkbenchWorkspace() {
                   )}
                 </div>
                 <div className="scroll-y" style={{ flex: 1 }}>
-                  {view === "documents" && <ArtifactList workspace={workspace} />}
+                  {(view === "documents" || view === "changes") && (
+                    <>
+                      <ArtifactList workspace={workspace} />
+                      <LinksPanel workspace={workspace} />
+                    </>
+                  )}
                   {view === "tasks" && <TaskList workspace={workspace} />}
                   {view === "uploads" && <UploadPanel workspace={workspace} />}
                   {view === "sources" && <SourcesPanel workspace={workspace} />}
@@ -190,7 +198,13 @@ export function WorkbenchWorkspace() {
           </div>
 
           <div className="split-right">
-            {workspace ? (
+            {workspace && view === "changes" ? (
+              // Reviewing wants the width: a diff in a 300px column is a
+              // column of fragments, not a change anyone can judge.
+              <div className="scroll-y" style={{ flex: 1 }}>
+                <ChangesPanel workspace={workspace} />
+              </div>
+            ) : workspace ? (
               <ArtifactView workspace={workspace} />
             ) : (
               <div className="empty" style={{ margin: "auto", maxWidth: 460 }}>

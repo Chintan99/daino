@@ -79,7 +79,17 @@ class ModelExecutionProfile:
             model.execution_mode == "auto" and auto_compact
         )
         mode = ExecutionMode.COMPACT if compact else ExecutionMode.STANDARD
-        derived_initial = min(input_budget_tokens, 8_192 if compact else input_budget_tokens)
+        # The initial bundle must not claim the whole input budget. It used to,
+        # which left nothing for the system prompt, the transcript and the
+        # scaffolding compaction re-adds — so on a 32k window the prompt started
+        # over the compaction threshold and stayed there, compacting every turn
+        # for no gain. Reserving a share for the working transcript only binds
+        # narrow windows: a roomy model is already capped by the project budget
+        # well below this fraction, so its grounding is unchanged.
+        derived_initial = (
+            8_192 if compact else max(_COMPACT_BUDGET_TOKENS, input_budget_tokens * 3 // 5)
+        )
+        derived_initial = min(input_budget_tokens, derived_initial)
         initial = model.initial_context_tokens or derived_initial
         initial = max(512, min(initial, input_budget_tokens, project_budget_tokens))
         if compact:

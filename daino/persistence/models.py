@@ -412,6 +412,16 @@ class WorkspaceTask(Base, TimestampMixin):
     notes: Mapped[str] = mapped_column(Text, default="")
     #: The artifact this task produced, repository-relative, when there is one.
     artifact_path: Mapped[str] = mapped_column(Text, default="")
+    #: Task ids that must be complete before this one may run. Ordinary order
+    #: covers most plans; this covers the ones where it does not, without a
+    #: workflow engine — the executor simply skips a task whose predecessors
+    #: are unfinished.
+    depends_on: Mapped[list[str]] = mapped_column(JSON, default=list)
+    #: How many times the executor has tried this step, so a retry is visible
+    #: and a repeatedly failing step can stop being retried.
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    #: Why the last attempt failed, kept so Retry/Skip is an informed choice.
+    error: Mapped[str] = mapped_column(Text, default="")
 
 
 class WorkspaceSource(Base, TimestampMixin):
@@ -433,3 +443,122 @@ class WorkspaceSource(Base, TimestampMixin):
     #: Repository-relative path of the cached page text.
     cache_path: Mapped[str] = mapped_column(Text, default="")
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WorkspaceRun(Base, TimestampMixin):
+    """One execution of a workspace's plan, persisted so it survives a restart.
+
+    A run is deliberately thin: the plan already lives in ``workspace_tasks``
+    and the work itself lands in the workspace folder, so a run records only
+    what neither of those can — which goal is being executed, where the executor
+    is up to, and why it stopped. Reopening the GUI reads this row and knows
+    whether to offer Resume, an approval prompt, or a completion summary.
+    """
+
+    __tablename__ = "workspace_runs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    #: What the user asked for. Empty means "work the existing plan".
+    goal: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    #: The task the executor is on, so a reopened GUI can say where it is.
+    current_task_id: Mapped[str] = mapped_column(String(64), default="")
+    #: Why a run failed, or what it is waiting for.
+    error: Mapped[str] = mapped_column(Text, default="")
+    #: The skill guiding this run, when one was selected.
+    skill: Mapped[str] = mapped_column(String(64), default="")
+    #: Model profile the user pinned when starting, so Resume matches Run.
+    profile: Mapped[str] = mapped_column(String(64), default="")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
+
+
+class WorkspaceRunStep(Base, TimestampMixin):
+    """One line of a run's timeline, kept because events are not durable.
+
+    The event bus streams what is happening now; a user who reopens the tab
+    tomorrow needs what happened then. Steps are written as the run progresses
+    and are what the timeline renders — user-facing sentences, never raw tool
+    protocol.
+    """
+
+    __tablename__ = "workspace_run_steps"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("workspace_runs.id"), index=True)
+    #: The plan step this line belongs to, when it belongs to one.
+    task_id: Mapped[str] = mapped_column(String(64), default="")
+    #: What kind of line this is: task_started, artifact, source, note, …
+    kind: Mapped[str] = mapped_column(String(32), default="note")
+    message: Mapped[str] = mapped_column(Text, default="")
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class WorkspaceChangeSet(Base, TimestampMixin):
+    """Every artifact one logical agent operation touched, grouped for review.
+
+    The per-file revision history in ``.history`` stays the source of truth;
+    this is the index that says "these seven revisions were one act", which is
+    what a reviewer needs and a per-file history cannot express.
+    """
+
+    __tablename__ = "workspace_change_sets"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    run_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    task_id: Mapped[str] = mapped_column(String(64), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    #: open, accepted, rejected — or partial when reviewed file by file.
+    status: Mapped[str] = mapped_column(String(32), default="open", index=True)
+
+
+class WorkspaceChangeEntry(Base, TimestampMixin):
+    """One artifact inside a change set, pinned to the revisions around it."""
+
+    __tablename__ = "workspace_change_entries"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    change_set_id: Mapped[str] = mapped_column(ForeignKey("workspace_change_sets.id"), index=True)
+    #: Workspace-relative path of the artifact that changed.
+    path: Mapped[str] = mapped_column(Text)
+    #: created, updated or deleted — what happened to it.
+    action: Mapped[str] = mapped_column(String(32), default="updated")
+    #: Revision numbers in the artifact's own history: what it was, what it is.
+    before_version: Mapped[int] = mapped_column(Integer, default=0)
+    after_version: Mapped[int] = mapped_column(Integer, default=0)
+    #: pending, accepted or rejected, decided per artifact.
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    summary: Mapped[str] = mapped_column(Text, default="")
+
+
+class WorkspaceLink(Base, TimestampMixin):
+    """A relationship between two things a workspace holds.
+
+    Deliberately a flat edge table rather than a graph: what the product needs
+    is "which documents came from this one" and "what is now stale", both of
+    which are one hop. ``target_kind`` lets an edge point at work that lives
+    outside the workspace folder — a design canvas, a code session — without a
+    second table.
+    """
+
+    __tablename__ = "workspace_links"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id"), index=True)
+    #: The thing that was made. Edges read "source relation target" —
+    #: ``proposal.md derived_from architecture``.
+    source_path: Mapped[str] = mapped_column(Text)
+    #: artifact, design or code — what the source is. Work started in another
+    #: tab is recorded here, which is how a workspace lists a diagram it caused
+    #: without owning the canvas it lives on.
+    source_kind: Mapped[str] = mapped_column(String(32), default="artifact")
+    #: What it was made from: an artifact path, a design id, or a session id.
+    target_path: Mapped[str] = mapped_column(Text)
+    #: artifact, design or code — what the target is.
+    target_kind: Mapped[str] = mapped_column(String(32), default="artifact")
+    #: derived_from, generated_from, depends_on, implements, describes,
+    #: references. Named from the source's point of view.
+    relation: Mapped[str] = mapped_column(String(32), default="references")
+    title: Mapped[str] = mapped_column(String(255), default="")
+    #: The target's revision when the edge was made. The source is possibly
+    #: stale once the target has moved past it.
+    target_revision: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column("metadata", JSON, default=dict)

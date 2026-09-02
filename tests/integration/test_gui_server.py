@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -874,19 +875,26 @@ def test_a_new_session_starts_without_the_old_one_s_history(client: TestClient) 
 def test_a_workspace_is_created_as_real_files_the_other_tabs_can_see(
     client: TestClient,
 ) -> None:
-    """The WORKSPACE tab writes into the project, not into a private store."""
+    """Workspaces live under ``.daino/workspaces``, still as ordinary files.
+
+    Out of the working tree, so a documents folder never turns up in a diff or
+    a package listing — but written to disk as plain files the CODE tab and the
+    agent's own file tools can open by path.
+    """
     created = client.post(
         "/api/workspaces",
         json={"name": "Q3 pricing", "goal": "Compare three vendors", "kind": "research"},
     ).json()
 
-    assert created["folder"] == "workspace/q3-pricing"
+    assert created["folder"] == ".daino/workspaces/q3-pricing"
     assert created["goal"] == "Compare three vendors"
     assert [item["path"] for item in created["artifacts"]] == ["findings.md"]
     assert len(created["tasks"]) == 5
 
     # The same file is reachable through the ordinary file API the CODE tab uses.
-    read = client.get("/api/files/read", params={"path": "workspace/q3-pricing/findings.md"})
+    read = client.get(
+        "/api/files/read", params={"path": ".daino/workspaces/q3-pricing/findings.md"}
+    )
     assert read.status_code == 200
     assert "## Question" in read.json()["content"]
 
@@ -1019,8 +1027,8 @@ def test_an_absolute_path_is_normalised_into_the_workspace(client: TestClient) -
         json={"path": "/etc/passwd", "content": "contained"},
     ).json()
 
-    assert written["repo_path"] == "workspace/pricing/etc/passwd"
-    landed = client.get("/api/files/read", params={"path": "workspace/pricing/etc/passwd"})
+    assert written["repo_path"] == ".daino/workspaces/pricing/etc/passwd"
+    landed = client.get("/api/files/read", params={"path": ".daino/workspaces/pricing/etc/passwd"})
     assert landed.status_code == 200 and landed.json()["content"] == "contained"
 
 
@@ -1030,5 +1038,221 @@ def test_deleting_a_workspace_leaves_its_files_unless_asked(client: TestClient) 
     client.delete(f"/api/workspaces/{workspace['id']}")
 
     assert client.get(f"/api/workspaces/{workspace['id']}").status_code == 404
-    still_there = client.get("/api/files/read", params={"path": "workspace/kept/workspace.json"})
+    still_there = client.get(
+        "/api/files/read", params={"path": ".daino/workspaces/kept/workspace.json"}
+    )
     assert still_there.status_code == 200
+
+
+def test_the_run_api_reports_a_plan_that_has_never_been_executed(
+    client: TestClient,
+) -> None:
+    workspace = client.post("/api/workspaces", json={"name": "Proposal"}).json()
+
+    assert client.get(f"/api/workspaces/{workspace['id']}/run").json()["run"] is None
+
+
+def test_a_plan_with_nothing_pending_refuses_to_run(client: TestClient) -> None:
+    """A refusal the user can act on, rather than a run that finishes instantly."""
+    workspace = client.post("/api/workspaces", json={"name": "Proposal"}).json()
+    for task in workspace["tasks"]:
+        client.patch(
+            f"/api/workspaces/{workspace['id']}/tasks/{task['id']}",
+            json={"status": "completed"},
+        )
+
+    response = client.post(f"/api/workspaces/{workspace['id']}/run", json={})
+
+    assert response.status_code == 409
+    assert "already done" in response.json()["detail"]
+
+
+def test_skills_are_listed_for_the_picker(client: TestClient) -> None:
+    skills = client.get("/api/workspaces/meta/skills").json()["skills"]
+
+    names = {item["name"] for item in skills}
+    assert {"competitive-research", "prd-writer", "data-analysis"} <= names
+    assert all(item["title"] for item in skills)
+
+
+def test_a_document_renders_into_a_file_people_can_open(client: TestClient) -> None:
+    workspace = client.post("/api/workspaces", json={"name": "Proposal"}).json()
+    client.put(
+        f"/api/workspaces/{workspace['id']}/artifact",
+        json={
+            "path": "report.md",
+            "content": "# Report\n\nWe recommend Beta.\n\n## Risks\n\n- Tight window\n",
+        },
+    )
+
+    artifact = client.post(
+        f"/api/workspaces/{workspace['id']}/deliverable",
+        json={"path": "report.md", "format": "pdf"},
+    ).json()
+
+    assert artifact["path"] == "report.pdf"
+    assert artifact["bytes"] > 0
+    # It lands in the workspace folder as an ordinary file, like everything else.
+    listing = client.get(f"/api/workspaces/{workspace['id']}/artifacts").json()["artifacts"]
+    assert {item["path"] for item in listing} == {"report.md", "report.pdf"}
+
+
+def test_provenance_drives_the_outdated_warning(client: TestClient) -> None:
+    workspace = client.post("/api/workspaces", json={"name": "Proposal"}).json()
+    identifier = workspace["id"]
+    for path, content in (("architecture.md", "v1"), ("proposal.md", "from v1")):
+        client.put(
+            f"/api/workspaces/{identifier}/artifact", json={"path": path, "content": content}
+        )
+    client.post(
+        f"/api/workspaces/{identifier}/links",
+        json={
+            "source_path": "proposal.md",
+            "target_path": "architecture.md",
+            "relation": "derived_from",
+        },
+    )
+    assert client.get(f"/api/workspaces/{identifier}/links").json()["stale"] == []
+
+    client.put(
+        f"/api/workspaces/{identifier}/artifact",
+        json={"path": "architecture.md", "content": "v2 — different"},
+    )
+
+    stale = client.get(f"/api/workspaces/{identifier}/links").json()["stale"]
+    assert [item["path"] for item in stale] == ["proposal.md"]
+    # Ignoring it is durable: the warning does not come back on the next read.
+    client.post(f"/api/workspaces/{identifier}/links/{stale[0]['link_id']}/acknowledge")
+    assert client.get(f"/api/workspaces/{identifier}/links").json()["stale"] == []
+
+
+def test_a_change_set_can_be_reviewed_and_rejected_over_the_api(
+    client: TestClient,
+) -> None:
+    """The GUI's Reject button, end to end: the previous version comes back."""
+    from daino.workbench.changes import ChangeSetStore
+
+    workspace = client.post("/api/workspaces", json={"name": "Proposal"}).json()
+    identifier = workspace["id"]
+    client.put(
+        f"/api/workspaces/{identifier}/artifact",
+        json={"path": "proposal.md", "content": "the good draft"},
+    )
+    state = client.app.state.gui  # type: ignore[attr-defined]
+    changes: ChangeSetStore = state.runs.changes
+    before = changes.snapshot(identifier)
+    client.put(
+        f"/api/workspaces/{identifier}/artifact",
+        json={"path": "proposal.md", "content": "the rewrite", "author": "agent"},
+    )
+    change = changes.record(identifier, before=before, summary="Rewrote it")
+    assert change is not None
+
+    listed = client.get(f"/api/workspaces/{identifier}/changes").json()["changes"]
+    assert [item["id"] for item in listed] == [change.id]
+    diff = client.get(
+        f"/api/workspaces/{identifier}/changes/{change.id}/diff",
+        params={"path": "proposal.md"},
+    ).json()
+    assert any(line["marker"] == "-" for line in diff["lines"])
+
+    decided = client.post(
+        f"/api/workspaces/{identifier}/changes/{change.id}/decide",
+        json={"accepted": False, "path": "proposal.md"},
+    ).json()
+
+    assert decided["status"] == "rejected"
+    restored = client.get(
+        f"/api/workspaces/{identifier}/artifact", params={"path": "proposal.md"}
+    ).json()
+    assert restored["content"] == "the good draft"
+
+
+# --------------------------------------------------------------- change review
+
+
+def test_the_review_subject_describes_the_change_before_running_one(
+    client: TestClient,
+) -> None:
+    """The view can show what would be reviewed without paying for a model call."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "README.md").write_text("# Fixture\n\nEdited.\n", encoding="utf-8")
+    (root / "brand_new.py").write_text("def added():\n    return 1\n", encoding="utf-8")
+
+    subject = client.get("/api/review/subject", params={"scope": "working"}).json()
+
+    assert subject["empty"] is False
+    assert subject["label"] == "Uncommitted changes in the working tree"
+    # A newly created file has no diff, so it has to be found separately or a
+    # working-tree review silently skips it.
+    assert "brand_new.py" in subject["untracked"]
+    # Both the edited file and the new one are counted; the fixture's own
+    # .gitignore edit is a real change too, so the total is not pinned.
+    assert subject["files"] >= 2
+
+
+def test_an_unresolvable_base_is_a_bad_request_not_a_failed_run(
+    client: TestClient,
+) -> None:
+    response = client.get(
+        "/api/review/subject", params={"scope": "branch", "base_ref": "no-such-branch"}
+    )
+
+    assert response.status_code == 400
+    assert client.post(
+        "/api/review/run", json={"scope": "branch", "base_ref": "no-such-branch"}
+    ).status_code == 400
+
+
+def test_a_review_runs_and_is_reloadable(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "app.py").write_text(
+        "import subprocess\n\n\ndef run(cmd):\n    return subprocess.run(cmd, shell=True)\n",
+        encoding="utf-8",
+    )
+
+    assert client.post("/api/review/run", json={"scope": "working"}).json()["running"] is True
+    for _ in range(200):
+        latest = client.get("/api/review/latest").json()
+        if not latest["running"] and latest["review"]:
+            break
+        time.sleep(0.05)
+
+    review = client.get("/api/review/latest").json()["review"]
+    assert review["status"] == "completed"
+    assert "app.py" in {item["path"] for item in review["files"]}
+    assert "py-shell-injection" in {item["reference"] for item in review["findings"]}
+    assert review["verdict"] in {"warn", "blocked"}
+
+    reloaded = client.get(f"/api/review/reports/{review['id']}").json()["review"]
+    assert reloaded["id"] == review["id"]
+    assert client.get("/api/review/history").json()["reviews"][0]["id"] == review["id"]
+    assert client.get("/api/review/reports/review-nope").status_code == 404
+
+
+def test_one_file_of_the_change_can_be_read_on_its_own(client: TestClient) -> None:
+    """Opening a file must not re-send a diff that can run to hundreds of KB."""
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "README.md").write_text("# Fixture\n\nEdited.\n", encoding="utf-8")
+    (root / "brand_new.py").write_text("def added():\n    return 1\n", encoding="utf-8")
+
+    tracked = client.get("/api/review/diff", params={"path": "README.md"}).json()
+    untracked = client.get("/api/review/diff", params={"path": "brand_new.py"}).json()
+
+    assert "+Edited." in tracked["patch"]
+    assert "README.md" in tracked["patch"] and "brand_new.py" not in tracked["patch"]
+    # A file git has no diff for is shown as wholly added rather than as nothing.
+    assert "+def added():" in untracked["patch"]
+
+
+def test_only_one_review_runs_at_a_time(client: TestClient) -> None:
+    root: Path = client.app_root  # type: ignore[attr-defined]
+    (root / "app.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    first = client.post("/api/review/run", json={"scope": "working"})
+    second = client.post("/api/review/run", json={"scope": "working"})
+
+    assert first.status_code == 200
+    assert second.status_code in {200, 409}
+    client.post("/api/review/cancel")
+

@@ -73,6 +73,13 @@ workspace only records what came back, caching each page's text so a cited claim
 Parallel researchers are read-only by construction — no edit tools in their surface and no write
 scope in their roster — which is why several can run at once with nothing to arbitrate.
 
+A change review is read-only in the same way. It resolves a diff through the same argv-only
+``GitClient`` as everything else, never mutates the index or the working tree to produce one, and
+its reviewers run with the QA tool surface — reads, search, and finish, with no edit, command, or
+network tool between them. Findings are reported at the line the change introduced, and a credential
+matched in a diff is masked in the report rather than reprinted, so a review shared with a colleague
+does not become the leak.
+
 QA sub-agents are read-only by construction. Their action schema exposes only repository reads,
 search, globbing, directory listing, and finish operations, while `EditTools` also enforces
 read-only mode underneath. Automated QA commands are selected by D[Ai]NO rather than the model and

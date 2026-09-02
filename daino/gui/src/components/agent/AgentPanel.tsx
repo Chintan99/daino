@@ -21,6 +21,7 @@ import { ActivityRunner } from "./ActivityRunner";
 import { SessionBar } from "./SessionBar";
 import { ModelBar } from "./ModelBar";
 import { TodoPanel } from "./TodoPanel";
+import { RunStatusBar } from "./RunStatusBar";
 import { LiveChangeset } from "./LiveChangeset";
 import { ProviderPanel } from "./ProviderPanel";
 import { AgentSettingsPanel } from "./AgentSettingsPanel";
@@ -265,6 +266,7 @@ export function AgentPanel() {
       <SessionBar />
       <ActivityRunner />
       <ModelBar />
+      <RunStatusBar />
       <TodoPanel />
 
       <div className="agent-stream" ref={streamRef}>

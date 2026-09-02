@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from daino import __version__, branding
 from daino.application.context import ProjectContext
+from daino.application.review_service import ReviewError
 from daino.server import websocket
 from daino.server.routes import (
     agent,
@@ -24,6 +25,7 @@ from daino.server.routes import (
     git,
     insights,
     preview,
+    review,
     settings,
     terminal,
     workbench,
@@ -99,6 +101,7 @@ def create_app(context: ProjectContext, *, host: str = "127.0.0.1") -> FastAPI:
         git,
         design,
         preview,
+        review,
         terminal,
         insights,
         docs,
@@ -108,6 +111,11 @@ def create_app(context: ProjectContext, *, host: str = "127.0.0.1") -> FastAPI:
     ):
         app.include_router(module.router)
     app.include_router(websocket.router)
+
+    @app.exception_handler(ReviewError)
+    async def review_error(_: Request, exc: Exception) -> JSONResponse:
+        """A change that cannot be resolved into a diff is the caller's mistake."""
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.exception_handler(WorkbenchError)
     async def workbench_error(_: Request, exc: Exception) -> JSONResponse:

@@ -6,7 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "./client";
-import type { Design } from "./types";
+import type { Design, ReviewScope } from "./types";
 
 export const qk = {
   health: ["health"] as const,
@@ -26,6 +26,12 @@ export const qk = {
   mapTrace: (id: string) => ["map", "trace", id] as const,
   qaLatest: ["qa", "latest"] as const,
   qaHistory: ["qa", "history"] as const,
+  reviewLatest: ["review", "latest"] as const,
+  reviewHistory: ["review", "history"] as const,
+  reviewSubject: (scope: string, baseRef: string) =>
+    ["review", "subject", scope, baseRef] as const,
+  reviewDiff: (path: string, scope: string, baseRef: string) =>
+    ["review", "diff", path, scope, baseRef] as const,
   missions: ["missions"] as const,
   missionDetails: (id: string) => ["missions", id] as const,
   checkpoints: ["checkpoints"] as const,
@@ -47,6 +53,12 @@ export const qk = {
   workspaceRevisions: (id: string, path: string) =>
     ["workspaces", id, "revisions", path] as const,
   workspaceTemplates: ["workspaces", "templates"] as const,
+  workspaceRun: (id: string) => ["workspaces", id, "run"] as const,
+  workspaceSkills: ["workspaces", "skills"] as const,
+  workspaceChanges: (id: string) => ["workspaces", id, "changes"] as const,
+  workspaceLinks: (id: string) => ["workspaces", id, "links"] as const,
+  workspaceChangeDiff: (id: string, changeSetId: string, path: string) =>
+    ["workspaces", id, "changes", changeSetId, path] as const,
 };
 
 export function useProjectInfo() {
@@ -332,12 +344,110 @@ export function useArtifactRevisions(workspaceId: string | null, path: string | 
   });
 }
 
+/**
+ * The run executing this workspace's plan, or the last one to have run.
+ *
+ * Polled slowly as a backstop only: progress arrives as ``WorkspaceRunUpdated``
+ * events on the session socket, which invalidate this key the moment anything
+ * moves.
+ */
+export function useWorkspaceRun(id: string | null) {
+  return useQuery({
+    queryKey: qk.workspaceRun(id ?? ""),
+    queryFn: () => api.workspaceRun(id as string),
+    enabled: !!id,
+    refetchInterval: 15_000,
+  });
+}
+
+/** How this workspace's outputs relate, and which have fallen behind. */
+export function useWorkspaceLinks(id: string | null) {
+  return useQuery({
+    queryKey: qk.workspaceLinks(id ?? ""),
+    queryFn: () => api.workspaceLinks(id as string),
+    enabled: !!id,
+  });
+}
+
+/** What the agent changed, grouped by the step that changed it. */
+export function useWorkspaceChanges(id: string | null) {
+  return useQuery({
+    queryKey: qk.workspaceChanges(id ?? ""),
+    queryFn: () => api.workspaceChanges(id as string),
+    enabled: !!id,
+  });
+}
+
+/** One artifact's before/after, both sides read from the workspace history. */
+export function useChangeDiff(
+  workspaceId: string | null,
+  changeSetId: string | null,
+  path: string | null,
+) {
+  return useQuery({
+    queryKey: qk.workspaceChangeDiff(workspaceId ?? "", changeSetId ?? "", path ?? ""),
+    queryFn: () =>
+      api.workspaceChangeDiff(workspaceId as string, changeSetId as string, path as string),
+    enabled: !!workspaceId && !!changeSetId && !!path,
+  });
+}
+
+/** Every way of working available here; they change only on upgrade. */
+export function useWorkspaceSkills() {
+  return useQuery({
+    queryKey: qk.workspaceSkills,
+    queryFn: api.workspaceSkills,
+    staleTime: Infinity,
+  });
+}
+
 /** The work types a new workspace can start from; they change only on upgrade. */
 export function useWorkspaceTemplates() {
   return useQuery({
     queryKey: qk.workspaceTemplates,
     queryFn: api.workspaceTemplates,
     staleTime: Infinity,
+  });
+}
+
+// ---- Change review ----
+
+/** Poll only while a review is in flight; a finished one never changes. */
+export function useReviewLatest() {
+  return useQuery({
+    queryKey: qk.reviewLatest,
+    queryFn: api.reviewLatest,
+    refetchInterval: (query) => (query.state.data?.running ? 1500 : false),
+  });
+}
+
+export function useReviewHistory() {
+  return useQuery({ queryKey: qk.reviewHistory, queryFn: () => api.reviewHistory() });
+}
+
+/**
+ * What a review of this scope would cover.
+ *
+ * Resolved before anything runs, so the view can show the size of the change
+ * and surface an unresolvable base immediately rather than after a failed run.
+ */
+export function useReviewSubject(scope: ReviewScope, baseRef: string) {
+  return useQuery({
+    queryKey: qk.reviewSubject(scope, baseRef),
+    queryFn: () => api.reviewSubject(scope, baseRef),
+    retry: false,
+  });
+}
+
+export function useReviewFileDiff(
+  path: string | null,
+  scope: ReviewScope,
+  baseRef: string,
+) {
+  return useQuery({
+    queryKey: qk.reviewDiff(path ?? "", scope, baseRef),
+    queryFn: () => api.reviewFileDiff(path as string, scope, baseRef),
+    enabled: !!path,
   });
 }
 

@@ -37,7 +37,7 @@ def test_a_new_workspace_is_a_real_folder_in_the_project(
     workspace = service.create("Q3 pricing research", goal="Compare three vendors")
 
     folder = tmp_path / workspace.folder
-    assert workspace.folder == "workspace/q3-pricing-research"
+    assert workspace.folder == ".daino/workspaces/q3-pricing-research"
     assert folder.is_dir()
     assert (folder / UPLOADS_DIR).is_dir()
     assert (folder / MANIFEST).is_file()
@@ -84,19 +84,19 @@ def test_a_second_workspace_of_the_same_name_gets_its_own_folder(
     first = service.create("Pricing")
     second = service.create("Pricing")
 
-    assert first.folder == "workspace/pricing"
-    assert second.folder == "workspace/pricing-2"
+    assert first.folder == ".daino/workspaces/pricing"
+    assert second.folder == ".daino/workspaces/pricing-2"
 
 
 def test_an_occupied_folder_is_never_adopted(service: WorkbenchService, tmp_path: Path) -> None:
     """Someone else's files must not silently become workspace artifacts."""
-    existing = tmp_path / "workspace" / "notes"
+    existing = tmp_path / ".daino" / "workspaces" / "notes"
     existing.mkdir(parents=True)
     (existing / "private.md").write_text("not ours", encoding="utf-8")
 
     workspace = service.create("Notes")
 
-    assert workspace.folder == "workspace/notes-2"
+    assert workspace.folder == ".daino/workspaces/notes-2"
     assert (existing / "private.md").read_text(encoding="utf-8") == "not ours"
 
 
@@ -355,7 +355,7 @@ def test_deleting_a_workspace_keeps_its_files_unless_asked(
     assert (tmp_path / kept.folder).is_dir()
     assert not (tmp_path / removed.folder).exists()
     # The shared parent survives while another workspace still needs it.
-    assert (tmp_path / "workspace").is_dir()
+    assert (tmp_path / ".daino" / "workspaces").is_dir()
     with pytest.raises(WorkbenchError):
         service.get(kept.id)
 
@@ -373,11 +373,13 @@ def test_a_change_inside_a_workspace_folder_is_attributed_to_it(
 def test_removing_the_last_workspace_leaves_the_project_as_it_was(
     service: WorkbenchService, tmp_path: Path
 ) -> None:
+    """The empty parent goes; the state directory around it stays."""
     workspace = service.create("Only one")
 
     service.delete(workspace.id, remove_files=True)
 
-    assert not (tmp_path / "workspace").exists()
+    assert not (tmp_path / ".daino" / "workspaces").exists()
+    assert (tmp_path / ".daino").is_dir()
 
 
 # ------------------------------------------- history from the file-change event
@@ -429,3 +431,45 @@ def test_changes_outside_a_workspace_are_ignored(service: WorkbenchService, tmp_
 
     assert service.revisions(workspace.id, "src/main.py") == []
     assert service.revisions(workspace.id, "uploads/a.csv") == []
+
+
+# ------------------------------------------ reachable from the ordinary tools
+
+
+def test_workspace_documents_stay_searchable_inside_the_state_directory(
+    service: WorkbenchService, tmp_path: Path
+) -> None:
+    """Living under ``.daino`` must not hide the documents from the agent.
+
+    Every search tool skips the state directory, which is right for the
+    database and the logs and wrong for the user's own writing. The workspace
+    subtree is exempted, so the agent can still grep what it just wrote.
+    """
+    from daino.tools.filesystem import FileTools
+
+    workspace = service.create("Pricing", kind="research")
+    service.write_artifact(workspace.id, "findings.md", "Vendor B is cheapest", author="agent")
+    tools = FileTools(tmp_path)
+
+    document = f"{workspace.folder}/findings.md"
+    assert tools.read_file(document).data["content"] == "Vendor B is cheapest"
+    assert document in tools.glob_files(".daino/**/*.md").data["matches"]
+    assert document in [item["path"] for item in tools.grep("cheapest").data["matches"]]
+    assert document in [item["path"] for item in tools.search_text("cheapest").data["matches"]]
+
+
+def test_the_rest_of_the_state_directory_stays_hidden(
+    service: WorkbenchService, tmp_path: Path
+) -> None:
+    """The exemption is the workspaces subtree, not ``.daino`` wholesale."""
+    from daino.tools.filesystem import FileTools
+
+    service.create("Pricing")
+    (tmp_path / ".daino" / "logs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".daino" / "logs" / "gui.log").write_text("cheapest", encoding="utf-8")
+
+    tools = FileTools(tmp_path)
+
+    assert tools.glob_files(".daino/logs/*.log").data["matches"] == []
+    assert tools.grep("cheapest").data["matches"] == []
+    assert tools.search_text("cheapest").data["matches"] == []

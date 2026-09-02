@@ -34,6 +34,30 @@ export interface VerdictLook {
   tone: "ok" | "warn" | "bad" | "info";
 }
 
+/** Wording for a review of one change rather than of the whole repository. */
+export const REVIEW_VERDICT: Record<QAVerdict, VerdictLook> = {
+  pass: {
+    label: "READY TO MERGE",
+    hint: "Nothing this change introduces blocks it.",
+    tone: "ok",
+  },
+  warn: {
+    label: "NEEDS A LOOK",
+    hint: "Findings to resolve, or to decide about, before merging.",
+    tone: "warn",
+  },
+  blocked: {
+    label: "DO NOT MERGE",
+    hint: "This change introduces something that has to be fixed first.",
+    tone: "bad",
+  },
+  unknown: {
+    label: "NO VERDICT",
+    hint: "The review has not finished, so nothing has been cleared.",
+    tone: "info",
+  },
+};
+
 export const VERDICT: Record<QAVerdict, VerdictLook> = {
   pass: {
     label: "SAFE TO PUSH",

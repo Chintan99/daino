@@ -48,7 +48,48 @@ def test_alembic_initial_migration(tmp_path: Path) -> None:
     settings = default_settings(tmp_path)
     settings.database.url = f"sqlite:///{database_path}"
     database = Database(settings, tmp_path)
-    assert "missions" in inspect(database.engine).get_table_names()
+    tables = set(inspect(database.engine).get_table_names())
+    assert "missions" in tables
+    # The migration chain has to carry the executing half of a workspace too,
+    # or an operator who migrates rather than letting create_all run gets a
+    # database that cannot record a run.
+    assert {
+        "workspace_runs",
+        "workspace_run_steps",
+        "workspace_change_sets",
+        "workspace_change_entries",
+        "workspace_links",
+    } <= tables
+    task_columns = {
+        item["name"] for item in inspect(database.engine).get_columns("workspace_tasks")
+    }
+    assert {"depends_on", "attempts", "error"} <= task_columns
+
+
+def test_an_existing_plan_table_gains_the_columns_execution_needs(tmp_path: Path) -> None:
+    """``create_all`` cannot widen a table, so restart recovery has a bridge.
+
+    Simulates the database of a project that had workspaces before plans could
+    be executed: the table exists, the columns do not, and every task read would
+    fail until the bridge adds them.
+    """
+    from sqlalchemy import text
+
+    settings = default_settings(tmp_path)
+    database = Database(settings, tmp_path)
+    database.initialize()
+    with database.engine.begin() as connection:
+        for column in ("depends_on", "attempts", "error"):
+            connection.execute(text(f"ALTER TABLE workspace_tasks DROP COLUMN {column}"))
+    assert "attempts" not in {
+        item["name"] for item in inspect(database.engine).get_columns("workspace_tasks")
+    }
+
+    Database(settings, tmp_path).initialize()
+
+    columns = {item["name"] for item in inspect(database.engine).get_columns("workspace_tasks")}
+    assert {"depends_on", "attempts", "error"} <= columns
+    database.engine.dispose()
 
 
 def test_memory_and_architecture_decisions(project: tuple[Path, object, Database]) -> None:

@@ -60,6 +60,10 @@ _TERMINAL = frozenset({"finish", "respond"})
 #: bounded at roughly ``(_MAX_STALL_INTERVENTIONS + 1) * no_progress_limit``.
 _MAX_STALL_INTERVENTIONS = 3
 
+#: Floor on the productive streak that refunds the intervention budget, for a
+#: profile whose ``no_progress_limit`` is too small to be a meaningful bar.
+_MIN_PROGRESS_STREAK = 4
+
 #: Fed back when a turn is cut off at the output-token ceiling. Whole-file writes
 #: are what usually blow the budget, and the way out is a targeted edit.
 TRUNCATED_TURN_NOTICE = (
@@ -200,8 +204,14 @@ class ToolLoop:
         self._escalation_reason = ""
         #: Corrective nudges spent so far on a stalled run, capped by
         #: ``_MAX_STALL_INTERVENTIONS``. Distinct from model escalation: this
-        #: budget applies whether or not a stronger model is available.
+        #: budget applies whether or not a stronger model is available. Counts
+        #: *consecutive* failed corrections: a sustained run of productive
+        #: actions refunds it, so a long task is not killed for stalls it
+        #: already recovered from.
         self._stall_interventions = 0
+        #: Consecutive productive actions since the last stalled one, which is
+        #: what earns that refund.
+        self._progress_streak = 0
 
     async def run(
         self,
@@ -492,8 +502,9 @@ class ToolLoop:
         gateway_settings = getattr(self.gateway, "settings", None)
         memory_settings = getattr(gateway_settings, "memory", None)
         threshold = float(getattr(memory_settings, "compaction_threshold", 0.8))
+        target = int(budget * threshold)
         before = sum(_message_estimate(item) for item in messages)
-        if before < int(budget * threshold) or len(messages) < 10:
+        if before < target or len(messages) < 10:
             return
 
         recent_limit = (
@@ -541,18 +552,49 @@ class ToolLoop:
                 + json.dumps(state, ensure_ascii=False, default=str)
             ),
         )
-        task_message = Message(role="user", content=context.model_dump_json(indent=2))
-        # Avoid duplicating the task when it is already among the recent turns.
-        recent = [item for item in recent if item.content != task_message.content]
         # The bug this closes: after an edit, a file's true content lived only in
         # an older read observation. Compaction dropped it, the model then built
         # its next replace anchor from memory, the anchor did not match, and it
         # re-read into a loop. Re-reading the changed files from disk here keeps
         # their authoritative bytes in front of the model across every compaction.
-        pinned = self._authoritative_files_message(changed or [])
-        preserved = [item for item in (compacted, pinned, task_message) if item is not None]
-        messages[:] = [messages[0], *preserved, *recent]
-        after = sum(_message_estimate(item) for item in messages)
+        # Read once and reuse across trim stages; each call hits the disk.
+        pinned_files = self._authoritative_files_message(changed or [])
+        # Rebuilding at full fidelity has a floor: the system prompt, the
+        # structured state, the pinned files and the whole task bundle are all
+        # re-added every time. When that floor sits above the threshold — a 32k
+        # window whose bundle was sized against the entire input budget does
+        # exactly this — compaction fired every turn, reclaimed ~170 tokens, and
+        # rebuilt a byte-identical transcript. The model then saw the same prompt
+        # each turn, repeated the same action, and the run died on the
+        # no-progress guard with the request over the window besides. So trim
+        # progressively, shedding the most redundant material first, until the
+        # rebuilt transcript actually fits.
+        best: list[Message] | None = None
+        for source_fraction, keep_recent, keep_pinned in _COMPACTION_STAGES:
+            task_message = Message(
+                role="user",
+                content=_clip_bundle_sources(context, source_fraction).model_dump_json(indent=2),
+            )
+            # Avoid duplicating the task when it is already among the recent turns.
+            kept = [item for item in recent if item.content != task_message.content]
+            if keep_recent is not None:
+                kept = kept[-keep_recent:] if keep_recent else []
+                while kept and kept[0].role == "tool":
+                    kept.pop(0)
+            pinned = pinned_files if keep_pinned else None
+            preserved = [item for item in (compacted, pinned, task_message) if item is not None]
+            best = [messages[0], *preserved, *kept]
+            if sum(_message_estimate(item) for item in best) <= target:
+                break
+        if best is None:
+            return
+        after = sum(_message_estimate(item) for item in best)
+        # Compaction that does not shrink the transcript is worse than none: it
+        # costs a turn and re-adds scaffolding that can outweigh what it replaced
+        # (the field case grew a 15.4k transcript to 26.6k on its first pass).
+        if after >= before:
+            return
+        messages[:] = best
         if self.gateway.events is not None:
             self.gateway.events.publish(
                 ContextCompacted(
@@ -911,9 +953,33 @@ class ToolLoop:
         )
         if stalled:
             self._no_progress_steps += 1
+            self._progress_streak = 0
         else:
             self._no_progress_steps = 0
+            self._progress_streak += 1
+            # A correction that worked should give its budget back. The counter
+            # was only ever zeroed in __init__, so it accumulated across a whole
+            # run: a long task that stalled and recovered four separate times —
+            # hours apart, with real work in between — was killed on the fourth,
+            # reporting that three corrections "failed to make progress" when all
+            # three had succeeded. The budget is meant to bound *consecutive*
+            # failed corrections, as the give-up branch says it does.
+            #
+            # Refund on a sustained streak rather than a single good action,
+            # because one action is cheap to fake: an agent alternating one real
+            # write with a burst of no-ops would refund the budget every cycle
+            # and spin forever, which is the loop the cumulative counter existed
+            # to stop. A streak longer than the stall limit cannot be farmed that
+            # way — sustaining it *is* progress.
+            if self._stall_interventions and self._progress_streak >= self._progress_reset_streak:
+                self._stall_interventions = 0
         self._last_action_signature = signature
+
+    @property
+    def _progress_reset_streak(self) -> int:
+        """Consecutive productive actions that refund the intervention budget."""
+        limit = self.execution_profile.no_progress_limit if self.execution_profile else 3
+        return max(_MIN_PROGRESS_STREAK, limit * 2)
 
     @staticmethod
     def _resolve_command_failure(
@@ -1016,6 +1082,24 @@ _READ_FILE_MAX_CHARS = 14_000
 _PINNED_FILE_LIMIT = 2
 _PINNED_FILE_MAX_CHARS = 5_000
 
+#: Successive compaction attempts as ``(source_fraction, keep_recent, keep_pinned)``,
+#: ordered so the most redundant material goes first. Inlined bundle sources lead:
+#: the repository is on disk and the agent has read_file/grep, so that text is both
+#: the largest term and the one it can recover on demand. Recent turns and the
+#: pinned authoritative files are the working state, so they are surrendered last
+#: and never entirely — the final stage still carries a full exchange.
+_COMPACTION_STAGES: tuple[tuple[float, int | None, bool], ...] = (
+    (1.0, None, True),
+    (0.5, None, True),
+    (0.0, None, True),
+    (0.0, 4, True),
+    (0.0, 2, False),
+)
+
+#: Never clip an inlined file below this; a few hundred characters of head and
+#: tail still tells the model what the file is before it pages in the rest.
+_COMPACTION_MIN_SOURCE_CHARS = 400
+
 
 def _read_file_detail(result: ToolResult, *, max_chars: int = _READ_FILE_MAX_CHARS) -> str:
     """Render a read_file observation the model can act on for a large file.
@@ -1099,6 +1183,54 @@ OnActionCallback = Callable[[AgentAction, ToolResult, list[str]], None]
 
 #: Notified immediately before a validated action reaches the executor.
 OnActionStartCallback = Callable[[AgentAction], None]
+
+
+def _clip_sources(sources: dict[str, str], fraction: float, omitted: list[str]) -> dict[str, str]:
+    """Clip inlined file bodies to ``fraction`` of their length, or drop them all."""
+    if not sources:
+        return {}
+    if fraction <= 0.0:
+        omitted.append(f"{len(sources)} inlined source files; use read_file/grep")
+        return {}
+    notice = "\n… source clipped during compaction; use read_file with offset/limit …\n"
+    clipped: dict[str, str] = {}
+    for path, content in sources.items():
+        limit = max(_COMPACTION_MIN_SOURCE_CHARS, int(len(content) * fraction))
+        if len(content) <= limit:
+            clipped[path] = content
+            continue
+        # Head and tail both matter: imports and module intent live at the top,
+        # the most recently appended code at the bottom.
+        room = max(0, limit - len(notice))
+        head = room * 2 // 3
+        tail = room - head
+        clipped[path] = content[:head] + notice + (content[-tail:] if tail else "")
+        omitted.append(f"part of {path}; use read_file")
+    return clipped
+
+
+def _clip_bundle_sources(context: ContextBundle, fraction: float) -> ContextBundle:
+    """Shrink the task bundle's inlined sources so a rebuilt transcript can fit.
+
+    Compaction re-serialises the whole bundle every time, and in standard mode
+    that bundle is sized against most of the input budget — so its inlined source
+    is what pins the rebuilt transcript above the threshold. It is also the most
+    recoverable part of the prompt, since the files are on disk and the agent has
+    read_file/grep. What gets dropped is recorded in ``omitted_context`` so the
+    model pages back whatever it still needs instead of inventing it.
+    """
+    if fraction >= 1.0:
+        return context
+    omitted = list(context.omitted_context)
+    files = _clip_sources(context.files, fraction, omitted)
+    tests = _clip_sources(context.tests, fraction, omitted)
+    return context.model_copy(
+        update={
+            "files": files,
+            "tests": tests,
+            "omitted_context": list(dict.fromkeys(omitted)),
+        }
+    )
 
 
 def _message_estimate(message: Message) -> int:

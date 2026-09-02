@@ -697,7 +697,7 @@ def scan_patterns(relative: str, text: str) -> list[QAFinding]:
     findings: list[QAFinding] = []
     for number, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
-        if not stripped or len(line) > 2_000 or _is_non_executable(stripped, relative):
+        if not stripped or len(line) > 2_000 or is_non_executable(stripped, relative):
             continue
         for rule in applicable:
             if not rule.pattern.search(line):
@@ -862,7 +862,24 @@ def _rule_applies(rule: CodeRule, relative: str) -> bool:
     return not rule.names and not rule.suffixes
 
 
-def _is_non_executable(stripped: str, relative: str) -> bool:
+def is_non_production(relative: str) -> bool:
+    """Whether a path is a test, fixture, example, or doc.
+
+    Such a file legitimately contains the very patterns a scanner looks for —
+    a security test has to write ``shell=True`` to assert it is caught. The
+    finding is kept, because a real credential can live in a fixture too, but
+    it is demoted and marked low confidence so it can never be the thing that
+    blocks a release.
+    """
+    return bool(_NON_PRODUCTION.search(relative))
+
+
+def demote(severity: QASeverity) -> QASeverity:
+    """One step down the severity ladder."""
+    return _demote(severity)
+
+
+def is_non_executable(stripped: str, relative: str) -> bool:
     """Whether a line cannot itself be the weakness the rules look for.
 
     Comments are the obvious case. The others matter for repositories that

@@ -121,3 +121,58 @@ def extract_outline(relative: str, source: bytes) -> SyntaxOutline | None:
                 )
         stack.extend(reversed(node.children))
     return SyntaxOutline(symbols=symbols, parser=f"tree-sitter:{grammar}")
+
+
+@dataclass(frozen=True, slots=True)
+class SyntaxProblem:
+    """One place a grammar could not make sense of the source."""
+
+    line: int
+    column: int
+    #: "error" for a malformed span, "missing" for a token the grammar expected.
+    kind: str
+
+
+#: A file that is broken everywhere produces an error node per token; the first
+#: few locate the problem and the rest are noise.
+MAX_SYNTAX_PROBLEMS = 10
+
+
+def syntax_problems(relative: str, source: bytes) -> list[SyntaxProblem] | None:
+    """Report where a grammar failed to parse ``source``.
+
+    ``None`` means "no opinion" — there is no bundled grammar for this
+    extension, or the parser itself could not be loaded. That is deliberately
+    distinct from an empty list, which means the file parsed cleanly: a review
+    must never report "syntax OK" for a language it cannot actually read.
+    """
+    grammar = GRAMMARS.get(Path(relative).suffix.lower())
+    if grammar is None:
+        return None
+    try:
+        parser = _parser_for(grammar)
+        if parser is None:
+            return None
+        tree = parser.parse(source)
+    except Exception:  # noqa: BLE001 - a parser crash is "no opinion", not a failure
+        return None
+
+    problems: list[SyntaxProblem] = []
+    stack = [tree.root_node]
+    while stack and len(problems) < MAX_SYNTAX_PROBLEMS:
+        node = stack.pop()
+        # has_error is true for every ancestor of a problem, so only the node
+        # that is itself broken is worth reporting.
+        if node.type == "ERROR" or node.is_missing:
+            problems.append(
+                SyntaxProblem(
+                    line=node.start_point.row + 1,
+                    column=node.start_point.column + 1,
+                    kind="missing" if node.is_missing else "error",
+                )
+            )
+            continue
+        if node.has_error:
+            stack.extend(reversed(node.children))
+    return problems
+

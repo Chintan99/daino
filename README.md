@@ -114,11 +114,14 @@ D[Ai]NO agent and one session:
   React Flow canvas you can also edit by hand, plus HTML/React prototypes. Design never writes
   production code directly; use **Implement Design** to generate a plan first.
 - **Workspace** — the work that is not code. Give Daino a goal, upload the files it needs (PDF,
-  Word, Excel and PowerPoint are extracted to text), and the documents it writes land in your
-  project as ordinary files — greppable, diffable, and openable in the editor. Research is cited
-  from a recorded source list, the plan is editable by both of you, and every version of a document
-  is recoverable.
-- **Inspector** — the pre-push check. **Scan** runs end-to-end QA and a vulnerability assessment —
+  Word, Excel and PowerPoint are extracted to text), and the documents it writes land under
+  `.daino/workspaces/<name>/` as ordinary files — greppable and openable in the editor, without
+  scattering folders through your source tree. Then **Run Plan**, and Daino works the plan a step at
+  a time: researching, writing, diagramming in DESIGN, preparing coding work for CODE, and rendering
+  finished Word, Excel, PowerPoint and PDF files. Steer it mid-run by typing, pause it between
+  steps, review everything it changed in one place, and undo any of it. Research is cited from a
+  recorded source list and every version of a document is recoverable.
+- **Inspector** — the pre-production check. **Scan** audits the whole repository; **Review** reads one change — your working tree, what is staged, or this branch against its base — re-parses every file it touches, finds what was left behind, and says whether it can be merged. **Scan** runs end-to-end QA and a vulnerability assessment —
   a built-in offline audit for secrets, insecure code, and weak configuration; the project's own
   lint/type/test commands; whichever security scanners the host has; and a non-destructive probe of
   the running app — then answers with a release-gate verdict: safe to push, review first, or do not

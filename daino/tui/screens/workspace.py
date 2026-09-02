@@ -15,6 +15,7 @@ from textual.screen import Screen
 from textual.widgets import Button, ContentSwitcher
 
 from daino.application import (
+    ChangeReviewApplicationService,
     CheckpointApplicationService,
     DeploymentApplicationService,
     ExecutionMapApplicationService,
@@ -23,6 +24,7 @@ from daino.application import (
     ProviderApplicationService,
     QAApplicationService,
     RepositoryApplicationService,
+    ReviewError,
     SettingsApplicationService,
     VerificationApplicationService,
     severity_counts,
@@ -60,7 +62,14 @@ from daino.events import (
 from daino.git import GitClient
 from daino.observability import collect_stats
 from daino.playbooks import PlaybookLoader
-from daino.schemas import InteractionMode, MissionStatus, ProjectMode, QAReport, TodoItem
+from daino.schemas import (
+    ChangeReview,
+    InteractionMode,
+    MissionStatus,
+    ProjectMode,
+    QAReport,
+    TodoItem,
+)
 from daino.tui.screens.views import (
     ApprovalsView,
     CheckpointsView,
@@ -69,11 +78,11 @@ from daino.tui.screens.views import (
     ExecutionMapView,
     FilesView,
     HelpView,
+    InspectorView,
     LogsView,
     MissionsView,
     PlaybooksView,
     ProvidersView,
-    QAView,
     RepositoryView,
     SettingsView,
     TestsView,
@@ -157,6 +166,7 @@ class WorkspaceScreen(Screen[None]):
         self.repository = RepositoryApplicationService(context)
         self.providers = ProviderApplicationService(context)
         self.qa = QAApplicationService(context, self.missions)
+        self.review = ChangeReviewApplicationService(context, self.missions)
         self.verification = VerificationApplicationService(context)
         self.deployments = DeploymentApplicationService(context)
         self.execution_map = ExecutionMapApplicationService(context)
@@ -183,6 +193,7 @@ class WorkspaceScreen(Screen[None]):
         self._status_updated_at = 0.0
         self._last_usage: tuple[int, float] = (0, 0.0)
         self._last_qa_report: QAReport | None = None
+        self._last_review: ChangeReview | None = None
         self.verbose = False
         #: Whether a sleep inhibitor is currently held for in-progress work.
         self._work_in_progress = False
@@ -195,7 +206,7 @@ class WorkspaceScreen(Screen[None]):
             with ContentSwitcher(initial="chat-view", id="main-workspace"):
                 yield ConversationView(id="chat-view")
                 yield MissionsView(self.missions)
-                yield QAView()
+                yield InspectorView()
                 yield RepositoryView(self.repository)
                 yield FilesView(self.repository)
                 yield DiffView(self.repository)
@@ -851,7 +862,7 @@ class WorkspaceScreen(Screen[None]):
         self.query_one("#nav-tabs", NavigationTabs).set_badges(
             {
                 "missions-view": str(int(stats.get("missions", 0))),
-                "qa-view": self._qa_badge(),
+                "inspector-view": self._inspector_badge(),
                 "changes-view": str(len(statuses)),
                 "tests-view": f"{failures} failed" if failures else "",
             }
@@ -860,14 +871,23 @@ class WorkspaceScreen(Screen[None]):
     def _refresh_missions(self) -> None:
         self.query_one("#missions-view", MissionsView).refresh_data()
 
-    def _qa_badge(self) -> str:
-        if self._last_qa_report is None:
-            return ""
-        if self._last_qa_report.status == "running":
+    def _inspector_badge(self) -> str:
+        """Whichever half of the Inspector last had something to say.
+
+        The tab has one badge and the panel has two subjects, so a running job
+        wins, then the worse of the two verdicts — the point of a badge is to
+        surface the thing you would want to go and look at.
+        """
+        scan, review = self._last_qa_report, self._last_review
+        if (scan and scan.status == "running") or (review and review.status == "running"):
             return "running"
-        failures = sum(item.status == "failed" for item in self._last_qa_report.checks)
-        failures += sum(item.status == "failed" for item in self._last_qa_report.specialists)
-        return f"{failures} failed" if failures else "done"
+        verdicts = [item.verdict for item in (scan, review) if item is not None]
+        if not verdicts:
+            return ""
+        for verdict, badge in (("blocked", "blocked"), ("warn", "review"), ("pass", "clear")):
+            if verdict in verdicts:
+                return badge
+        return ""
 
     def _refresh_diff(self) -> None:
         self.query_one("#changes-view", DiffView).refresh_data(self.active_mission_id)
@@ -904,6 +924,9 @@ class WorkspaceScreen(Screen[None]):
         self.action_cancel_work()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "run-review":
+            self.run_change_review()
+            return
         if event.button.id == "run-qa":
             self.run_qa()
         elif event.button.id == "refresh-qa-history":
@@ -988,7 +1011,12 @@ class WorkspaceScreen(Screen[None]):
         view_commands = {
             "/help": "help-view",
             "/missions": "missions-view",
-            "/qa": "qa-view",
+            # "/qa" kept as an alias: the view was called QA before it grew a
+            # change review, and muscle memory outlives a rename.
+            "/qa": "inspector-view",
+            "/inspect": "inspector-view",
+            "/inspector": "inspector-view",
+            "/review": "inspector-view",
             "/files": "files-view",
             "/diff": "changes-view",
             "/checkpoints": "checkpoints-view",
@@ -1523,7 +1551,7 @@ class WorkspaceScreen(Screen[None]):
     @work(exclusive=True, group="qa")
     async def run_qa(self) -> None:
         """Run automated evidence collection and parallel read-only reviewers."""
-        self.action_open_view("qa-view")
+        self.action_open_view("inspector-view")
         previous_status = self.active_status
         self.active_status = "QA running"
         self._set_activity("verifying", "quality checks")
@@ -1555,16 +1583,60 @@ class WorkspaceScreen(Screen[None]):
             self.active_status = previous_status if self.active_mission_id else "Ready"
             self.request_refresh()
 
+    @work(exclusive=True, group="review")
+    async def run_change_review(self) -> None:
+        """Review the selected change: mechanically, then with reviewers."""
+        self.action_open_view("inspector-view")
+        panel = self.query_one("#inspector-view", InspectorView)
+        scope = panel.review_scope()
+        previous_status = self.active_status
+        self.active_status = "Review running"
+        self._set_activity("inspecting", f"reviewing the {scope} change")
+        self.request_refresh()
+        try:
+            review = await self.review.run(
+                scope=scope,  # type: ignore[arg-type]
+                profile_override=self.providers.session_profile(self.session_id),
+                on_update=self._show_review,
+            )
+            counts = severity_counts(review.findings)
+            tally = ", ".join(f"{count} {level}" for level, count in counts.items() if count)
+            blocked = review.verdict == "blocked"
+            self.notify(
+                f"Review {review.verdict.upper()}"
+                + (f" — {tally}." if tally else f" — {len(review.files)} file(s)."),
+                severity="error" if blocked else ("warning" if tally else "information"),
+            )
+            self._set_activity(
+                "failed" if blocked else "completed",
+                f"verdict {review.verdict}" + (f", {tally}" if tally else ""),
+            )
+        except ReviewError as exc:
+            # An unresolvable subject is the user's to fix, not a crash.
+            self.notify(str(exc), severity="warning")
+            self._set_activity("completed", "nothing to review")
+        except asyncio.CancelledError:
+            self.notify("Review cancelled; findings so far were preserved.", severity="warning")
+            raise
+        finally:
+            self.active_status = previous_status if self.active_mission_id else "Ready"
+            self.request_refresh()
+
+    def _show_review(self, review: ChangeReview) -> None:
+        self._last_review = review
+        self.query_one("#inspector-view", InspectorView).show_review(review)
+        self.request_refresh()
+
     def _show_qa_report(self, report: QAReport) -> None:
         previous = self._last_qa_report
         self._last_qa_report = report
-        self.query_one("#qa-view", QAView).show_report(report)
+        self.query_one("#inspector-view", InspectorView).show_report(report)
         if previous is None or previous.id != report.id or previous.status != report.status:
             self._refresh_qa_history()
         self.request_refresh()
 
     def _refresh_qa_history(self) -> None:
-        self.query_one("#qa-view", QAView).set_history(self.qa.history())
+        self.query_one("#inspector-view", InspectorView).set_history(self.qa.history())
 
     def load_qa_report(self, report_id: str) -> None:
         report = self.qa.load(report_id)
@@ -1837,7 +1909,7 @@ class WorkspaceScreen(Screen[None]):
             self._refresh_diff()
         elif view_id == "missions-view":
             self._refresh_missions()
-        elif view_id == "qa-view":
+        elif view_id == "inspector-view":
             self._refresh_qa_history()
         elif view_id == "logs-view":
             self.query_one("#logs-view", LogsView).refresh_data()

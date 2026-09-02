@@ -33,10 +33,20 @@ commands. The table below is a map of the complete feature set and where to lear
 | Isolated missions | Compiles requirements, asks for plan approval, edits a Git worktree, verifies, reviews, and records evidence | [Missions](missions.md) |
 | Parallel sub-agents | Splits work into dependency waves with non-overlapping write scopes and read-only specialist roles | [TUI: teams](tui.md#teams-of-sub-agents) |
 | Project QA | Combines deterministic tests, linters, browser tests, dependency scans, and parallel read-only specialists | [TUI: QA](tui.md#quality-assurance) |
-| Knowledge workspaces | A goal, uploaded files, documents, a plan, and research — continuing across many sessions, stored as real files in the project | [Workspace](workspace.md) |
+| Knowledge workspaces | A goal, uploaded files, documents, a plan, and research — continuing across many sessions, stored as real files under `.daino/workspaces/` | [Workspace](workspace.md) |
 | Document extraction | PDF, Word, Excel, and PowerPoint uploads become markdown the agent can read | [Workspace: uploads](workspace.md#uploads) |
 | Cited research | Every page the agent fetches is recorded as a source and cached, so a claim stays checkable | [Workspace: research](workspace.md#research-and-sources) |
+| Executable plans | Daino works through a workspace plan one step per agent turn, pausing, resuming and reporting as it goes | [Workspace: running the plan](workspace.md#running-the-plan) |
+| Steerable runs | New direction typed mid-run updates the plan at the next step boundary without discarding finished work | [Workspace: steering](workspace.md#steering-it-while-it-works) |
+| Run approvals | Actions are classified by what they can cost; reading and writing in the workspace proceed, commands and deletions ask | [Workspace: approvals](workspace.md#approvals) |
+| Change sets | Everything one step touched, reviewed and undone together, on top of the per-file history | [Workspace: reviewing](workspace.md#reviewing-what-changed) |
+| Skills | Reusable ways of working — PRD, competitive research, incident review — chosen from the goal and overridable per project | [Workspace: skills](workspace.md#skills) |
+| Office deliverables | Word, Excel, PowerPoint and PDF rendered from a document with its structure intact | [Workspace: finished files](workspace.md#finished-files) |
+| Stale-document warnings | A document written from another is flagged when its source changes; advisory, never rewritten automatically | [Workspace: provenance](workspace.md#provenance-and-stale-documents) |
+| Cross-mode handoff | A workspace starts diagrams in DESIGN and prepares coding work for CODE, linking both back | [Workspace: CODE and DESIGN](workspace.md#working-with-code-and-design) |
 | Vulnerability assessment | Offline audit for secrets, insecure code, and weak configuration; installed SAST and dependency scanners; a non-destructive probe of the running app | [GUI: the Inspector](gui.md#the-inspector) |
+| Change review | Reviews one change — working tree, staged, or branch against base — for correctness, gaps, and what was left behind, ending in a merge verdict | [GUI: review](gui.md#review) |
+| Syntax verification | Every changed file is re-parsed, through the language's own parser or its grammar, so a change that stops a file compiling cannot pass | [GUI: review](gui.md#review) |
 | Release gate | One deterministic verdict — safe to push, review first, or do not push — with every reason it depended on | [GUI: the verdict](gui.md#the-verdict) |
 | Sessions | Persists conversation history, selected context, current plans, model choice, and events per repository | [TUI: sessions](tui.md#sessions-and-context), [GUI: sessions](gui.md#sessions) |
 | Checkpoints and restore | Archives the working tree before edits and supports reviewed recovery without automatic pushes | [CLI reference](cli-reference.md#memory-and-checkpoints) |

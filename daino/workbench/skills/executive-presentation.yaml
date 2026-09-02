@@ -1,0 +1,22 @@
+name: executive-presentation
+title: Executive Presentation
+description: Compress a body of work into a deck a decision-maker can act on.
+triggers: [presentation, deck, slides, executive, briefing, pitch, summary]
+kinds: [general]
+preferred_tools: [workspace_read, read_file, workspace_deliverable]
+expected_artifacts:
+  - A slide deck with a title slide, the recommendation up front, and evidence behind it
+instructions: |
+  Put the recommendation on the second slide, not the last. An executive
+  audience reads to decide, and a deck that builds suspense wastes the only
+  attention it will get.
+
+  One idea per slide, stated in the title as a sentence — "Vendor B costs 30%
+  less at our volume" beats "Cost comparison". Keep bullets to a line each and
+  push the detail into the document the deck points at. Numbers appear with
+  their basis; if a figure needs a caveat to be honest, it goes on the slide,
+  not in a footnote nobody reads.
+checklist:
+  - Is the recommendation in the first two slides?
+  - Does every slide title state a claim rather than a topic?
+  - Does every number carry its basis?

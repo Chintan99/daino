@@ -271,6 +271,19 @@ export function useSessionSocket(target: string = "latest") {
           qc.invalidateQueries({ queryKey: qk.workspaces });
           break;
         }
+        case "WorkspaceRunUpdated": {
+          // The run row is the state; the event only says it moved. Refetch
+          // rather than reconstructing a run from a stream of deltas.
+          const workspaceId = str(event.workspace_id);
+          if (workspaceId) {
+            qc.invalidateQueries({ queryKey: qk.workspaceRun(workspaceId) });
+            qc.invalidateQueries({ queryKey: qk.workspaceItem(workspaceId) });
+            // A run works through the plan, so its progress is workspace
+            // progress: the list's done-count has to follow it.
+            qc.invalidateQueries({ queryKey: qk.workspaces });
+          }
+          break;
+        }
         case "FileChanged":
           // Accumulate the live file list the panel shows while the turn runs.
           s.recordChange({

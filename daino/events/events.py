@@ -300,6 +300,25 @@ class WorkspaceUpdated(MissionEvent):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class WorkspaceRunUpdated(MissionEvent):
+    """A workspace run started, advanced, paused, or finished.
+
+    Carries only identifiers and a sentence: the client refetches the run to
+    render it, exactly as it does for a workspace change. Streaming the whole
+    run down the socket would duplicate the state that the database already
+    owns and the timeline already persists.
+    """
+
+    workspace_id: str
+    run_id: str
+    status: str = ""
+    #: The plan step this concerns, when it concerns one.
+    task_id: str = ""
+    #: One user-facing sentence, already fit to show.
+    message: str = ""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class GitChanged(MissionEvent):
     """The working tree changed (an edit, write, or delete) so clients refresh."""
 

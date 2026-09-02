@@ -13,6 +13,7 @@ from daino.application.mission_service import MissionApplicationService
 from daino.application.provider_service import ProviderApplicationService
 from daino.application.qa_service import QAApplicationService, severity_counts
 from daino.application.repository_service import RepositoryApplicationService
+from daino.application.review_service import ChangeReviewApplicationService, ReviewError
 from daino.application.settings_service import SettingsApplicationService
 from daino.application.verification_service import VerificationApplicationService
 from daino.application.view_models import (
@@ -34,7 +35,9 @@ __all__ = [
     "ModelUsage",
     "ProjectContext",
     "ProviderApplicationService",
+    "ChangeReviewApplicationService",
     "QAApplicationService",
+    "ReviewError",
     "severity_counts",
     "RepositoryApplicationService",
     "SettingsApplicationService",

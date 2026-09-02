@@ -42,7 +42,7 @@ from daino.schemas import InteractionMode, QAReport, TodoItem
 from daino.tui.app import DainoApp
 from daino.tui.keybindings import SLASH_COMMANDS
 from daino.tui.screens.onboarding import OnboardingScreen
-from daino.tui.screens.views import ProvidersView, QAView
+from daino.tui.screens.views import InspectorView, ProvidersView
 from daino.tui.screens.workspace import WorkspaceScreen
 from daino.tui.widgets import (
     ApprovalModal,
@@ -101,15 +101,15 @@ async def test_tui_launches_existing_project_and_navigation_works(tmp_path: Path
 
         await app_instance.screen.execute_command("/qa")
         await pilot.pause()
-        assert switcher.current == "qa-view"
-        assert app_instance.screen.query_one("#qa-view", QAView)
+        assert switcher.current == "inspector-view"
+        assert app_instance.screen.query_one("#inspector-view", InspectorView)
         tabs = app_instance.screen.query_one("#nav-tabs", NavigationTabs)
         assert [tab.view_id for tab in tabs.query(NavigationTab)][:3] == [
             "chat-view",
             "missions-view",
-            "qa-view",
+            "inspector-view",
         ]
-        scroll = app_instance.screen.query_one("#qa-scroll", VerticalScroll)
+        scroll = app_instance.screen.query_one("#inspector-scroll", VerticalScroll)
         assert scroll.max_scroll_y > 0
 
 
@@ -217,7 +217,7 @@ async def test_clicking_each_primary_tab_switches_the_workspace(tmp_path: Path) 
 
         for view_id in (
             "missions-view",
-            "qa-view",
+            "inspector-view",
             "files-view",
             "changes-view",
             "tests-view",
@@ -340,6 +340,77 @@ async def test_qa_run_button_starts_the_workspace_worker(
 
 
 @pytest.mark.asyncio
+async def test_the_review_button_starts_the_review_worker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The Inspector's other half: review the change in front of you."""
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        started: list[bool] = []
+        monkeypatch.setattr(workspace, "run_change_review", lambda: started.append(True))
+
+        await workspace.execute_command("/review")
+        await pilot.pause()
+        panel = workspace.query_one("#inspector-view", InspectorView)
+        # Working tree by default: the change you have in front of you.
+        assert panel.review_scope() == "working"
+        await pilot.click("#run-review")
+        await pilot.pause()
+
+        assert started == [True]
+
+
+@pytest.mark.asyncio
+async def test_a_review_renders_its_verdict_files_and_findings(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from daino.schemas import ChangedFile, ChangeReview, QAFinding
+
+    app_instance = initialized_app(tmp_path)
+    async with app_instance.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        workspace = app_instance.screen
+        assert isinstance(workspace, WorkspaceScreen)
+        workspace.action_open_view("inspector-view")
+        await pilot.pause()
+
+        workspace._show_review(
+            ChangeReview(
+                id="review-1",
+                status="completed",
+                started_at=datetime.now(UTC),
+                subject="Uncommitted changes in the working tree",
+                files=[ChangedFile(path="app.py", insertions=9, deletions=2, findings=1)],
+                insertions=9,
+                deletions=2,
+                verdict="blocked",
+                findings=[
+                    QAFinding(
+                        id="f1",
+                        title="app.py does not parse",
+                        severity="critical",
+                        location="app.py",
+                        line=12,
+                    )
+                ],
+                summary="# Change review\n\nIt does not parse.",
+            )
+        )
+        await pilot.pause()
+
+        state = str(workspace.query_one("#review-state").render())
+        assert "DO NOT MERGE" in state
+        assert "1 file(s)" in state
+        assert workspace.query_one("#review-files", DataTable).row_count == 1
+        assert workspace.query_one("#review-findings", DataTable).row_count == 1
+        # One badge, two subjects: the worse verdict is the one worth surfacing.
+        assert workspace._inspector_badge() == "blocked"
+
+
+@pytest.mark.asyncio
 async def test_qa_tab_lists_and_loads_repository_scan_history(tmp_path: Path) -> None:
     app_instance = initialized_app(tmp_path)
     async with app_instance.run_test(size=(120, 40)) as pilot:
@@ -356,7 +427,7 @@ async def test_qa_tab_lists_and_loads_repository_scan_history(tmp_path: Path) ->
         )
         workspace.qa._save(report)
 
-        workspace.action_open_view("qa-view")
+        workspace.action_open_view("inspector-view")
         await pilot.pause()
         history = workspace.query_one("#qa-history", DataTable)
         assert history.row_count == 1

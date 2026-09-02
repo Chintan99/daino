@@ -2365,6 +2365,437 @@ select.input {
   flex: 1;
 }
 
+/* The run strip in the agent panel: a state, a step, and a pause. */
+.agent-run-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}
+.agent-run-state {
+  letter-spacing: 0.06em;
+  color: var(--cyan);
+  flex: none;
+}
+.agent-run-bar.waiting_for_approval .agent-run-state,
+.agent-run-bar.paused .agent-run-state {
+  color: var(--yellow);
+}
+.agent-run-task {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Live context: what Daino is working from, collapsed until asked. */
+.agent-context {
+  border-bottom: 1px solid var(--border);
+}
+.agent-context-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-11);
+  text-align: left;
+  cursor: pointer;
+}
+.agent-context-label {
+  letter-spacing: 0.06em;
+  flex: none;
+}
+.agent-context-goal {
+  flex: 1;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-context-body {
+  margin: 0;
+  padding: 0 10px 8px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  font-size: var(--fs-11);
+}
+.agent-context-body dt {
+  color: var(--text-3);
+}
+.agent-context-body dd {
+  margin: 0;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+/* Provenance and staleness, under the document list. */
+.ws-links {
+  padding-bottom: 10px;
+}
+.ws-stale-list,
+.ws-link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ws-stale {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.ws-stale-text {
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}
+.ws-stale-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.ws-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: var(--fs-11);
+  border-bottom: 1px solid var(--border);
+}
+.ws-link-title {
+  color: var(--text-1);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-link-where {
+  color: var(--text-3);
+}
+.ws-link-path {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--text-2);
+  font-family: var(--mono, monospace);
+  font-size: var(--fs-11);
+  cursor: pointer;
+}
+.ws-link-path:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.ws-link-relation {
+  color: var(--text-3);
+}
+.ws-export {
+  display: flex;
+  gap: 2px;
+}
+
+/* Runs: the plan being executed, above the plan itself. */
+.ws-run {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ws-run-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ws-run-state {
+  font-size: var(--fs-11);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.ws-run-state.running,
+.ws-run-state.pending {
+  color: var(--cyan);
+}
+.ws-run-state.paused,
+.ws-run-state.waiting_for_user,
+.ws-run-state.waiting_for_approval {
+  color: var(--yellow, var(--text-1));
+}
+.ws-run-state.completed {
+  color: var(--green);
+}
+.ws-run-state.failed {
+  color: var(--red);
+}
+.ws-run-progress {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.ws-run-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+.ws-run-skill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ws-run-skill label {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.ws-run-skill .input {
+  flex: 1;
+}
+.ws-run-note,
+.ws-run-error {
+  font-size: var(--fs-11);
+  color: var(--text-2);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ws-run-error.failed {
+  color: var(--red);
+}
+.ws-run-recover {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ws-run-summary {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.ws-run-summary-title {
+  font-size: var(--fs-12);
+  color: var(--text-1);
+  margin-bottom: 4px;
+}
+.ws-run-summary-list {
+  margin: 0 0 4px;
+  padding-left: 16px;
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}
+
+/* Approval: the run stopped to ask, so it reads as a question, not a log line. */
+.ws-approval {
+  border: 1px solid var(--yellow, var(--border));
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ws-approval-title {
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+.ws-approval-action {
+  font-family: var(--mono, monospace);
+  font-size: var(--fs-11);
+  color: var(--text-1);
+  word-break: break-all;
+}
+.ws-approval-reason {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.ws-approval-buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* The step the run is on, and why a step failed. */
+.ws-task.current {
+  background: var(--bg-2);
+}
+.ws-task.current .ws-task-mark {
+  color: var(--cyan);
+}
+.ws-task-error {
+  font-size: var(--fs-11);
+  color: var(--red);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Timeline: what the run did, in sentences. */
+.ws-timeline {
+  border-top: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.ws-timeline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px;
+}
+.ws-timeline-step {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}
+.ws-timeline-glyph {
+  width: 12px;
+  color: var(--text-3);
+  flex: none;
+}
+.ws-timeline-step.task_completed .ws-timeline-glyph {
+  color: var(--green);
+}
+.ws-timeline-step.task_started .ws-timeline-glyph {
+  color: var(--cyan);
+}
+.ws-timeline-step.task_failed .ws-timeline-glyph,
+.ws-timeline-step.approval .ws-timeline-glyph {
+  color: var(--red);
+}
+.ws-timeline-step.artifact .ws-timeline-text,
+.ws-timeline-step.source .ws-timeline-text {
+  font-family: var(--mono, monospace);
+  color: var(--text-3);
+}
+.ws-timeline-text {
+  flex: 1;
+}
+.ws-timeline-detail {
+  color: var(--text-3);
+  flex: 2;
+}
+
+/* Change review: a set of documents, what happened to each, and two buttons. */
+.ws-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+}
+.ws-change {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.ws-change-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.ws-change-title {
+  font-size: var(--fs-12);
+  color: var(--text-1);
+}
+.ws-change-status {
+  margin-left: auto;
+  font-size: var(--fs-11);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.ws-change-status.accepted {
+  color: var(--green);
+}
+.ws-change-status.rejected {
+  color: var(--red);
+}
+.ws-change-summary {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: var(--fs-11);
+  color: var(--text-2);
+}
+.ws-change-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ws-change-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border);
+}
+.ws-change-path {
+  border: none;
+  background: transparent;
+  color: var(--text-1);
+  font-family: var(--mono, monospace);
+  font-size: var(--fs-11);
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-change-path:hover {
+  text-decoration: underline;
+}
+.ws-change-action,
+.ws-change-decided {
+  font-size: var(--fs-11);
+  color: var(--text-3);
+}
+.ws-change-buttons {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+.ws-change-decided {
+  margin-left: auto;
+}
+.ws-change-entry.rejected .ws-change-path {
+  text-decoration: line-through;
+  color: var(--text-3);
+}
+.ws-change-foot {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+.ws-change-diff {
+  flex-basis: 100%;
+  margin: 4px 0 6px;
+  padding: 6px 8px;
+  background: var(--bg-2);
+  border-radius: 3px;
+  font-size: var(--fs-11);
+  overflow-x: auto;
+  max-height: 320px;
+}
+.ws-diff-line {
+  white-space: pre;
+  font-family: var(--mono, monospace);
+}
+.ws-diff-marker {
+  display: inline-block;
+  width: 12px;
+  color: var(--text-3);
+}
+.ws-diff-line.added {
+  color: var(--green);
+}
+.ws-diff-line.removed {
+  color: var(--red);
+}
+.ws-diff-line.same {
+  color: var(--text-3);
+}
+
 /* Uploads */
 .ws-drop {
   margin: 4px 12px 10px;
@@ -2702,6 +3133,92 @@ select.input {
   .tab-mark.running {
     animation: none;
   }
+}
+
+/* ---- Inspector ▸ Review ---- */
+
+.review-commits {
+  margin: 0;
+  padding: 0 12px 8px 30px;
+  font-size: var(--fs-11-5);
+  color: var(--text-2);
+}
+.review-commits li {
+  padding: 2px 0;
+}
+
+/* One letter per change kind, the way every diff view marks them. */
+.change-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: var(--fs-10);
+  font-weight: 700;
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+.change-mark.k-added {
+  color: var(--add);
+  background: var(--add-bg);
+}
+.change-mark.k-deleted {
+  color: var(--del);
+  background: var(--del-bg);
+}
+.change-mark.k-renamed,
+.change-mark.k-binary {
+  color: var(--cyan);
+}
+.added {
+  color: var(--add);
+}
+.removed {
+  color: var(--del);
+}
+
+.review-diff {
+  background: var(--bg-0);
+  border-top: 1px solid var(--border);
+}
+.review-diff-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-10);
+}
+.review-diff pre {
+  margin: 0;
+  padding: 8px 0;
+  max-height: 420px;
+  overflow: auto;
+  font-size: var(--fs-11-5);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.review-diff pre > div {
+  padding: 0 12px;
+  white-space: pre;
+}
+.patch-add {
+  color: var(--add);
+  background: var(--add-bg);
+}
+.patch-del {
+  color: var(--del);
+  background: var(--del-bg);
+}
+/* The hunk header is the only navigational line in a patch, so it stands out. */
+.patch-hunk {
+  color: var(--cyan);
+  background: var(--bg-2);
+}
+.patch-head {
+  color: var(--text-3);
 }
 
 /* ---- Live app (the Inspector's run-the-project view) ---- */

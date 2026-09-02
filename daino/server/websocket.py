@@ -111,6 +111,34 @@ def _turn_summary(outcome: object) -> str:
     return answer or "Turn finished"
 
 
+async def _steer_active_run(
+    state: GuiState, session_id: str, text: str, connection: _Connection
+) -> bool:
+    """Route a message typed during a run into that run. True when it was.
+
+    Recorded in the conversation first so the panel shows what was said, then
+    handed to the executor, which folds it into the plan at the next step
+    boundary rather than interrupting the step in flight.
+    """
+    run = state.runs.active_for_session(session_id)
+    if run is None:
+        return False
+    state.missions.add_message(session_id, kind="user", role="user", content=text)
+    try:
+        state.runs.steer(run.id, text)
+    except DainoError as exc:
+        await connection.send({"type": "error", "message": str(exc)})
+        return True
+    state.missions.add_message(
+        session_id,
+        kind="status",
+        role="",
+        content="Plan updated from your instruction — it takes effect at the next step.",
+    )
+    await connection.send({"type": "run_steered", "session_id": session_id, "run_id": run.id})
+    return True
+
+
 def _event_message(event: MissionEvent) -> dict:
     payload = event.payload()
     payload["kind"] = event.kind
@@ -204,6 +232,15 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
             message = await websocket.receive_json()
             kind = message.get("type")
             if kind == "user_message":
+                text = (message.get("text") or "").strip()
+                if not text:
+                    continue
+                # A workspace run holds the turn lock for each of its steps, so
+                # without this the composer would refuse every message for the
+                # duration of a plan. Typing while a plan runs is not a second
+                # turn — it is direction for the one already going.
+                if await _steer_active_run(state, session_id, text, connection):
+                    continue
                 if state.turn_lock.locked():
                     await connection.send(
                         {
@@ -214,9 +251,6 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
                             ),
                         }
                     )
-                    continue
-                text = (message.get("text") or "").strip()
-                if not text:
                     continue
                 profile = message.get("profile") or ""
                 # Kept on the shared state, not this connection: a turn survives

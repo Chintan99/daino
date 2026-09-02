@@ -126,3 +126,54 @@ class GitClient:
 
     def show(self, revision: str) -> str:
         return self.run("show", "--stat", "--patch", revision).stdout
+
+    def file_at(self, ref: str, relative: str) -> str | None:
+        """One file's content at a revision, or None when it is not there.
+
+        A review of a branch has to read files as that branch has them, not as
+        the working tree happens to have them.
+        """
+        result = self.run("show", f"{ref}:{relative}", check=False)
+        return result.stdout if result.succeeded else None
+
+    def untracked_files(self) -> list[str]:
+        """New files, honouring .gitignore.
+
+        ``git diff`` never mentions them, so anything reviewing a working tree
+        has to ask separately or it silently skips every file just created —
+        which is usually the part most worth reading.
+        """
+        result = self.run("ls-files", "--others", "--exclude-standard", check=False)
+        if not result.succeeded:
+            return []
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+    def merge_base(self, base: str, head: str = "HEAD") -> str:
+        """Where two refs diverged, or "" when they share no history."""
+        result = self.run("merge-base", base, head, check=False)
+        return result.stdout.strip() if result.succeeded else ""
+
+    def default_base_ref(self) -> str:
+        """The branch a change would most likely be proposed against.
+
+        Prefers what the remote itself calls its default, because a repository
+        whose trunk is neither ``main`` nor ``master`` is common enough that
+        guessing those two first would be wrong for it every time.
+        """
+        remote = self.run("symbolic-ref", "refs/remotes/origin/HEAD", check=False)
+        if remote.succeeded and remote.stdout.strip():
+            return remote.stdout.strip().removeprefix("refs/remotes/")
+        current = self.current_branch()
+        for candidate in ("origin/main", "origin/master", "main", "master", "develop"):
+            if candidate.removeprefix("origin/") == current:
+                continue
+            if self.run("rev-parse", "--verify", candidate, check=False).succeeded:
+                return candidate
+        return ""
+
+    def range_subjects(self, base: str, head: str = "HEAD", limit: int = 50) -> list[str]:
+        """Commit subjects in ``base..head``, newest first."""
+        result = self.run("log", f"-{limit}", "--format=%s", f"{base}..{head}", check=False)
+        if not result.succeeded:
+            return []
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()]

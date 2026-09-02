@@ -8,6 +8,7 @@ import os
 import re
 import subprocess  # nosec B404
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -17,8 +18,16 @@ from daino.schemas import AgentAction, EditSpec, FileModification, TodoItem, Too
 from daino.tools.commands import CommandRunner
 from daino.tools.filesystem import FileTools
 from daino.tools.web import WebResearch
+from daino.workbench.links import LinkStore
 from daino.workbench.models import Workspace, WorkspaceTask
 from daino.workbench.service import WorkbenchError, WorkbenchService
+
+#: Asked before an action runs, when something is executing unattended: given
+#: the action's name and its arguments, may it proceed? Deliberately the same
+#: shape as :data:`~daino.tools.commands.ApprovalCallback` reads at the call
+#: site, so a future tool — email, a browser, an external app — is gated by
+#: naming its level in :mod:`daino.workbench.approvals` and nothing else.
+ActionApprovalCallback = Callable[[str, dict[str, Any]], Awaitable[bool]]
 
 #: Ordered ``git apply`` strategies. Models routinely emit diffs with miscounted
 #: hunk headers or drifted whitespace; each fallback repairs one of those without
@@ -801,6 +810,7 @@ class ActionExecutor:
         design: DesignService | None = None,
         workbench: WorkbenchService | None = None,
         workspace_id: str = "",
+        approve_action: ActionApprovalCallback | None = None,
     ) -> None:
         self.editor = editor
         #: Attached when the agent is allowed to run commands. Absent for paths
@@ -818,9 +828,20 @@ class ActionExecutor:
         #: Attached when knowledge-work workspaces are available. Absent means
         #: workspace actions are refused, the same way design actions are.
         self.workbench = workbench
+        #: Records how a workspace's outputs relate. Built from the workbench so
+        #: a caller that supplied one gets provenance without asking for it —
+        #: the same reasoning as automatic source recording.
+        self.links = (
+            LinkStore(workbench.database, workbench) if workbench is not None else None
+        )
         #: The workspace the user has open, so the model does not have to name
         #: one it was never told about.
         self.workspace_id = workspace_id
+        #: Consulted before each action when something is executing unattended.
+        #: A chat turn leaves this unset: the user is watching, and the command
+        #: gate already covers the one thing that can run code. A workspace run
+        #: sets it, because nobody is watching a plan work through seven steps.
+        self.approve_action = approve_action
         self.instructions = InstructionResolver(self.editor.root)
         #: The agent's current plan, replaced whenever it emits ``todo``.
         self.todos: list[TodoItem] = []
@@ -831,6 +852,20 @@ class ActionExecutor:
 
     async def execute(self, action: AgentAction) -> tuple[ToolResult, list[str]]:
         name = action.action
+        if self.approve_action is not None and not await self.approve_action(
+            name, _action_arguments(action)
+        ):
+            return (
+                ToolResult(
+                    tool=name,
+                    success=False,
+                    error=(
+                        f"The user declined this action ({name}). Do not retry it; "
+                        "achieve the step another way, or say why you cannot."
+                    ),
+                ),
+                [],
+            )
         if name == "finish":
             return (
                 ToolResult(tool="finish", success=True, data={"summary": action.summary}),
@@ -880,7 +915,14 @@ class ActionExecutor:
             "disconnect_design_nodes",
         }:
             return self._design_action(action), []
-        if name in {"workspace_read", "workspace_plan", "workspace_task"}:
+        if name in {
+            "workspace_read",
+            "workspace_plan",
+            "workspace_task",
+            "workspace_link",
+            "workspace_code",
+            "workspace_deliverable",
+        }:
             return self._workspace_action(action), []
         if name == "glob":
             return self.editor.files.glob_files(action.pattern or action.query), []
@@ -1135,6 +1177,26 @@ class ActionExecutor:
                     success=True,
                     data={"tasks": [_task_line(item) for item in tasks]},
                 )
+            if action.action == "workspace_link":
+                return self._link_action(workspace_id, action)
+            if action.action == "workspace_code":
+                return self._code_action(workspace_id, action)
+            if action.action == "workspace_deliverable":
+                artifact = self.workbench.save_deliverable(
+                    workspace_id,
+                    self._workspace_relative(workspace_id, action.path),
+                    action.format.strip().lstrip(".").casefold(),
+                    title=action.title,
+                )
+                return ToolResult(
+                    tool="workspace_deliverable",
+                    success=True,
+                    data={
+                        "path": artifact.repo_path,
+                        "workspace_path": artifact.path,
+                        "bytes": artifact.bytes,
+                    },
+                )
             task = self.workbench.update_task(
                 workspace_id,
                 action.task_id,
@@ -1144,6 +1206,102 @@ class ActionExecutor:
             return ToolResult(tool="workspace_task", success=True, data={"task": _task_line(task)})
         except WorkbenchError as exc:
             return ToolResult(tool=action.action, success=False, error=str(exc))
+
+    def _link_action(self, workspace_id: str, action: AgentAction) -> ToolResult:
+        """Record where a document came from, so staleness is detectable later."""
+        if self.links is None:
+            return ToolResult(
+                tool="workspace_link", success=False, error="No workspace is available."
+            )
+        link = self.links.link(
+            workspace_id,
+            source_path=self._workspace_relative(workspace_id, action.source_path),
+            target_path=self._workspace_relative(workspace_id, action.target_path),
+            relation=action.relation or "derived_from",
+            title=action.title,
+        )
+        return ToolResult(
+            tool="workspace_link",
+            success=True,
+            data={
+                "source": link.source_path,
+                "relation": link.relation,
+                "target": link.target_path,
+            },
+        )
+
+    def _code_action(self, workspace_id: str, action: AgentAction) -> ToolResult:
+        """Prepare coding work in CODE from what this workspace already holds.
+
+        Deliberately a brief rather than a running agent: starting a second turn
+        from inside a turn would have two agents editing one working tree. The
+        brief is a real document in the workspace, linked as code work, and the
+        CODE tab picks it up when the user opens it — which is also the moment a
+        person gets to look at what was asked for before it is built.
+        """
+        if self.workbench is None or self.links is None:
+            return ToolResult(
+                tool="workspace_code", success=False, error="No workspace is available."
+            )
+        workspace = self.workbench.get(workspace_id)
+        paths = [
+            self._workspace_relative(workspace_id, item)
+            for item in action.context_paths
+            if item.strip()
+        ]
+        relative = f"{CODE_BRIEF_DIR}/{_brief_name(action.request)}"
+        brief = _code_brief(workspace, action.request, paths)
+        artifact = self.workbench.write_artifact(workspace_id, relative, brief, author="agent")
+        self.links.link(
+            workspace_id,
+            source_path=relative,
+            source_kind="code",
+            target_path=paths[0] if paths else "",
+            relation="implements",
+            title=action.request[:120],
+        )
+        return ToolResult(
+            tool="workspace_code",
+            success=True,
+            data={
+                "brief": artifact.repo_path,
+                "workspace_path": relative,
+                "note": (
+                    "Prepared. The user opens it in CODE from the workspace; "
+                    "no code has been written yet."
+                ),
+            },
+        )
+
+    def _link_design(self, design: Any) -> None:
+        """Attach a newly created design to the workspace that caused it."""
+        if self.links is None or not self.workspace_id:
+            return
+        try:
+            self.links.link(
+                self.workspace_id,
+                source_path=design.id,
+                source_kind="design",
+                target_path="",
+                relation="describes",
+                title=design.name,
+            )
+        except Exception:  # noqa: BLE001 - bookkeeping never fails the turn
+            return
+
+    def _workspace_relative(self, workspace_id: str, path: str) -> str:
+        """Accept either a repository-relative or workspace-relative path.
+
+        Models mix the two constantly, because ``read_file`` takes one and
+        ``workspace_read`` reports both. Rejecting the wrong one teaches nothing
+        and costs a turn.
+        """
+        cleaned = str(path).strip().lstrip("/")
+        if self.workbench is None or not cleaned:
+            return cleaned
+        folder = self.workbench.get(workspace_id).folder.strip("/")
+        prefix = f"{folder}/"
+        return cleaned[len(prefix) :] if cleaned.startswith(prefix) else cleaned
 
     def _design_action(self, action: AgentAction) -> ToolResult:
         """Create and granularly edit structured design artifacts.
@@ -1162,6 +1320,11 @@ class ActionExecutor:
         try:
             if name == "create_design":
                 design = self.design.create(action.design_name, action.design_type)
+                # A diagram drawn during workspace work belongs to that work.
+                # Recorded here rather than asked of the model, for the same
+                # reason sources are: provenance that depends on the agent
+                # remembering is provenance with holes in it.
+                self._link_design(design)
             elif name == "read_design":
                 design = self.design.get(action.design_id)
             elif name == "read_design_artifact":
@@ -1305,6 +1468,7 @@ class RecordingActionExecutor(ActionExecutor):
         design: DesignService | None = None,
         workbench: WorkbenchService | None = None,
         workspace_id: str = "",
+        approve_action: ActionApprovalCallback | None = None,
     ) -> None:
         super().__init__(
             editor,
@@ -1316,6 +1480,7 @@ class RecordingActionExecutor(ActionExecutor):
             design=design,
             workbench=workbench,
             workspace_id=workspace_id,
+            approve_action=approve_action,
         )
         #: Relative path -> contents before the agent touched it, or None when
         #: the file did not exist.
@@ -1341,6 +1506,73 @@ class RecordingActionExecutor(ActionExecutor):
 
     def after(self, relative: str) -> str | None:
         return _read_or_none(self.editor.root / relative)
+
+
+#: Where coding briefs land inside a workspace folder. A directory rather than
+#: loose files so a workspace with three handoffs still reads as documents plus
+#: a folder of requests.
+CODE_BRIEF_DIR = "code"
+
+
+def _brief_name(request: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", request.casefold()).strip("-")[:48] or "request"
+    return f"{slug}.md"
+
+
+def _code_brief(workspace: Workspace, request: str, paths: list[str]) -> str:
+    """What CODE needs to start: the ask, the context, and where it came from.
+
+    References, never pasted content: the documents are files in the same
+    project, and a brief that inlines them is stale the moment either changes.
+    """
+    lines = [
+        f"# {request.strip()[:120]}",
+        "",
+        f"Prepared from the **{workspace.name}** workspace.",
+        "",
+        "## What to build",
+        "",
+        request.strip(),
+        "",
+        "## Context in this project",
+        "",
+    ]
+    if paths:
+        lines.extend(f"- `{workspace.folder}/{path}`" for path in paths)
+    else:
+        lines.append(f"- Everything under `{workspace.folder}/`")
+    lines.extend(
+        [
+            "",
+            "## Notes",
+            "",
+            "- Read the documents above before writing code; they are the requirement.",
+            "- Report back what was built so the workspace can record it.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _action_arguments(action: AgentAction) -> dict[str, Any]:
+    """The fields an approval prompt needs, without the whole action payload.
+
+    ``content`` is deliberately excluded: a document body in a confirmation
+    dialog is unreadable, and the question being asked is about the act, not
+    the prose.
+    """
+    payload = action.model_dump(exclude_none=True)
+    keep = (
+        "path",
+        "destination",
+        "command",
+        "url",
+        "query",
+        "pattern",
+        "design_id",
+        "workspace_id",
+    )
+    return {name: payload[name] for name in keep if payload.get(name)}
 
 
 def _workspace_overview(workspace: Workspace) -> dict[str, Any]:
