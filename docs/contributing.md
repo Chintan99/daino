@@ -38,15 +38,25 @@ Run the backend it talks to with `daino <path> --gui` in another terminal. Backe
 
 ## Documentation site
 
-The public documentation is a dependency-free single-page site in `docs/index.html`. Preview and
-validate it locally:
+The public documentation is `docs/index.html` — a hand-written landing page — plus one generated
+page per Markdown file beside it. Pages is served as static files with no Jekyll, so a `.md` file
+is a download rather than a page: `scripts/build_docs_site.py` renders each one into
+`docs/<name>.html` wearing the same header, navigation, and stylesheet, and rewrites internal
+`.md` links to point at the generated pages. Build and validate locally:
 
 ```bash
+python scripts/build_docs_site.py
+python scripts/validate_docs_site.py
+
 python -m http.server 8000 --directory docs
 # open http://127.0.0.1:8000
-
-python scripts/validate_docs_site.py
 ```
+
+The generated pages are gitignored; the workflow builds them into the artifact it uploads, so the
+Markdown is the only copy to keep current. The builder also stamps a content hash onto the
+`styles.css` and `script.js` links (`styles.css?v=…`) — without it a returning reader gets new
+markup against the stylesheet their browser already cached, which is how a screenshot ends up
+rendering at full size inside a narrow column.
 
 Keep the site styles in `docs/styles.css` and its small interactive layer in `docs/script.js`.
 Check the default dark-green palette, the light-theme toggle, installation tabs, copy buttons,

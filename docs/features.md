@@ -37,7 +37,7 @@ commands. The table below is a map of the complete feature set and where to lear
 |---|---|---|
 | Isolated missions | Compiles requirements, asks for plan approval, edits a Git worktree, verifies, reviews, and records evidence | [Missions](missions.md) |
 | Parallel sub-agents | Splits work into dependency waves with non-overlapping write scopes and read-only specialist roles | [TUI: teams](tui.md#teams-of-sub-agents) |
-| Project QA | Combines deterministic tests, linters, browser tests, dependency scans, and parallel read-only specialists | [TUI: QA](tui.md#quality-assurance) |
+| Project QA | Combines deterministic tests, linters, browser tests, dependency scans, and parallel read-only specialists | [TUI: Inspector](tui.md#inspector) |
 | Knowledge workspaces | A goal, uploaded files, documents, a plan, and research — continuing across many sessions, stored as real files under `.daino/workspaces/` | [Workspace](workspace.md) |
 | Document extraction | PDF, Word, Excel, and PowerPoint uploads become markdown the agent can read | [Workspace: uploads](workspace.md#uploads) |
 | Cited research | Every page the agent fetches is recorded as a source and cached, so a claim stays checkable | [Workspace: research](workspace.md#research-and-sources) |

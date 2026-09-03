@@ -10,8 +10,8 @@
     <meta name="theme-color" content="#07110d" />
     <title>D[Ai]NO — local-first coding agent</title>
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="styles.css" />
-    <script src="script.js" defer></script>
+    <link rel="stylesheet" href="styles.css?v=a7d12ae017" />
+    <script src="script.js?v=a7d12ae017" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#content">Skip to content</a>
@@ -240,7 +240,7 @@ daino --gui</code></pre>
                 <h3>Stay close to the shell.</h3>
                 <p>One persistent conversation with everything the agent did beside it: chat, missions, inspector, files, changes, tests, logs, and the execution map, in a keyboard-first workspace.</p>
                 <ul><li><code>/diff</code> review changes</li><li><code>/test</code> run verification</li><li><code>/team</code> parallel scoped agents</li><li><code>@</code> attach files or symbols</li><li><code>⇧⇥</code> cycle the access mode</li></ul>
-                <a href="https://github.com/Chintan99/daino/blob/v2/docs/tui.md">Terminal guide <span>→</span></a>
+                <a href="tui.html">Terminal guide <span>→</span></a>
               </div>
               <figure class="interface-shot">
                 <img src="assets/daino-tui.png" width="1728" height="992" loading="lazy" decoding="async"
@@ -256,7 +256,7 @@ daino --gui</code></pre>
                 <p>A local VS Code-style environment with Monaco editing, terminals, source control, and streamed agent activity — the same runtime, session store, memory, and approval policy as the terminal.</p>
                 <div class="workspace-pills"><span>Code</span><span>Design</span><span>Workspace</span><span>Inspector</span><span>Insights</span></div>
                 <ul><li>Inline approvals and changesets</li><li>Shared sessions and context</li><li>Same database, memory, and routing</li><li>Binds to localhost, never 0.0.0.0 implicitly</li></ul>
-                <a href="https://github.com/Chintan99/daino/blob/v2/docs/gui.md">Browser IDE guide <span>→</span></a>
+                <a href="gui.html">Browser IDE guide <span>→</span></a>
               </div>
               <figure class="interface-shot">
                 <img src="assets/daino-gui-code.png" width="1728" height="952" loading="lazy" decoding="async"
@@ -483,7 +483,7 @@ daino --gui</code></pre>
             <div class="section-kicker">08 · Safety model</div>
             <h2>Autonomy with visible boundaries.</h2>
             <p>Every interface uses the same policy engine. Model output is validated before execution, file writes stay inside the project, and secret values are resolved only at the provider or SSH boundary.</p>
-            <a class="text-link" href="https://github.com/Chintan99/daino/blob/v2/docs/security.md">Read the security model <span>→</span></a>
+            <a class="text-link" href="security.html">Read the security model <span>→</span></a>
           </div>
           <div class="mode-list">
             <div><code>PLAN</code><p>Read-only exploration and task planning.</p></div>
@@ -511,7 +511,7 @@ daino --gui</code></pre>
             <article><h3>Models and settings</h3><dl><div><dt>/model</dt><dd>Select a session model</dd></div><div><dt>/effort</dt><dd>Set reasoning effort</dd></div><div><dt>/provider</dt><dd>Providers and connection tests</dd></div><div><dt>/globalprovider</dt><dd>Shared provider setup</dd></div><div><dt>/runtime</dt><dd>Local or Docker execution</dd></div><div><dt>/settings</dt><dd>Validated project settings</dd></div></dl></article>
             <article><h3>Sessions and insight</h3><dl><div><dt>/new</dt><dd>Fresh conversation</dd></div><div><dt>/missions</dt><dd>Durable work history</dd></div><div><dt>/tasks</dt><dd>Unfinished work</dd></div><div><dt>/memory</dt><dd>Local facts and decisions</dd></div><div><dt>/files</dt><dd>Repository browser</dd></div><div><dt>/logs · /map</dt><dd>Audit trail and execution graph</dd></div></dl></article>
             <article><h3>More tools</h3><dl><div><dt>/resume · /cancel</dt><dd>Continue or stop work</dd></div><div><dt>/index</dt><dd>Refresh repository intelligence</dd></div><div><dt>/playbooks</dt><dd>Browse reusable workflows</dd></div><div><dt>/deploy</dt><dd>Inspect, plan, apply, or roll back</dd></div><div><dt>/verbose</dt><dd>Detailed safe progress</dd></div><div><dt>/help</dt><dd>Shortcuts and security</dd></div></dl></article>
-            <article class="reference-more"><div><h3>Everything stays in the workspace.</h3><p>Commands open views, settings, approvals, and workflows inside the GUI or TUI. You do not need a separate setup or management CLI.</p></div><a class="button button-primary" href="https://github.com/Chintan99/daino/blob/v2/docs/tui.md#slash-commands">All slash commands <span>→</span></a></article>
+            <article class="reference-more"><div><h3>Everything stays in the workspace.</h3><p>Commands open views, settings, approvals, and workflows inside the GUI or TUI. You do not need a separate setup or management CLI.</p></div><a class="button button-primary" href="tui.html#slash-commands">All slash commands <span>→</span></a></article>
           </div>
         </div>
       </section>
@@ -522,12 +522,12 @@ daino --gui</code></pre>
             <div><div class="section-kicker">Deep dives</div><h2>Go past the quickstart.</h2></div>
           </div>
           <div class="link-grid">
-            <a href="https://github.com/Chintan99/daino/blob/v2/docs/providers.md"><strong>Providers</strong><span>Cloud, local, tools, structured output →</span></a>
-            <a href="https://github.com/Chintan99/daino/blob/v2/docs/model-routing.md"><strong>Model routing</strong><span>Roles, fallback, compact execution →</span></a>
-            <a href="https://github.com/Chintan99/daino/blob/v2/docs/memory.md"><strong>Memory</strong><span>DAINO.md, retrieval, staleness, scope →</span></a>
-            <a href="https://github.com/Chintan99/daino/blob/v2/docs/missions.md"><strong>Missions</strong><span>Isolation, lifecycle, evidence, recovery →</span></a>
-            <a href="https://github.com/Chintan99/daino/blob/v2/docs/deployment.md"><strong>Deployment</strong><span>Compose releases and rollback →</span></a>
-            <a href="https://github.com/Chintan99/daino/blob/v2/docs/architecture.md"><strong>Architecture</strong><span>Agent runtime, services, events, tools →</span></a>
+            <a href="providers.html"><strong>Providers</strong><span>Cloud, local, tools, structured output →</span></a>
+            <a href="model-routing.html"><strong>Model routing</strong><span>Roles, fallback, compact execution →</span></a>
+            <a href="memory.html"><strong>Memory</strong><span>DAINO.md, retrieval, staleness, scope →</span></a>
+            <a href="missions.html"><strong>Missions</strong><span>Isolation, lifecycle, evidence, recovery →</span></a>
+            <a href="deployment.html"><strong>Deployment</strong><span>Compose releases and rollback →</span></a>
+            <a href="architecture.html"><strong>Architecture</strong><span>Agent runtime, services, events, tools →</span></a>
           </div>
         </div>
       </section>
