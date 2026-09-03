@@ -93,6 +93,28 @@ class VerificationEngine:
             commands.append("git diff --check")
         return commands
 
+    def resolve_interpreter(self, command: str) -> str:
+        """Rewrite a bare ``python`` command to an interpreter that exists.
+
+        ``discover_commands`` has never used the bare name, but a *model* writes
+        verification commands too, and it writes what it has read a thousand
+        times: ``python test_app.py``. That program does not exist on a modern
+        macOS or most Linux distributions, where the binary is ``python3``.
+
+        The mission then dies on "Executable not found: python" — reported as a
+        verification failure, so the user is told their finished, correct change
+        did not pass its tests. This is the last entry point where a bare
+        ``python`` could still reach the runtime; the same bug was fixed in the
+        QA service and in ``discover_commands`` already.
+        """
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            return command
+        if not tokens or tokens[0] != "python":
+            return command
+        return shlex.join([self._python(), *tokens[1:]])
+
     def _python(self) -> str:
         """The interpreter to verify with: the project's own, else Daino's."""
         for relative in (Path(".venv/bin/python"), Path(".venv/Scripts/python.exe")):
@@ -133,7 +155,10 @@ class VerificationEngine:
         started = datetime.now(UTC)
         checks: list[VerificationCheck] = []
         failures: list[FailureReport] = []
-        requested = commands or self.discover_commands()
+        requested = [
+            self.resolve_interpreter(item)
+            for item in (commands or self.discover_commands())
+        ]
         usable = [command for command in requested if self.runnable(command)]
         skipped = [command for command in requested if not self.runnable(command)]
         if not usable:

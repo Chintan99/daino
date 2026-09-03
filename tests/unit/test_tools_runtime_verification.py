@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -337,3 +338,81 @@ def test_a_failure_inside_a_check_is_not_a_missing_program() -> None:
     assert missing_executable("pytest -q", "ModuleNotFoundError: No module named 'app'") == ""
     assert missing_executable("pytest -q", "FileNotFoundError: config.json: not found") == ""
     assert missing_executable("pytest -q", "sh: 1: git: not found") == ""
+
+
+# ------------------------- a verification command a model wrote, on a real host
+
+
+def test_a_model_written_python_command_runs_on_a_host_without_python(
+    tmp_path: Path,
+) -> None:
+    """The last place a bare `python` could still reach the runtime.
+
+    `discover_commands` has never used the bare name, but the planner writes
+    verification commands too, and it writes what it has read a thousand times:
+    `python test_app.py`. That program does not exist on a modern macOS or most
+    Linux distributions. The mission then dies on "Executable not found:
+    python" — reported as a *verification failure*, so the user is told their
+    finished, correct change did not pass its tests.
+
+    Observed in the field: a two-task plan where the code was written correctly
+    and the run failed anyway on `python test_app.py`.
+    """
+    from daino.runtimes import LocalRuntime
+    from daino.verification.engine import VerificationEngine
+
+    engine = VerificationEngine(tmp_path, LocalRuntime(tmp_path))
+
+    resolved = engine.resolve_interpreter("python test_app.py")
+
+    assert not resolved.startswith("python ")
+    assert resolved.endswith(" test_app.py")
+    assert Path(shlex.split(resolved)[0]).name.startswith("python")
+
+
+def test_a_project_interpreter_is_preferred_over_daino_s_own(tmp_path: Path) -> None:
+    """A project's venv has the dependencies its tests import; Daino's does not."""
+    from daino.runtimes import LocalRuntime
+    from daino.verification.engine import VerificationEngine
+
+    venv = tmp_path / ".venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+
+    engine = VerificationEngine(tmp_path, LocalRuntime(tmp_path))
+
+    assert engine.resolve_interpreter("python -m pytest").startswith(str(venv / "python"))
+
+
+def test_every_other_command_is_left_exactly_alone(tmp_path: Path) -> None:
+    """Rewriting more than the one broken case would be its own bug."""
+    from daino.runtimes import LocalRuntime
+    from daino.verification.engine import VerificationEngine
+
+    engine = VerificationEngine(tmp_path, LocalRuntime(tmp_path))
+
+    for command in ("pytest -q", "npm test", "python3 -m pytest", "go test ./...", ""):
+        assert engine.resolve_interpreter(command) == command
+    # An unparseable command is passed through for `runnable` to reject.
+    assert engine.resolve_interpreter("python 'unclosed") == "python 'unclosed"
+
+
+@pytest.mark.asyncio
+async def test_the_normalisation_happens_before_the_command_runs(tmp_path: Path) -> None:
+    """It has to cover every caller, so it lives in `run` rather than at one site."""
+    from daino.verification.engine import VerificationEngine
+
+    ran: list[str] = []
+
+    async def record(command: str) -> CommandResult:
+        ran.append(command)
+        return CommandResult(
+            command=command, exit_code=0, stdout="", stderr="", duration_seconds=0.0
+        )
+
+    engine = VerificationEngine(tmp_path, LocalRuntime(tmp_path), execute=record)
+
+    report = await engine.run(["python test_app.py"])
+
+    assert report.passed
+    assert ran and not ran[0].startswith("python ")
