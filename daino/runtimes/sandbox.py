@@ -297,8 +297,7 @@ def _seatbelt_profile(root: Path, *, network: bool) -> str:
         f'(allow file-write* (subpath "{resolved}"))',
         '(allow file-write* (subpath "/private/tmp"))',
         '(allow file-write* (subpath "/private/var/folders"))',
-        '(allow file-write* (literal "/dev/null") (literal "/dev/stdout")'
-        ' (literal "/dev/stderr"))',
+        '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr"))',
     ]
     if not network:
         rules.append("(deny network*)")

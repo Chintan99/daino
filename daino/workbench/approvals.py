@@ -53,39 +53,80 @@ DEFAULT_POLICY: dict[ApprovalLevel, bool] = {
     ApprovalLevel.DESTRUCTIVE: True,
 }
 
-#: Tool name -> level. Anything absent is treated as ``EXTERNAL_ACTION``: a new
-#: tool nobody has classified is asked about rather than waved through, which is
-#: the failure everyone would rather have.
+#: Action name -> level. Keys are ``AgentAction.action`` values, and
+#: ``test_every_agent_action_is_classified`` holds them to that: a third of this
+#: table once named tools that do not exist — ``delete_file`` for what is really
+#: ``delete``, ``design_create`` for ``create_design``, ``write_file`` for
+#: ``write`` — so the entries that mattered most never matched anything and the
+#: actions they were meant to describe fell through to the default instead.
+#:
+#: Anything absent is still treated as ``EXTERNAL_ACTION``, so an unclassified
+#: tool is asked about rather than waved through. That is a net, not the plan:
+#: the test above requires every action to be listed, so classifying a new tool
+#: is a deliberate edit here rather than something the default quietly absorbs.
 _ACTION_LEVELS: dict[str, ApprovalLevel] = {
+    # Reading, searching, and looking things up. Free and reversible.
     "read_file": ApprovalLevel.SAFE_READ,
-    "read_file_range": ApprovalLevel.SAFE_READ,
     "list_directory": ApprovalLevel.SAFE_READ,
     "search_text": ApprovalLevel.SAFE_READ,
     "glob": ApprovalLevel.SAFE_READ,
     "grep": ApprovalLevel.SAFE_READ,
+    "read_image": ApprovalLevel.SAFE_READ,
     "workspace_read": ApprovalLevel.SAFE_READ,
+    "read_design": ApprovalLevel.SAFE_READ,
+    "read_design_artifact": ApprovalLevel.SAFE_READ,
+    "find_definition": ApprovalLevel.SAFE_READ,
+    "find_references": ApprovalLevel.SAFE_READ,
+    "diagnostics": ApprovalLevel.SAFE_READ,
     "memory_search": ApprovalLevel.SAFE_READ,
+    "memory_list": ApprovalLevel.SAFE_READ,
+    "memory_verify": ApprovalLevel.SAFE_READ,
     "web_search": ApprovalLevel.SAFE_READ,
     "fetch_url": ApprovalLevel.SAFE_READ,
+    # Loading project instructions into the turn: text in, nothing out.
+    "skill": ApprovalLevel.SAFE_READ,
+    # Bookkeeping inside the run rather than actions on anything: the plan the
+    # agent is tracking, a note that an already-run command covered a failure,
+    # and the two ways a turn ends.
+    "todo": ApprovalLevel.SAFE_READ,
+    "resolve_command_failure": ApprovalLevel.SAFE_READ,
+    "respond": ApprovalLevel.SAFE_READ,
+    "finish": ApprovalLevel.SAFE_READ,
+    # Writing an artifact. Recorded as a revision, so it is undoable — and
+    # `level_for` re-reads a file write's path, so one aimed outside the
+    # workspace folder is reclassified as an external action and asks.
     "write": ApprovalLevel.WORKSPACE_WRITE,
-    "write_file": ApprovalLevel.WORKSPACE_WRITE,
-    "create_file": ApprovalLevel.WORKSPACE_WRITE,
     "replace": ApprovalLevel.WORKSPACE_WRITE,
     "multi_edit": ApprovalLevel.WORKSPACE_WRITE,
-    "apply_unified_diff": ApprovalLevel.WORKSPACE_WRITE,
     "workspace_plan": ApprovalLevel.WORKSPACE_WRITE,
     "workspace_task": ApprovalLevel.WORKSPACE_WRITE,
     "workspace_deliverable": ApprovalLevel.WORKSPACE_WRITE,
     "workspace_link": ApprovalLevel.WORKSPACE_WRITE,
-    "memory_write": ApprovalLevel.WORKSPACE_WRITE,
+    "memory_save": ApprovalLevel.WORKSPACE_WRITE,
+    "memory_update": ApprovalLevel.WORKSPACE_WRITE,
     "memory_forget": ApprovalLevel.WORKSPACE_WRITE,
-    "design_create": ApprovalLevel.WORKSPACE_WRITE,
-    "design_update": ApprovalLevel.WORKSPACE_WRITE,
-    "workspace_design": ApprovalLevel.WORKSPACE_WRITE,
+    # Design edits, including the deletions: a design keeps every version and
+    # can be restored, so removing a node or a frame is undoable in exactly the
+    # sense this level means.
+    "create_design": ApprovalLevel.WORKSPACE_WRITE,
+    "update_design": ApprovalLevel.WORKSPACE_WRITE,
+    "add_design_node": ApprovalLevel.WORKSPACE_WRITE,
+    "update_design_node": ApprovalLevel.WORKSPACE_WRITE,
+    "delete_design_node": ApprovalLevel.WORKSPACE_WRITE,
+    "connect_design_nodes": ApprovalLevel.WORKSPACE_WRITE,
+    "disconnect_design_nodes": ApprovalLevel.WORKSPACE_WRITE,
+    "add_design_frame": ApprovalLevel.WORKSPACE_WRITE,
+    "update_design_frame": ApprovalLevel.WORKSPACE_WRITE,
+    "delete_design_frame": ApprovalLevel.WORKSPACE_WRITE,
+    # Running something on this machine.
     "run_command": ApprovalLevel.LOCAL_EXECUTION,
     "workspace_code": ApprovalLevel.LOCAL_EXECUTION,
-    "delete_file": ApprovalLevel.DESTRUCTIVE,
-    "move_file": ApprovalLevel.DESTRUCTIVE,
+    # An MCP server and a subagent can both do anything at all, and neither is
+    # something this can inspect beforehand.
+    "call_tool": ApprovalLevel.EXTERNAL_ACTION,
+    "delegate": ApprovalLevel.EXTERNAL_ACTION,
+    # Deleting a file. The one action with no way back.
+    "delete": ApprovalLevel.DESTRUCTIVE,
 }
 
 
@@ -132,10 +173,8 @@ class ApprovalPolicy:
         """A sentence a non-developer can decide on."""
         arguments = arguments or {}
         path = str(arguments.get("path", "")).strip()
-        if action in {"delete_file"}:
+        if action == "delete":
             return f"Delete {path or 'a file'}"
-        if action in {"move_file"}:
-            return f"Move {path or 'a file'} to {arguments.get('destination', 'another path')}"
         if action == "run_command":
             return f"Run: {str(arguments.get('command', '')).strip()[:200]}"
         if action == "fetch_url":
@@ -150,7 +189,5 @@ class ApprovalPolicy:
         return {
             ApprovalLevel.DESTRUCTIVE: "This cannot be undone from the workspace history.",
             ApprovalLevel.LOCAL_EXECUTION: "This runs a command on your machine.",
-            ApprovalLevel.EXTERNAL_ACTION: (
-                "This reaches outside the workspace folder."
-            ),
+            ApprovalLevel.EXTERNAL_ACTION: ("This reaches outside the workspace folder."),
         }.get(level, "This needs your confirmation.")

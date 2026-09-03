@@ -190,9 +190,7 @@ def matches_filters(relative: str, query: SearchQuery) -> bool:
         return False
     if not query.include:
         return True
-    return any(
-        fnmatch(relative, pattern) or fnmatch(name, pattern) for pattern in query.include
-    )
+    return any(fnmatch(relative, pattern) or fnmatch(name, pattern) for pattern in query.include)
 
 
 def search(root: Path, query: SearchQuery, *, replacement: str | None = None) -> SearchResult:
@@ -252,9 +250,7 @@ def search(root: Path, query: SearchQuery, *, replacement: str | None = None) ->
     return result
 
 
-def _substitute(
-    pattern: re.Pattern[str], line: str, replacement: str, query: SearchQuery
-) -> str:
+def _substitute(pattern: re.Pattern[str], line: str, replacement: str, query: SearchQuery) -> str:
     """What one line becomes.
 
     Backreferences (``\\1``, ``\\g<name>``) work only for a regex search. In a

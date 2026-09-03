@@ -73,6 +73,15 @@ class DesignPlan(BaseModel):
     #: Set once implementation has run, so a second Implement is a decision
     #: rather than an accident.
     implemented_at: datetime | None = None
+    #: What verification said about the implementing turn: ``True`` every check
+    #: passed, ``False`` a check failed, ``None`` nothing ran. Stored because
+    #: "implemented" on its own is the claim the user is most likely to trust
+    #: without asking, and an unverified implementation is not the same thing.
+    implementation_verified: bool | None = None
+    #: Why the last implementation attempt did not land. Kept on an *approved*
+    #: plan so Implement can simply be pressed again once the cause is dealt
+    #: with, rather than forcing a fresh planning turn.
+    implementation_error: str = ""
 
 
 class PlanError(Exception):
@@ -107,13 +116,12 @@ class PlanStore:
             # crash: the worst outcome is having to plan again, and the best
             # alternative — refusing to open the design at all — is worse.
             return None
+
     def save(self, plan: DesignPlan) -> DesignPlan:
         plan.updated_at = datetime.now(UTC)
         path = self._path(plan.design_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(plan.model_dump(mode="json"), indent=2), encoding="utf-8"
-        )
+        path.write_text(json.dumps(plan.model_dump(mode="json"), indent=2), encoding="utf-8")
         return plan
 
     def delete(self, design_id: str) -> None:
@@ -163,11 +171,12 @@ class PlanStore:
             return plan
         if plan.status != "proposed":
             raise PlanError(
-                f"This plan is {plan.status}, so there is nothing to approve. "
-                "Propose a new one."
+                f"This plan is {plan.status}, so there is nothing to approve. Propose a new one."
             )
+        _require_substance(plan)
         plan.status = "approved"
         plan.rejection_reason = ""
+        plan.implementation_error = ""
         return self.save(plan)
 
     def reject(self, design_id: str, reason: str = "") -> DesignPlan:
@@ -176,10 +185,26 @@ class PlanStore:
         plan.rejection_reason = reason.strip()
         return self.save(plan)
 
-    def mark_implemented(self, design_id: str) -> DesignPlan:
+    def mark_implemented(self, design_id: str, *, verified: bool | None = None) -> DesignPlan:
+        """Close the plan out, recording whether the work was actually checked."""
         plan = self._require(design_id)
         plan.status = "implemented"
         plan.implemented_at = datetime.now(UTC)
+        plan.implementation_verified = verified
+        plan.implementation_error = ""
+        return self.save(plan)
+
+    def record_implementation_failure(self, design_id: str, reason: str) -> DesignPlan:
+        """An attempt that did not land leaves the plan approved, with the reason.
+
+        Deliberately not a status of its own. The plan is still the agreed plan;
+        what failed was one attempt at carrying it out, and the useful next move
+        is almost always to fix the cause and press Implement again — which a
+        ``failed`` status would block behind a pointless re-approval.
+        """
+        plan = self._require(design_id)
+        plan.implementation_error = reason.strip()
+        plan.implementation_verified = None
         return self.save(plan)
 
     def require_approved(self, design_id: str, *, design_version: int) -> DesignPlan:
@@ -209,9 +234,9 @@ class PlanStore:
             )
         if plan.status == "implemented":
             raise PlanGateError(
-                "This plan has already been implemented. Propose a new one to "
-                "make further changes."
+                "This plan has already been implemented. Propose a new one to make further changes."
             )
+        _require_substance(plan)
         if plan.design_version and plan.design_version != design_version:
             raise PlanGateError(
                 f"This plan was written for version {plan.design_version} of the "
@@ -260,4 +285,41 @@ Two or three sentences: what gets built, and how it fits what is already here.
 
 ## Questions
 - <anything you could not settle from the code; omit the section if none>
+
+Every plan must contain at least one numbered step. A plan with no steps cannot
+be approved, so a design you believe needs no work should still say so as one
+step describing why.
+{feedback}"""
+
+
+#: Appended to the planning instruction when the user has turned a plan down.
+#: A rejection the next proposal never sees is a rejection the user has to
+#: repeat, which is exactly the loop this exists to break.
+REJECTION_FEEDBACK = """
+## What was wrong with your last plan
+
+The user rejected the previous plan for this design and said:
+
+{reason}
+
+Address that directly. Do not re-propose the same plan with different wording;
+if you believe the rejection was based on something the code contradicts, say so
+in Questions and plan for what the user asked for anyway.
 """
+
+
+def _require_substance(plan: DesignPlan) -> None:
+    """Refuse a plan with no steps in it.
+
+    An empty plan sails through approval and then through the gate, and the
+    implementing turn is handed "(no steps were listed)" as its brief — so it
+    invents the work. What the user approved in that case is a heading, and the
+    approval record says they agreed to whatever the model then decided to do.
+    """
+    if plan.steps:
+        return
+    raise PlanError(
+        "This plan has no steps, so there is nothing to approve or implement — "
+        "approving it would mean agreeing to whatever the implementing turn "
+        "decided to do. Propose a new plan."
+    )

@@ -20,6 +20,7 @@ from daino.design.models import (
     Design,
     DesignEdge,
     DesignFrame,
+    DesignFrameElement,
     DesignNode,
     DesignSummary,
 )
@@ -292,9 +293,7 @@ class DesignService:
             raise DesignError(f"Unknown node {node_id!r}")
         design.nodes = [node for node in design.nodes if node.id != node_id]
         # Drop edges that referenced the removed node.
-        design.edges = [
-            edge for edge in design.edges if node_id not in (edge.source, edge.target)
-        ]
+        design.edges = [edge for edge in design.edges if node_id not in (edge.source, edge.target)]
         return self._save(design, change="delete_node")
 
     def connect(
@@ -411,7 +410,12 @@ class DesignService:
         if height is not None:
             frame.height = height
         if children is not None:
-            frame.children = list(children)
+            # Validated on the way in: assignment does not run validators, so
+            # raw dicts would sit in a typed list and only fail at save time.
+            frame.children = [
+                item if isinstance(item, DesignFrameElement) else DesignFrameElement(**item)
+                for item in children
+            ]
         return self._save(design, change="update_frame")
 
     def delete_frame(self, design_id: str, frame_id: str) -> Design:

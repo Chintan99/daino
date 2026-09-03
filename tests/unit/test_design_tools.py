@@ -240,7 +240,7 @@ def test_two_editors_cannot_silently_overwrite_each_other(tmp_path: Path) -> Non
 
 
 def test_every_saved_version_of_a_design_can_be_restored(tmp_path: Path) -> None:
-    """"Version" used to be a counter that overwrote its own predecessor."""
+    """ "Version" used to be a counter that overwrote its own predecessor."""
     service = DesignService(tmp_path)
     design = service.create("Flow", "flowchart")
     service.add_node(design.id, label="Start", node_id="start")
@@ -269,3 +269,97 @@ def test_a_stale_expected_version_is_the_only_thing_refused(tmp_path: Path) -> N
 
     # No expectation stated: last writer wins, as before.
     assert service.replace(current).name == "Renamed"
+
+
+@pytest.mark.asyncio
+async def test_agent_draws_a_ui_mock_up_frame(tmp_path: Path) -> None:
+    """Frames are reachable from the agent, not just from the HTTP routes.
+
+    The frame model, its endpoints and its versioning all existed while nothing
+    could create a frame: the tool surface had no verb for one, so the whole
+    thing was a design model with no way in.
+    """
+    executor = _executor(tmp_path)
+    created, _ = await executor.execute(
+        AgentAction(
+            thought="scaffold",
+            action="create_design",
+            design_name="Screens",
+            design_type="ui",
+        )
+    )
+    design_id = created.data["design_id"]
+
+    added, _ = await executor.execute(
+        AgentAction(
+            thought="draw the login screen",
+            action="add_design_frame",
+            design_id=design_id,
+            frame_name="Login",
+            frame_width=390,
+            frame_height=844,
+            frame_elements=[
+                {"type": "heading", "label": "Sign in", "x": 24, "y": 80},
+                {"type": "input", "label": "Email", "x": 24, "y": 160, "height": 44},
+                {"type": "button", "label": "Continue", "x": 24, "y": 240, "height": 44},
+            ],
+        )
+    )
+    assert added.success, added.error
+    assert added.data["frames"] == [
+        {"id": "login", "name": "Login", "width": 390, "height": 844, "elements": 3}
+    ]
+
+    design = DesignService(tmp_path).get(design_id)
+    element = design.frames[0].children[1]
+    assert (element.type, element.label, element.y, element.height) == ("input", "Email", 160, 44)
+
+
+@pytest.mark.asyncio
+async def test_renaming_a_frame_keeps_what_is_drawn_in_it(tmp_path: Path) -> None:
+    """An update that mentions no elements must not empty the screen.
+
+    On the wire "no elements" and "an empty list" are the same value, so a
+    rename that forwarded the empty default would delete the mock-up it was
+    renaming.
+    """
+    service = DesignService(tmp_path)
+    design = service.create("Screens", "ui")
+    service.add_frame(design.id, name="Login", children=[{"type": "button", "label": "Continue"}])
+    executor = ActionExecutor(EditTools(tmp_path), design=service)
+
+    renamed, _ = await executor.execute(
+        AgentAction(
+            thought="clearer name",
+            action="update_design_frame",
+            design_id=design.id,
+            frame_id="login",
+            frame_name="Sign in",
+        )
+    )
+
+    assert renamed.success, renamed.error
+    frame = service.get(design.id).frames[0]
+    assert frame.name == "Sign in"
+    assert [item.label for item in frame.children] == ["Continue"]
+
+
+@pytest.mark.asyncio
+async def test_a_frame_can_be_deleted(tmp_path: Path) -> None:
+    service = DesignService(tmp_path)
+    design = service.create("Screens", "ui")
+    service.add_frame(design.id, name="Login")
+    executor = ActionExecutor(EditTools(tmp_path), design=service)
+
+    removed, _ = await executor.execute(
+        AgentAction(
+            thought="drop it",
+            action="delete_design_frame",
+            design_id=design.id,
+            frame_id="login",
+        )
+    )
+
+    assert removed.success, removed.error
+    assert removed.data["frames"] == []
+    assert service.get(design.id).frames == []

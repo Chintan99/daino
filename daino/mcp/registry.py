@@ -93,9 +93,7 @@ class MCPRegistry:
         for tool in self._tools.values():
             required = (tool.input_schema or {}).get("required") or []
             properties = (tool.input_schema or {}).get("properties") or {}
-            signature = ", ".join(
-                f"{name}{'' if name in required else '?'}" for name in properties
-            )
+            signature = ", ".join(f"{name}{'' if name in required else '?'}" for name in properties)
             summary = (tool.description or "").strip().splitlines()
             lines.append(
                 f"- {tool.qualified_name}({signature})"
@@ -111,9 +109,7 @@ class MCPRegistry:
         enabled = [(name, config) for name, config in self.servers.items() if config.enabled]
         if not enabled:
             return []
-        results = await asyncio.gather(
-            *(self._connect(name, config) for name, config in enabled)
-        )
+        results = await asyncio.gather(*(self._connect(name, config) for name, config in enabled))
         self._statuses = list(results)
         for status in results:
             if not status.connected:

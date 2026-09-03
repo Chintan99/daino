@@ -635,9 +635,7 @@ async def test_the_split_is_persisted_so_a_resume_does_not_redo_the_parent(
     with service.database.session() as session:
         rows = {
             row.id: row.status
-            for row in session.scalars(
-                sa_select(Task).where(Task.mission_id == mission.id)
-            ).all()
+            for row in session.scalars(sa_select(Task).where(Task.mission_id == mission.id)).all()
         }
         edges = [
             (row.task_id, row.depends_on_id)
@@ -674,9 +672,7 @@ async def test_intermediate_slices_do_not_commit_before_the_last_one_verifies(
     refreshed, _ = await service.execute(mission.id, requirements, plan)
 
     workspace = Path(refreshed.workspace_path or "")
-    subjects = "\n".join(
-        git(workspace, "log", "--format=%s").splitlines()
-    )
+    subjects = "\n".join(git(workspace, "log", "--format=%s").splitlines())
     # One commit for the whole change, made by the final slice — not one per
     # slice — and titled with the task the user asked for rather than "(3/3)".
     assert subjects.count("Write every module") == 1
@@ -710,9 +706,7 @@ async def test_a_task_that_still_will_not_fit_is_not_split_forever(git_repo: Pat
 
         from daino.persistence.models import Task
 
-        ids = list(
-            session.scalars(sa_select(Task.id).where(Task.mission_id == mission.id)).all()
-        )
+        ids = list(session.scalars(sa_select(Task.id).where(Task.mission_id == mission.id)).all())
     assert not any("-s2-" in task_id for task_id in ids), "split past its generation cap"
 
 

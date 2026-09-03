@@ -671,11 +671,11 @@ export const api = {
   // Preview
   previewDetect: () => request<PreviewDetect>("GET", "/api/preview/detect"),
   previewStatus: () => request<PreviewStatus>("GET", "/api/preview/status"),
-  previewStart: (command: string, url: string) =>
+  previewStart: (command: string, url: string, confirm = false) =>
     request<{ running: boolean; command: string; url: string }>(
       "POST",
       "/api/preview/start",
-      { command, url },
+      { command, url, confirm },
     ),
   previewStop: () =>
     request<{ running: boolean }>("POST", "/api/preview/stop", {}),

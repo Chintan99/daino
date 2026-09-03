@@ -22,9 +22,7 @@ from daino.notifications import NotificationKind, NotificationService
 
 
 @pytest.fixture(autouse=True)
-def switches_on(
-    monkeypatch: pytest.MonkeyPatch, no_desktop_side_effects: None
-) -> None:
+def switches_on(monkeypatch: pytest.MonkeyPatch, no_desktop_side_effects: None) -> None:
     """Turn the features back on for this module.
 
     Depends on the suite-wide guard explicitly: without that ordering, pytest is
@@ -59,9 +57,7 @@ def commands(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 
 def test_each_moment_can_be_switched_off_independently(commands: list[list[str]]) -> None:
-    service = NotificationService(
-        NotificationsConfig(on_completed=False, terminal_bell=False)
-    )
+    service = NotificationService(NotificationsConfig(on_completed=False, terminal_bell=False))
     assert service.send(NotificationKind.COMPLETED, "t", "b") is None
     assert not commands
 
@@ -74,14 +70,17 @@ def test_each_moment_can_be_switched_off_independently(commands: list[list[str]]
 def test_the_master_switch_and_the_environment_both_silence_it(
     commands: list[list[str]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert NotificationService(NotificationsConfig(enabled=False)).send(
-        NotificationKind.FAILED, "t", "b"
-    ) is None
+    assert (
+        NotificationService(NotificationsConfig(enabled=False)).send(
+            NotificationKind.FAILED, "t", "b"
+        )
+        is None
+    )
 
     monkeypatch.setenv("DAINO_NOTIFY", "off")
-    assert NotificationService(NotificationsConfig()).send(
-        NotificationKind.FAILED, "t", "b"
-    ) is None
+    assert (
+        NotificationService(NotificationsConfig()).send(NotificationKind.FAILED, "t", "b") is None
+    )
     assert not commands
 
 

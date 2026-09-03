@@ -92,9 +92,7 @@ async def _origin_refused(websocket: WebSocket) -> bool:
     could drive the agent or type into a shell on their machine.
     """
     policy = websocket.app.state.origins
-    reason = policy.rejection(
-        websocket.headers.get("origin"), websocket.headers.get("host")
-    )
+    reason = policy.rejection(websocket.headers.get("origin"), websocket.headers.get("host"))
     if reason is None:
         return False
     await websocket.close(code=_CLOSE_POLICY, reason=reason)
@@ -165,7 +163,7 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
         {
             "type": "session",
             "session_id": session_id,
-            "turn_running": state.turn_lock.locked(),
+            "turn_running": state.turn_busy,
         }
     )
 
@@ -209,9 +207,7 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
                     # notice is shielded so it is not cancelled with this task.
                     attention.failed("Stopped by user")
                     notice = asyncio.ensure_future(
-                        connection.send(
-                            {"type": "turn_stopped", "session_id": session_id}
-                        )
+                        connection.send({"type": "turn_stopped", "session_id": session_id})
                     )
                     with contextlib.suppress(BaseException):
                         await asyncio.shield(notice)
@@ -221,9 +217,7 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
                     await connection.send({"type": "error", "message": str(exc)})
                 except Exception as exc:  # noqa: BLE001 - report, never crash the socket
                     attention.failed(f"Turn failed: {exc}")
-                    await connection.send(
-                        {"type": "error", "message": f"Turn failed: {exc}"}
-                    )
+                    await connection.send({"type": "error", "message": f"Turn failed: {exc}"})
         finally:
             state.turn_lock.release()
 
@@ -241,7 +235,11 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
                 # turn — it is direction for the one already going.
                 if await _steer_active_run(state, session_id, text, connection):
                     continue
-                if state.turn_lock.locked():
+                # Claimed synchronously, before the task exists. Testing
+                # `turn_lock.locked()` here left a window one tick wide in which
+                # a second sender — or a design route — saw an idle project and
+                # started its own agent against the same working tree.
+                if not state.claim_turn():
                     await connection.send(
                         {
                             "type": "error",
@@ -255,7 +253,11 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
                 profile = message.get("profile") or ""
                 # Kept on the shared state, not this connection: a turn survives
                 # a refresh, so the *next* connection has to be able to stop it.
-                state.active_turn = asyncio.create_task(run_turn(text, profile))
+                turn = asyncio.create_task(run_turn(text, profile))
+                # On the task rather than in `run_turn`'s `finally`, so a turn
+                # cancelled before its first step still frees the slot.
+                turn.add_done_callback(lambda _: state.release_turn())
+                state.active_turn = turn
             elif kind == "approval_resolve":
                 connection.resolve_approval(
                     message.get("id", ""),
@@ -299,9 +301,7 @@ async def terminal_socket(websocket: WebSocket, terminal_id: str) -> None:
     # Replay bounded scrollback so a reconnecting client sees recent output.
     scrollback = session.scrollback
     if scrollback:
-        await websocket.send_json(
-            {"type": "output", "data": scrollback.decode("utf-8", "replace")}
-        )
+        await websocket.send_json({"type": "output", "data": scrollback.decode("utf-8", "replace")})
 
     async def pump_output() -> None:
         while True:

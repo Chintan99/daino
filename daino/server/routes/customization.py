@@ -1,6 +1,6 @@
 """Agent customization: autonomy, effort, instructions, memory, playbooks, roles.
 
-Everything here already existed as a slash command in the terminal client — 
+Everything here already existed as a slash command in the terminal client —
 ``/mode``, ``/effort``, ``/verbose``, ``/memory``, ``/playbooks`` — and went
 through the same application services these endpoints call. The browser had no
 way to reach any of it, so a session started in the GUI was stuck on the default
@@ -59,8 +59,20 @@ MODE_HINTS: dict[str, str] = {
 EFFORT_LEVELS = ("auto", "none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 #: Directories never worth walking when looking for scoped instruction files.
-_SKIP_DIRS = {".git", ".daino", ".vasuki", "node_modules", ".venv", "venv", "dist", "build",
-              "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache"}
+_SKIP_DIRS = {
+    ".git",
+    ".daino",
+    ".vasuki",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+}
 #: Bound the walk so a huge checkout cannot stall the panel.
 _MAX_SCOPED_FILES = 100
 
@@ -141,9 +153,7 @@ def _instruction_files(root: Path) -> list[dict]:
     found = 0
     for current, directories, files in os.walk(root):
         directories[:] = sorted(
-            name
-            for name in directories
-            if name not in _SKIP_DIRS and not name.startswith(".")
+            name for name in directories if name not in _SKIP_DIRS and not name.startswith(".")
         )
         directory = Path(current)
         if directory == root:
@@ -320,9 +330,7 @@ def read_extensions(state: Annotated[GuiState, Depends(get_state)]) -> dict[str,
                     "enabled": config.enabled,
                     # Absent until the first turn connects them, which is why
                     # this is three states rather than a boolean.
-                    "connected": (
-                        None if name not in connected else connected[name].connected
-                    ),
+                    "connected": (None if name not in connected else connected[name].connected),
                     "tool_count": connected[name].tool_count if name in connected else 0,
                     "error": connected[name].error if name in connected else "",
                 }
@@ -494,9 +502,7 @@ def verify(state: Annotated[GuiState, Depends(get_state)], memory_id: str) -> di
 
 
 @router.post("/memory/clear")
-def clear_memory(
-    state: Annotated[GuiState, Depends(get_state)], body: ClearMemoryRequest
-) -> dict:
+def clear_memory(state: Annotated[GuiState, Depends(get_state)], body: ClearMemoryRequest) -> dict:
     scope = MemoryScope(body.scope)
     count = state.missions.memory.clear(
         scope=scope,

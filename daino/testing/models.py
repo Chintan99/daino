@@ -110,9 +110,7 @@ class TestRun(BaseModel):
 
     @property
     def counts(self) -> dict[str, int]:
-        tally = dict.fromkeys(
-            ("passed", "failed", "errored", "skipped", "xfailed", "xpassed"), 0
-        )
+        tally = dict.fromkeys(("passed", "failed", "errored", "skipped", "xfailed", "xpassed"), 0)
         for item in self.results:
             tally[item.status] += 1
         return tally

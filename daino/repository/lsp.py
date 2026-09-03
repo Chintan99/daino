@@ -390,8 +390,7 @@ class LanguageServer:
         except TimeoutError as exc:
             self._pending.pop(identifier, None)
             raise LSPError(
-                f"{self.spec.label} did not answer {method} within "
-                f"{REQUEST_TIMEOUT_SECONDS:.0f}s."
+                f"{self.spec.label} did not answer {method} within {REQUEST_TIMEOUT_SECONDS:.0f}s."
             ) from exc
 
     async def _read_loop(self) -> None:
@@ -610,8 +609,11 @@ class LanguageServerPool:
                 slot.server = server
                 slot.reason = ""
                 return server
-            slot.reason = "No language server available for " + language + ". Tried: " + (
-                "; ".join(attempted) or "nothing"
+            slot.reason = (
+                "No language server available for "
+                + language
+                + ". Tried: "
+                + ("; ".join(attempted) or "nothing")
             )
             raise LSPError(slot.reason)
 
@@ -736,9 +738,7 @@ class PooledLSPAdapter(LSPAdapter):
     async def symbols(self, path: Path) -> list[RepositorySymbol]:
         server = await self.pool.server_for_path(path)
         uri = await server.open_document(path)
-        result = await server.request(
-            "textDocument/documentSymbol", {"textDocument": {"uri": uri}}
-        )
+        result = await server.request("textDocument/documentSymbol", {"textDocument": {"uri": uri}})
         relative = _relative(path, self.pool.root)
         found: list[RepositorySymbol] = []
         _flatten_symbols(result or [], relative, found)

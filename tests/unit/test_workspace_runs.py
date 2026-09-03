@@ -91,9 +91,7 @@ def project(tmp_path: Path) -> Iterator[ProjectContext]:
     save_settings(settings, tmp_path)
     database = Database(settings, tmp_path)
     database.initialize()
-    context = ProjectContext(
-        root=tmp_path, settings=settings, database=database, events=EventBus()
-    )
+    context = ProjectContext(root=tmp_path, settings=settings, database=database, events=EventBus())
     yield context
     database.engine.dispose()
 
@@ -288,9 +286,7 @@ async def test_an_action_needing_approval_holds_the_run_until_answered(
 
     async def try_two_actions(instruction: str, _approve: Any, approve_action: Any) -> None:
         # A write inside the workspace proceeds without anyone being asked.
-        decisions.append(
-            await approve_action("write", {"path": f"{workspace.folder}/findings.md"})
-        )
+        decisions.append(await approve_action("write", {"path": f"{workspace.folder}/findings.md"}))
         # A delete does not: the run parks at waiting_for_approval until the
         # user answers, and only then continues.
         pending = asyncio.create_task(
@@ -493,17 +489,21 @@ async def test_a_restart_while_waiting_for_approval_leaves_a_resumable_run(
         run.id,
         status="waiting_for_approval",
         current_task_id=tasks[0].id,
-        metadata={"pending_approval": {
-            "id": "wsapp-1",
-            "action": "rm -rf build",
-            "reason": "writes outside the workspace",
-            "level": "local_execution",
-        }},
+        metadata={
+            "pending_approval": {
+                "id": "wsapp-1",
+                "action": "rm -rf build",
+                "reason": "writes outside the workspace",
+                "level": "local_execution",
+            }
+        },
     )
 
     # A fresh process reconciles what it finds.
     recovered = WorkspaceRunApplicationService(
-        project, missions, workbench  # type: ignore[arg-type]
+        project,
+        missions,
+        workbench,  # type: ignore[arg-type]
     ).reconcile()
 
     assert run.id in recovered

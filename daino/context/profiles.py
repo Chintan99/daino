@@ -151,9 +151,7 @@ class ModelExecutionProfile:
         # ate 93% of the threshold, leaving too little room to hold a single
         # source file. See _MIN_WORKING_FRACTION.
         compaction_budget = max(1_024, int(input_budget_tokens * compaction_threshold))
-        scaffold_ceiling = max(
-            1_024, int(compaction_budget * (1.0 - _MIN_WORKING_FRACTION))
-        )
+        scaffold_ceiling = max(1_024, int(compaction_budget * (1.0 - _MIN_WORKING_FRACTION)))
         selected_memory_tokens = min(
             selected_memory_tokens,
             max(256, int(scaffold_ceiling * _MEMORY_SHARE_OF_SCAFFOLD)),
@@ -275,8 +273,7 @@ class CapabilityEnvelope:
             f"- Files per task: at most {self.max_files_per_task}",
             f"- Source per task: at most {self.task_source_budget_tokens} tokens"
             f" (~{self.task_source_budget_tokens * 4} characters of file content)",
-            f"- Working room after that context is loaded:"
-            f" {self.working_headroom_tokens} tokens",
+            f"- Working room after that context is loaded: {self.working_headroom_tokens} tokens",
         ]
         if self.one_action_per_turn:
             lines.append("- The executor takes exactly one action per turn.")

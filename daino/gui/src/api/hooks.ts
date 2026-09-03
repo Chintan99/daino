@@ -6,7 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "./client";
-import type { Design, ReviewScope } from "./types";
+import type { Design, DesignFrameElement, ReviewScope } from "./types";
 
 export const qk = {
   health: ["health"] as const,
@@ -305,8 +305,38 @@ export function useDesignMutations(designId: string | null) {
     mutationFn: (edgeId: string) => api.deleteEdge(designId as string, edgeId),
     onSuccess: setDesign,
   });
+  const addFrame = useMutation({
+    mutationFn: (v: { name?: string; width?: number; height?: number }) =>
+      api.addFrame(designId as string, v),
+    onSuccess: setDesign,
+  });
+  const patchFrame = useMutation({
+    mutationFn: (v: {
+      frameId: string;
+      body: {
+        name?: string;
+        width?: number;
+        height?: number;
+        children?: DesignFrameElement[];
+      };
+    }) => api.updateFrame(designId as string, v.frameId, v.body),
+    onSuccess: setDesign,
+  });
+  const deleteFrame = useMutation({
+    mutationFn: (frameId: string) => api.deleteFrame(designId as string, frameId),
+    onSuccess: setDesign,
+  });
 
-  return { addNode, patchNode, deleteNode, addEdge, deleteEdge };
+  return {
+    addNode,
+    patchNode,
+    deleteNode,
+    addEdge,
+    deleteEdge,
+    addFrame,
+    patchFrame,
+    deleteFrame,
+  };
 }
 
 export { useQueryClient };

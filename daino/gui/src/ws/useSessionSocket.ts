@@ -13,7 +13,7 @@ import type {
   WsEvent,
 } from "../api/types";
 import { roleActivity, toolActivity } from "../lib/activity";
-import { claimQueuedMessage } from "../lib/handoff";
+import { flushQueuedMessage } from "../lib/handoff";
 import { markBufferStale } from "../lib/saveFile";
 import { wsUrl } from "./url";
 
@@ -159,17 +159,9 @@ export function useSessionSocket(target: string = "latest") {
           // A cross-tab handoff queued its brief for this socket target and is
           // waiting for the connection to actually be here. Sending before the
           // server confirmed the session is what used to put the message in the
-          // conversation the user was leaving.
-          const queued = claimQueuedMessage(target);
-          if (queued && !msg.turn_running) {
-            const live = useAgentStore.getState();
-            live.send?.({
-              type: "user_message",
-              text: queued,
-              profile: live.selectedModel ?? undefined,
-            });
-            live.beginTurn(queued);
-          }
+          // conversation the user was leaving. If a turn is already running
+          // here the brief stays queued — the turn-end cases below send it.
+          flushQueuedMessage(target);
           break;
         }
         case "event": {
@@ -192,6 +184,9 @@ export function useSessionSocket(target: string = "latest") {
           }
           // agent may have touched git/files during the turn
           qc.invalidateQueries({ queryKey: qk.gitStatus });
+          // A handoff that arrived while this conversation was busy waits here
+          // rather than being thrown away.
+          flushQueuedMessage(target);
           break;
         }
         case "turn_stopped": {
@@ -199,12 +194,14 @@ export function useSessionSocket(target: string = "latest") {
           const id = sessionIdRef.current;
           if (id) qc.invalidateQueries({ queryKey: qk.sessionMessages(id) });
           qc.invalidateQueries({ queryKey: qk.gitStatus });
+          flushQueuedMessage(target);
           break;
         }
         case "error": {
           s.pushEvent({ kind: "error", message: msg.message });
           s.setActivity("failed", msg.message.slice(0, 60));
           s.endTurn();
+          flushQueuedMessage(target);
           break;
         }
         case "pong":

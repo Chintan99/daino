@@ -108,9 +108,7 @@ async def test_a_hosted_provider_is_not_serialised() -> None:
 
 async def test_the_limit_is_configurable() -> None:
     recorder = Recorder()
-    provider = _provider(
-        recorder, "ollama", "tuned-ollama", max_concurrent_requests=2
-    )
+    provider = _provider(recorder, "ollama", "tuned-ollama", max_concurrent_requests=2)
     try:
         await _fan_out(provider, 6)
     finally:

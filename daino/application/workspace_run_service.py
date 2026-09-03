@@ -36,7 +36,7 @@ from daino.application.mission_service import MissionApplicationService
 from daino.events import WorkspaceRunUpdated
 from daino.exceptions import DainoError
 from daino.utils.ids import new_id
-from daino.workbench.approvals import ApprovalPolicy
+from daino.workbench.approvals import ApprovalLevel, ApprovalPolicy
 from daino.workbench.changes import ChangeSetStore
 from daino.workbench.models import PendingApproval, Workspace, WorkspaceRun, WorkspaceTask
 from daino.workbench.runs import RunStore
@@ -51,6 +51,10 @@ MAX_CONSECUTIVE_FAILURES = 3
 #: one. Enough to carry the thread, bounded so a long plan does not grow the
 #: prompt without limit — the artifacts themselves are what carry the detail.
 RECENT_STEPS = 6
+
+#: What a steering turn may do without asking, beyond reading. Steering exists
+#: to change what the run *will* do; these are the two verbs that change it.
+STEERING_ACTIONS = frozenset({"workspace_plan", "workspace_task"})
 
 
 class RunError(DainoError):
@@ -262,6 +266,42 @@ class WorkspaceRunApplicationService:
 
         return gate
 
+    def _steering_callback(self, run_id: str, policy: ApprovalPolicy, folder: str) -> Any:
+        """The action gate for a steering turn: plan edits pass, work asks.
+
+        Steering has to be a mutation-capable turn, because updating the plan
+        means calling ``workspace_plan``. It was given no action gate at all,
+        which left "do not carry out the work itself — the executor does that"
+        as a sentence in the prompt and nothing else. A course correction could
+        therefore write files, run commands, and delete things, in a turn the
+        user believed was only rewriting a to-do list.
+
+        Reads pass because a plan cannot be corrected without looking at what
+        is there. Everything else asks rather than being refused outright: the
+        user has just this second typed the instruction, so they are the right
+        person to say whether they meant it to be carried out now.
+        """
+
+        async def gate(action: str, arguments: dict[str, Any]) -> bool:
+            if action in STEERING_ACTIONS:
+                return True
+            enriched = {**arguments, "__workspace_folder": folder}
+            level = policy.level_for(action, enriched)
+            if level is ApprovalLevel.SAFE_READ:
+                return True
+            return await self._ask(
+                run_id,
+                action=policy.describe(action, arguments),
+                reason=(
+                    "Asked for while updating the plan from your instruction. Steering "
+                    "is meant to change what the run will do next, not to do it — allow "
+                    "this only if you meant it carried out now."
+                ),
+                level=level.value,
+            )
+
+        return gate
+
     async def _ask(self, run_id: str, *, action: str, reason: str, level: str) -> bool:
         """Hold the run at ``waiting_for_approval`` until a person answers."""
         control = self._controls.setdefault(run_id, _Control())
@@ -272,19 +312,25 @@ class WorkspaceRunApplicationService:
         run = self.get(run_id)
         metadata = {**run.metadata, "pending_approval": approval.model_dump(mode="json")}
         self.runs.update(run_id, status="waiting_for_approval", metadata=metadata)
-        self.runs.add_step(run_id, "approval", f"Waiting for approval: {action}", detail={
-            "approval_id": approval.id,
-            "reason": reason,
-            "level": level,
-        })
+        self.runs.add_step(
+            run_id,
+            "approval",
+            f"Waiting for approval: {action}",
+            detail={
+                "approval_id": approval.id,
+                "reason": reason,
+                "level": level,
+            },
+        )
         self._publish(self.get(run_id), message=f"Needs approval: {action}")
         try:
             approved = await future
         finally:
             control.approvals.pop(approval.id, None)
             current = self.get(run_id)
-            metadata = {key: value for key, value in current.metadata.items()
-                        if key != "pending_approval"}
+            metadata = {
+                key: value for key, value in current.metadata.items() if key != "pending_approval"
+            }
             self.runs.update(run_id, status="running", metadata=metadata)
         self.runs.add_step(
             run_id,
@@ -360,9 +406,7 @@ class WorkspaceRunApplicationService:
         except Exception as exc:  # noqa: BLE001 - a run must report, never vanish
             self._settle(run_id, "failed", f"The run stopped: {exc}")
 
-    async def _run_task(
-        self, run_id: str, workspace: Workspace, task: WorkspaceTask
-    ) -> bool:
+    async def _run_task(self, run_id: str, workspace: Workspace, task: WorkspaceTask) -> bool:
         """Execute one plan step as a single ordinary chat turn."""
         run = self.get(run_id)
         self.workbench.update_task(workspace.id, task.id, status="in_progress")
@@ -486,6 +530,7 @@ class WorkspaceRunApplicationService:
             direction="\n".join(f"- {item}" for item in pending),
             plan=_plan_text(workspace.tasks),
         )
+        policy = ApprovalPolicy(self.context.settings)
         try:
             async with self._turn():
                 await self.missions.chat(
@@ -493,6 +538,7 @@ class WorkspaceRunApplicationService:
                     self._session(workspace),
                     profile_override=run.profile,
                     approve=self._approval_callback(run_id),
+                    approve_action=self._steering_callback(run_id, policy, workspace.folder),
                 )
         except asyncio.CancelledError:
             raise
@@ -555,9 +601,7 @@ class WorkspaceRunApplicationService:
 
     def _fail_task(self, workspace_id: str, task: WorkspaceTask, reason: str) -> None:
         with contextlib.suppress(WorkbenchError):
-            self.workbench.update_task(
-                workspace_id, task.id, status="failed", error=reason[:2_000]
-            )
+            self.workbench.update_task(workspace_id, task.id, status="failed", error=reason[:2_000])
 
     def _complete(self, run_id: str, workspace: Workspace) -> None:
         """Finish the run and leave a summary of what it produced."""

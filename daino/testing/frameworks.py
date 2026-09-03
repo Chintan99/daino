@@ -47,9 +47,17 @@ class Framework:
     discover_argv: tuple[str, ...] = ()
     #: How discovery output is read.
     discover_format: str = ""
-    #: Flags that turn coverage on, and where its report lands.
+    #: Flags that turn coverage on, and where its report lands. ``{coverage}``
+    #: is substituted with a full file path, ``{coverage_dir}`` with a directory
+    #: — runners differ on which they accept, and a runner told neither writes
+    #: its report wherever it likes, which is nowhere anything reads.
     coverage_argv: tuple[str, ...] = ()
     coverage_report: str = ""
+    #: The filename the runner writes inside ``{coverage_dir}``. Istanbul's
+    #: reporters take a directory and choose the name themselves, so this is how
+    #: the reader finds what was written. Empty means the runner was given a
+    #: full path through ``{coverage}`` and wrote exactly that.
+    coverage_file: str = ""
     #: Extra flags for a re-run of specific tests. Empty means "append ids".
     select_prefix: str = ""
     #: Human-facing note when something optional is missing.
@@ -135,14 +143,11 @@ def detect(root: Path) -> list[Framework]:
                 report_flag="--junit-xml={path} -o junit_family=xunit1",
                 discover_argv=(interpreter, "-m", "pytest", "--collect-only", "-q"),
                 discover_format="pytest",
-                coverage_argv=(
-                    ("--cov", "--cov-report", "json:{coverage}") if has_cov else ()
-                ),
+                coverage_argv=(("--cov", "--cov-report", "json:{coverage}") if has_cov else ()),
                 coverage_report="json",
+                coverage_file="coverage.json",
                 detail=(
-                    ""
-                    if has_pytest
-                    else "pytest is not installed in this project's interpreter."
+                    "" if has_pytest else "pytest is not installed in this project's interpreter."
                 ),
             )
         )
@@ -165,8 +170,18 @@ def detect(root: Path) -> list[Framework]:
                 report_flag="--reporter=junit --outputFile={path}",
                 discover_argv=((binary, "list") if binary else ()),
                 discover_format="vitest-list",
-                coverage_argv=("--coverage", "--coverage.reporter=json-summary"),
+                # The reports directory is not optional. Without it vitest
+                # writes the summary into ./coverage/ in the project root — a
+                # path nothing here reads, and one that dirties the working
+                # tree — so coverage was collected on every run and then
+                # silently discarded.
+                coverage_argv=(
+                    "--coverage",
+                    "--coverage.reporter=json-summary",
+                    "--coverage.reportsDirectory={coverage_dir}",
+                ),
                 coverage_report="json-summary",
+                coverage_file="coverage-summary.json",
                 select_prefix="-t",
                 detail="" if binary else "vitest is not installed in node_modules.",
             )
@@ -184,8 +199,16 @@ def detect(root: Path) -> list[Framework]:
                 report_flag="--json --outputFile={path}",
                 discover_argv=((binary, "--listTests") if binary else ()),
                 discover_format="paths",
-                coverage_argv=("--coverage", "--coverageReporters=json-summary"),
+                # As with vitest: json-summary names its own file, so the
+                # directory has to be given or the report lands in ./coverage/
+                # and the parser looks somewhere else entirely.
+                coverage_argv=(
+                    "--coverage",
+                    "--coverageReporters=json-summary",
+                    "--coverageDirectory={coverage_dir}",
+                ),
                 coverage_report="json-summary",
+                coverage_file="coverage-summary.json",
                 select_prefix="-t",
                 detail="" if binary else "jest is not installed in node_modules.",
             )
@@ -201,8 +224,7 @@ def detect(root: Path) -> list[Framework]:
                 argv=((manager, "test") if shutil.which(manager) else ()),
                 report="none",
                 detail=(
-                    "This project's test script is run as-is; per-test results "
-                    "need vitest or jest."
+                    "This project's test script is run as-is; per-test results need vitest or jest."
                 ),
             )
         )
@@ -231,11 +253,7 @@ def detect(root: Path) -> list[Framework]:
                 label="cargo test",
                 argv=((binary, "test") if binary else ()),
                 report="none",
-                detail=(
-                    ""
-                    if binary
-                    else "cargo is not installed."
-                ),
+                detail=("" if binary else "cargo is not installed."),
             )
         )
     return found
@@ -284,23 +302,31 @@ def build(
         reports.mkdir(parents=True, exist_ok=True)
         suffix = "json" if framework.report in {"jest-json"} else "xml"
         report_path = reports / f"{framework.id}.{suffix}"
-        coverage_path = reports / f"{framework.id}-coverage.json"
+
+    if coverage and framework.coverage_argv:
+        reports.mkdir(parents=True, exist_ok=True)
+        # Its own directory, because the istanbul reporters are given a
+        # directory and pick the filename themselves. Deciding the path here —
+        # and telling the runner about it — is what connects what is written to
+        # what `parse_coverage` later reads.
+        coverage_dir = reports / f"{framework.id}-coverage"
+        coverage_dir.mkdir(parents=True, exist_ok=True)
+        coverage_path = coverage_dir / (framework.coverage_file or "coverage.json")
+
+    if framework.report_flag:
         argv.extend(
             shlex.split(
                 framework.report_flag.format(
-                    path=str(report_path), coverage=str(coverage_path)
+                    path=str(report_path), coverage=str(coverage_path or "")
                 )
             )
         )
 
-    if coverage and framework.coverage_argv:
-        reports.mkdir(parents=True, exist_ok=True)
-        coverage_path = coverage_path or (reports / f"{framework.id}-coverage.json")
+    if coverage_path is not None:
         argv.extend(
-            item.format(coverage=str(coverage_path)) for item in framework.coverage_argv
+            item.format(coverage=str(coverage_path), coverage_dir=str(coverage_path.parent))
+            for item in framework.coverage_argv
         )
-    elif not coverage:
-        coverage_path = None
 
     if selection:
         if framework.select_prefix:

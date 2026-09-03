@@ -127,9 +127,7 @@ def _symbols(path: str, content: str) -> list[RepositorySymbol]:
                 continue
             name = stripped[len(prefix) :].split("(")[0].split(":")[0].split("{")[0].strip()
             if name:
-                symbols.append(
-                    RepositorySymbol(path=path, name=name, kind=kind, line=number)
-                )
+                symbols.append(RepositorySymbol(path=path, name=name, kind=kind, line=number))
             break
     return symbols
 
@@ -257,16 +255,12 @@ def run_sizing_case(case: EvalCase) -> CaseResult:
     )
 
 
-def _expect_flag(
-    failures: list[str], name: str, expected: bool | None, actual: bool
-) -> None:
+def _expect_flag(failures: list[str], name: str, expected: bool | None, actual: bool) -> None:
     if expected is not None and expected != actual:
         failures.append(f"{name} is {actual}, expected {expected}")
 
 
-def _expect_range(
-    failures: list[str], name: str, actual: int, minimum: int, maximum: int
-) -> None:
+def _expect_range(failures: list[str], name: str, actual: int, minimum: int, maximum: int) -> None:
     if minimum and actual < minimum:
         failures.append(f"{name} is {actual:,}, below the expected minimum {minimum:,}")
     if maximum and actual > maximum:

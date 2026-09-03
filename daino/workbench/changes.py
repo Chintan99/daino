@@ -125,9 +125,7 @@ class ChangeSetStore:
             ).all()
             return _describe(row, entries)
 
-    def list_for(
-        self, workspace_id: str, *, run_id: str = "", limit: int = 50
-    ) -> list[ChangeSet]:
+    def list_for(self, workspace_id: str, *, run_id: str = "", limit: int = 50) -> list[ChangeSet]:
         with self.database.session() as session:
             query = select(SetRow).where(SetRow.workspace_id == workspace_id)
             if run_id:

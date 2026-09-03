@@ -92,9 +92,7 @@ async def diagnostics(
     if not language_id_for(target):
         return _unsupported(body.path)
     try:
-        found = await state.lsp.diagnostics(
-            target, body.text, timeout=DIAGNOSTICS_TIMEOUT_SECONDS
-        )
+        found = await state.lsp.diagnostics(target, body.text, timeout=DIAGNOSTICS_TIMEOUT_SECONDS)
     except LSPError as exc:
         # Not an HTTP error: the request was fine, the analyser simply is not
         # here. The panel needs to say so rather than show a failed request.
@@ -221,9 +219,7 @@ async def rename(
     if not language_id_for(target):
         return {"available": False, "edits": {}, "detail": _unsupported(body.path)["detail"]}
     try:
-        edits = await state.lsp.rename_edits(
-            target, body.line - 1, body.column - 1, body.new_name
-        )
+        edits = await state.lsp.rename_edits(target, body.line - 1, body.column - 1, body.new_name)
     except LSPError as exc:
         return {"available": False, "edits": {}, "detail": str(exc)}
     return {

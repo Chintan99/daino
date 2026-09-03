@@ -37,10 +37,7 @@ def tiny_png() -> bytes:
     header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
     body = zlib.compress(b"\x00\xff\xff\xff")
     return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", header)
-        + chunk(b"IDAT", body)
-        + chunk(b"IEND", b"")
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", body) + chunk(b"IEND", b"")
     )
 
 
@@ -61,9 +58,7 @@ def vision_settings(*, vision: bool) -> Settings:
     settings.providers = {
         "cloud": ProviderConfig(type="openrouter", base_url="http://x/v1", model="m")
     }
-    settings.models = {
-        "profile": ModelProfileConfig(provider="cloud", model="m", vision=vision)
-    }
+    settings.models = {"profile": ModelProfileConfig(provider="cloud", model="m", vision=vision)}
     settings.routing = {"builder": "profile"}
     return settings
 
@@ -216,9 +211,7 @@ async def test_read_image_follows_its_observation_with_the_picture(tmp_path: Pat
 def test_the_image_observation_says_what_was_loaded(tmp_path: Path) -> None:
     (tmp_path / "shot.png").write_bytes(tiny_png())
     result = load_image(tmp_path, "shot.png")
-    rendered = _detail(
-        AgentAction(thought="t", action="read_image", path="shot.png"), result
-    )
+    rendered = _detail(AgentAction(thought="t", action="read_image", path="shot.png"), result)
     assert "shot.png" in rendered
     assert "image/png" in rendered
 

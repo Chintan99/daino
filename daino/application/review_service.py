@@ -35,6 +35,7 @@ from daino.application.qa_service import (
     SEVERITY_ORDER,
     merge_duplicates,
     severity_counts,
+    specialist_findings,
 )
 from daino.config import paths
 from daino.git import GitClient
@@ -466,6 +467,16 @@ class ChangeReviewApplicationService:
             item.summary = outcome.summary
             item.steps = outcome.steps
             item.error = outcome.error
+            # Same reasoning as the QA sweep: a reviewer's findings are records
+            # the gate counts, not prose it has to guess at. The synthesis
+            # member is skipped because it restates its peers' findings, and
+            # absorbing its copies would count each of them twice.
+            if outcome.id != "synthesis":
+                found = specialist_findings(outcome, item.label)
+                item.finding_count = len(found)
+                known = {existing.id for existing in review.findings}
+                review.findings.extend(finding for finding in found if finding.id not in known)
+                self._apply_gate(review)
             self._notify(review, on_update)
 
         outcome = await TeamRunner(
@@ -475,6 +486,10 @@ class ChangeReviewApplicationService:
             system=CHANGE_REVIEW_SYSTEM,
             tools=QA_TOOL_SPECS,
             action_schema=QAAgentAction,
+            # The surface advertises find_definition, find_references and
+            # diagnostics; without this every one of them answered "not
+            # available in this context".
+            code_intel=self.missions.code_intel,
         ).run(
             review.mission_id,
             plan,
@@ -682,15 +697,17 @@ def _archivable_patch(subject: ReviewSubject, changes: list[FileChange]) -> str:
 
 
 def _advisory_caveats(review: ChangeReview) -> list[str]:
-    """Name the reviewers whose findings the deterministic gate did not weigh."""
-    reported = [item.label for item in review.specialists if item.status == "passed"]
+    """Say what the reviewers filed, and what stayed as prose the gate cannot read."""
+    reported = [item for item in review.specialists if item.status == "passed"]
     if not reported:
         return []
+    filed = sum(item.finding_count for item in reported)
     return [
         "Advisory: "
-        + ", ".join(reported)
-        + " read this change as well. Their notes are in the summary and are NOT "
-        "part of this verdict — read them before you merge."
+        + ", ".join(item.label for item in reported)
+        + f" read this change as well and filed {filed} finding(s), counted above. "
+        "The rest of their assessment is prose in the summary and is NOT part of "
+        "this verdict — read it before you merge."
     ]
 
 

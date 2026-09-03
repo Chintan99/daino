@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import deque
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import delete, select
@@ -73,6 +75,7 @@ from daino.schemas import (
     TaskSpec,
     TaskStatus,
     ToolResult,
+    VerificationCheck,
     VerificationReport,
 )
 from daino.security import PolicyEngine
@@ -618,10 +621,13 @@ class MissionService:
         skipped: dict[str, list[str]] = {}
         # How many times each *root* task has been cut down. Keyed by root rather
         # than by immediate parent so repeated splitting of one planned task is
-        # bounded however deep the slicing goes.
-        generations: dict[str, int] = {}
+        # bounded however deep the slicing goes. Recovered from the slice ids in
+        # the rebuilt plan rather than started at zero: a mission resumed after a
+        # split used to forget the count, so `_MAX_SPLIT_GENERATIONS` could be
+        # spent again on every restart and one task sliced without limit.
+        generations: dict[str, int] = _generations_from_plan(plan)
         # root task id -> paths its slices have changed but not yet committed.
-        deferred: dict[str, list[str]] = {}
+        deferred: dict[str, list[str]] = self._deferred_from_history(workspace.mission_id, plan)
         # A worklist rather than a materialised list: a split appends its slices
         # to the front, and a `for` over a list built once would never visit them.
         queue: deque[TaskSpec] = deque(validate_task_graph(plan))
@@ -782,16 +788,26 @@ class MissionService:
                 file_sizes = {item.path: item.size for item in indexer.load().files}
                 self._update_task(spec.id, TaskStatus.VERIFYING)
                 engine = VerificationEngine(workspace.path, runtime)
+                # Computed here rather than at commit time because it decides
+                # whether this slice verifies at all, not just whether it commits.
+                holds_commit = self._awaits_sibling_slices(spec, plan, completed, superseded)
                 # The approved task contract is authoritative. A builder may
                 # suggest useful checks in ``finish``, but letting those replace
                 # the planner's commands allows a malformed ad-hoc one-liner to
                 # sink correct code after the planned check already existed.
-                commands = spec.verification_commands or implementation.verification_commands
-                if not commands:
-                    commands = engine.discover_commands()
-                self.events.publish(
-                    TestsStarted(mission_id=workspace.mission_id, commands=commands)
-                )
+                #
+                # An intermediate slice is the one case with no commands *by
+                # construction*: `split_task` gives the parent's checks to the
+                # final slice, because running them against a third of a change
+                # asserts a failure. Both fallbacks below defeated that — the
+                # builder's suggestion, and then discovery — so the suite ran on
+                # incomplete work anyway, and either failed the slice for work
+                # that had not happened yet or passed and hid the gap.
+                commands: list[str] = []
+                if not holds_commit:
+                    commands = spec.verification_commands or implementation.verification_commands
+                    if not commands:
+                        commands = engine.discover_commands()
                 loop = RepairLoop(
                     engine,
                     local_attempts=self.settings.verification.repair_attempts_local,
@@ -880,15 +896,29 @@ class MissionService:
                         )
                     )
 
-                try:
-                    report, attempts = await loop.run(
-                        commands,
-                        repair,
-                        observe=observe_report,
+                if commands:
+                    self.events.publish(
+                        TestsStarted(mission_id=workspace.mission_id, commands=commands)
                     )
-                except RuntimeError as exc:
-                    self._record_task_failure(workspace, failed, spec, str(exc))
-                    continue
+                    try:
+                        report, attempts = await loop.run(
+                            commands,
+                            repair,
+                            observe=observe_report,
+                        )
+                    except RuntimeError as exc:
+                        self._record_task_failure(workspace, failed, spec, str(exc))
+                        continue
+                else:
+                    # Recorded as an explicit skip rather than an empty pass, so
+                    # the evidence for this slice says "the final slice checks
+                    # this" instead of looking like a clean run of nothing.
+                    report, attempts = _deferred_verification(), 0
+                    self.log.emit(
+                        "task.verification_deferred",
+                        mission_id=workspace.mission_id,
+                        task_id=spec.id,
+                    )
                 with self.database.session() as session:
                     session.add(
                         VerificationRun(
@@ -943,10 +973,10 @@ class MissionService:
                 revision = None
                 # An intermediate slice is a third of a coherent change, and the
                 # verification that would prove it correct belongs to the last
-                # slice. Committing it anyway would put a state no check ever
-                # passed into the branch's history. The work stays in the working
-                # tree, and the final slice commits the whole change at once.
-                holds_commit = self._awaits_sibling_slices(spec, plan, completed, superseded)
+                # slice (`holds_commit`, decided above). Committing it anyway
+                # would put a state no check ever passed into the branch's
+                # history. The work stays in the working tree, and the final
+                # slice commits the whole change at once.
                 root = spec.slice_of
                 changed_paths = sorted(set(changed) | set(deferred.get(root, ())))
                 if holds_commit:
@@ -955,10 +985,7 @@ class MissionService:
                     # earlier slices' work would sit uncommitted in the tree
                     # while the mission reported the task complete.
                     deferred[root] = changed_paths
-                elif (
-                    commit_verified
-                    and self.settings.git.auto_commit_verified_tasks
-                ):
+                elif commit_verified and self.settings.git.auto_commit_verified_tasks:
                     deferred.pop(root, None)
                     title = spec.title.rsplit(" (", 1)[0] if root else spec.title
                     revision = (
@@ -978,6 +1005,11 @@ class MissionService:
                         {"commit": revision},
                         {"files": sorted(set(changed))},
                         *([{"committed": changed_paths}] if revision else []),
+                        # The running total this slice is handing to the next
+                        # one. On the row rather than only in memory, because
+                        # the process can stop between two slices and the final
+                        # slice has to know what the earlier ones left behind.
+                        *([{"deferred": changed_paths}] if holds_commit else []),
                     ],
                 )
                 self.events.publish(
@@ -1015,9 +1047,7 @@ class MissionService:
         try:
             engine = VerificationEngine(workspace.path, runtime)
             commands = self.settings.verification.commands or engine.discover_commands()
-            self.events.publish(
-                TestsStarted(mission_id=workspace.mission_id, commands=commands)
-            )
+            self.events.publish(TestsStarted(mission_id=workspace.mission_id, commands=commands))
             report = await engine.run(commands)
         finally:
             await runtime.cleanup()
@@ -1137,9 +1167,7 @@ class MissionService:
             # groups has nothing left to do; the split has to run through the
             # file, which is a judgement about what belongs together rather than
             # arithmetic. This is the only place the model is asked.
-            slices = await self._resize_with_model(
-                workspace, spec, target, gateway, outlines or {}
-            )
+            slices = await self._resize_with_model(workspace, spec, target, gateway, outlines or {})
         if not slices:
             return False
 
@@ -1196,9 +1224,7 @@ class MissionService:
                             TaskDependency.depends_on_id == spec.id,
                         )
                     )
-                    session.add(
-                        TaskDependency(task_id=task.id, depends_on_id=slices[-1].id)
-                    )
+                    session.add(TaskDependency(task_id=task.id, depends_on_id=slices[-1].id))
 
         plan.tasks[:] = candidate.tasks
         superseded.add(spec.id)
@@ -1276,6 +1302,48 @@ class MissionService:
             for task in plan.tasks
         )
 
+    def _deferred_from_history(self, mission_id: str, plan: TaskPlan) -> dict[str, list[str]]:
+        """Work earlier slices left uncommitted, read back after a restart.
+
+        An intermediate slice holds its commit for the final one and hands the
+        paths it changed along in a dict on the stack. Restarting between two
+        slices emptied that dict, so the last slice committed only the files it
+        had touched itself while everything the earlier slices wrote stayed
+        uncommitted in the tree — and the mission reported the task complete.
+
+        The rows already record it, so nothing new is stored: each held slice
+        writes the running total, and a slice that commits clears it. Replaying
+        those in id order reproduces exactly what the in-memory dict held.
+        """
+        roots = {task.id: task.slice_of for task in plan.tasks if task.slice_of}
+        if not roots:
+            return {}
+        with self.database.session() as session:
+            history = sorted(
+                (
+                    (row.id, list(row.evidence or []))
+                    for row in session.scalars(
+                        select(Task).where(
+                            Task.mission_id == mission_id,
+                            Task.status == TaskStatus.COMPLETED.value,
+                        )
+                    ).all()
+                    if row.id in roots
+                ),
+                key=lambda item: item[0],
+            )
+        pending: dict[str, list[str]] = {}
+        for task_id, evidence in history:
+            root = roots[task_id]
+            for entry in evidence:
+                if not isinstance(entry, dict):
+                    continue
+                if "committed" in entry:
+                    pending.pop(root, None)
+                elif "deferred" in entry:
+                    pending[root] = [str(path) for path in entry["deferred"] or []]
+        return pending
+
     def _record_task_failure(
         self,
         workspace: Workspace,
@@ -1319,9 +1387,7 @@ class MissionService:
         if failed_titles:
             parts.append("Failed: " + "; ".join(failed_titles) + ".")
         if skipped_titles:
-            parts.append(
-                "Skipped after a dependency failed: " + "; ".join(skipped_titles) + "."
-            )
+            parts.append("Skipped after a dependency failed: " + "; ".join(skipped_titles) + ".")
         parts.append(
             "Completed tasks were verified and committed; review them, then narrow or "
             "reword the failed tasks and retry."
@@ -1770,6 +1836,60 @@ class MissionService:
                 task.attempt_count = attempt_count
             if evidence is not None:
                 task.evidence = evidence
+
+
+#: The splitting round baked into a slice id by ``_slice`` — ``…-s2-01`` is the
+#: first slice of the second round.
+_SLICE_GENERATION = re.compile(r"-s(\d+)-\d+")
+
+
+def _deferred_verification() -> VerificationReport:
+    """The report for a slice whose checks belong to the final slice.
+
+    Passing, because nothing failed — but carrying a skipped check that says so,
+    so the stored evidence cannot be read as "this third of the change was
+    verified".
+    """
+    now = datetime.now(UTC)
+    return VerificationReport(
+        passed=True,
+        checks=[
+            VerificationCheck(
+                name="deferred",
+                command="(no checks for an intermediate slice)",
+                passed=True,
+                skipped=True,
+                skip_reason=(
+                    "This is one slice of a larger change. The task's verification "
+                    "runs on the final slice, against the whole change."
+                ),
+            )
+        ],
+        started_at=now,
+        finished_at=now,
+    )
+
+
+def _slice_generation(task_id: str) -> int:
+    """Which splitting round produced this id. 0 for a task that was never cut."""
+    return max((int(found) for found in _SLICE_GENERATION.findall(task_id)), default=0)
+
+
+def _generations_from_plan(plan: TaskPlan) -> dict[str, int]:
+    """How many times each root task has already been cut down.
+
+    Derived from the ids rather than remembered, for the same reason
+    :meth:`_awaits_sibling_slices` is: the plan is rebuilt from the database on
+    a resume, so anything kept only on the stack is silently zero afterwards —
+    and a zeroed counter means the split limit can be spent again on every
+    restart, which is no limit at all.
+    """
+    counts: dict[str, int] = {}
+    for task in plan.tasks:
+        if not task.slice_of:
+            continue
+        counts[task.slice_of] = max(counts.get(task.slice_of, 0), _slice_generation(task.id))
+    return counts
 
 
 def _tightened(envelope: CapabilityEnvelope, generation: int) -> CapabilityEnvelope:

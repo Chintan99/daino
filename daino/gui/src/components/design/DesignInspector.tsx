@@ -8,6 +8,7 @@ import { useAgentStore } from "../../store/agentStore";
 import { exportArtifact } from "../../lib/exportDesign";
 import { useEditorOptions, useMonacoTheme } from "../../lib/editorPrefs";
 import { PlanPanel } from "./PlanPanel";
+import { FramesPanel } from "./FramesPanel";
 // Registers the Daino themes and the language workers on the monaco
 // instance. Imported here rather than at app start so the 4 MB editor
 // arrives with the first component that renders one.
@@ -199,6 +200,10 @@ export function DesignInspector({
         {/* The plan gate replaces the old one-click Implement button, which
             asked the model to plan first and could not stop it writing. */}
         <PlanPanel designId={designId} />
+
+        {/* Frames belong to the whole design rather than to a selected node,
+            so they sit above the per-node fields alongside the plan. */}
+        <FramesPanel designId={designId} />
 
         {!selected && (
           <div className="muted" style={{ fontSize: "var(--fs-12)" }}>

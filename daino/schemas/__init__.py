@@ -27,6 +27,7 @@ from daino.schemas.core import (
     QACheckStatus,
     QAFinding,
     QAFindingCategory,
+    QAFindingDraft,
     QAReport,
     QARunStatus,
     QAScanProfile,
@@ -51,6 +52,7 @@ from daino.schemas.core import (
     TodoItem,
     ToolCall,
     ToolResult,
+    VerificationCheck,
     VerificationReport,
 )
 
@@ -81,6 +83,7 @@ __all__ = [
     "QACheck",
     "QACheckStatus",
     "QAFinding",
+    "QAFindingDraft",
     "QAFindingCategory",
     "QAReport",
     "QARunStatus",
@@ -107,5 +110,6 @@ __all__ = [
     "TeamPlan",
     "ToolCall",
     "ToolResult",
+    "VerificationCheck",
     "VerificationReport",
 ]

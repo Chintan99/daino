@@ -23,7 +23,7 @@ import hashlib
 import json
 import shlex
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pydantic import ValidationError
@@ -49,6 +49,7 @@ from daino.schemas import (
     ImagePart,
     Implementation,
     Message,
+    QAFindingDraft,
     ToolCall,
     ToolResult,
 )
@@ -142,6 +143,10 @@ class BuilderOutcome:
     #: ceiling was hit; "stall" when repeated failed/redundant actions gave up;
     #: "budget" when the mission reached a configured spend or token ceiling.
     stop_reason: str = ""
+    #: Structured findings a review specialist reported alongside its prose. Empty
+    #: for every other kind of agent — only the read-only review surface offers
+    #: the field, because only a reviewer has findings rather than changes.
+    findings: list[QAFindingDraft] = field(default_factory=list)
     #: How many times the transcript had to be compacted. A stall with a high
     #: count is a context problem wearing a stall's clothing: the agent kept
     #: losing what it had just read and re-read it. Telling those apart matters,
@@ -217,8 +222,7 @@ def describe_incomplete_outcome(
         # each compaction shed the transcript, the file went with it, and the
         # agent read it again until the guard fired.
         return (
-            message
-            + f" The context was compacted {outcome.compactions} times during this run, "
+            message + f" The context was compacted {outcome.compactions} times during this run, "
             "which means the agent kept losing what it had just read. This is a window "
             "problem rather than a wording one: give the builder a model with a larger "
             "context window, raise this profile's context_window if it is understated, "
@@ -419,6 +423,7 @@ class ToolLoop:
                     changed=sorted(set(changed)),
                     steps=steps,
                     answer=finish.message if finish.action == "respond" else "",
+                    findings=list(finish.findings),
                     escalated=self._escalated,
                     escalation_reason=self._escalation_reason,
                 )
@@ -657,9 +662,11 @@ class ToolLoop:
         memory_settings = getattr(gateway_settings, "memory", None)
         threshold = float(getattr(memory_settings, "compaction_threshold", 0.8))
         target = int(budget * threshold)
-        model = self.gateway.selected_model(self.role) if hasattr(
-            self.gateway, "selected_model"
-        ) else ""
+        model = (
+            self.gateway.selected_model(self.role)
+            if hasattr(self.gateway, "selected_model")
+            else ""
+        )
         before = sum(_message_estimate(item, model) for item in messages)
         if before < target or len(messages) < 10:
             return
@@ -761,9 +768,7 @@ class ToolLoop:
                     kept = kept[-keep_recent:] if keep_recent else []
                     while kept and kept[0].role == "tool":
                         kept.pop(0)
-                preserved = [
-                    item for item in (compacted, pinned, task_message) if item is not None
-                ]
+                preserved = [item for item in (compacted, pinned, task_message) if item is not None]
                 candidate = [messages[0], *preserved, *kept]
             best = candidate
             if sum(_message_estimate(item, model) for item in candidate) <= target:
@@ -973,9 +978,7 @@ class ToolLoop:
                 return action
             batch = self._parallel_batch(calls, index, action)
             if batch:
-                results = await asyncio.gather(
-                    *(self._run_action(item) for _, item in batch)
-                )
+                results = await asyncio.gather(*(self._run_action(item) for _, item in batch))
                 for (batched_call, batched_action), (result, paths) in zip(
                     batch, results, strict=True
                 ):
@@ -1233,9 +1236,7 @@ class ToolLoop:
         return result
 
     @staticmethod
-    def _attach_image(
-        action: AgentAction, result: ToolResult, messages: list[Message]
-    ) -> None:
+    def _attach_image(action: AgentAction, result: ToolResult, messages: list[Message]) -> None:
         """Follow an image observation with a user message carrying the picture.
 
         The chat-completions wire format accepts image parts on a ``user``
@@ -1684,8 +1685,7 @@ def _action_detail(action: AgentAction, result: ToolResult) -> str:
         return (
             f"PROJECT SKILL — {(result.data or {}).get('skill', '')}\n"
             "These are your project's own instructions for this kind of task. Follow them "
-            "for the rest of this turn.\n\n"
-            + str((result.data or {}).get("instructions") or "")
+            "for the rest of this turn.\n\n" + str((result.data or {}).get("instructions") or "")
         )
     if action.action == "call_tool":
         # The banner is already part of the content the executor built, so the

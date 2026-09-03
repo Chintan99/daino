@@ -178,17 +178,13 @@ class ExecutionMapApplicationService:
             mission_ids = [mission.id for mission in missions]
             model_calls = (
                 list(
-                    session.scalars(
-                        select(ModelCall).where(ModelCall.mission_id.in_(mission_ids))
-                    )
+                    session.scalars(select(ModelCall).where(ModelCall.mission_id.in_(mission_ids)))
                 )
                 if mission_ids
                 else []
             )
             tool_calls = (
-                list(
-                    session.scalars(select(ToolCall).where(ToolCall.mission_id.in_(mission_ids)))
-                )
+                list(session.scalars(select(ToolCall).where(ToolCall.mission_id.in_(mission_ids))))
                 if mission_ids
                 else []
             )

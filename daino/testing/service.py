@@ -102,9 +102,7 @@ class TestService:
         available = self.frameworks()
         described: list[DiscoveredFramework] = []
         cases: list[TestCase] = []
-        target = framework_id or next(
-            (item.id for item in available if item.argv), ""
-        )
+        target = framework_id or next((item.id for item in available if item.argv), "")
         for framework in available:
             runnable = bool(framework.argv)
             entry = DiscoveredFramework(
@@ -113,7 +111,10 @@ class TestService:
                 command=" ".join(framework.argv) if runnable else "",
                 available=runnable,
                 detail=framework.detail,
-                supports_coverage=bool(framework.coverage_argv),
+                # Both halves, not just the flags: `go test -cover` prints
+                # a percentage to stdout and writes no report, so offering
+                # a coverage toggle for it promises a number nothing can read.
+                supports_coverage=bool(framework.coverage_argv and framework.coverage_report),
             )
             if runnable and framework.id == target and framework.discover_argv:
                 found, error = await self._collect(framework)

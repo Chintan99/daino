@@ -91,19 +91,13 @@ class NotificationService:
     # ------------------------------------------------------------- entrypoints
 
     def completed(self, body: str, *, title: str = "") -> Notification | None:
-        return self.send(
-            NotificationKind.COMPLETED, title or f"{branding.NAME} finished", body
-        )
+        return self.send(NotificationKind.COMPLETED, title or f"{branding.NAME} finished", body)
 
     def failed(self, body: str, *, title: str = "") -> Notification | None:
-        return self.send(
-            NotificationKind.FAILED, title or f"{branding.NAME} needs you", body
-        )
+        return self.send(NotificationKind.FAILED, title or f"{branding.NAME} needs you", body)
 
     def approval(self, body: str, *, title: str = "") -> Notification | None:
-        return self.send(
-            NotificationKind.APPROVAL, title or f"{branding.NAME} is waiting", body
-        )
+        return self.send(NotificationKind.APPROVAL, title or f"{branding.NAME} is waiting", body)
 
     def send(self, kind: NotificationKind, title: str, body: str) -> Notification | None:
         """Deliver one notification, returning what was sent (or ``None``)."""

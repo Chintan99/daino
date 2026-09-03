@@ -36,9 +36,7 @@ def response(content: str) -> httpx.Response:
 
 
 def stream_response(*events: dict[str, Any]) -> httpx.Response:
-    body = "\n\n".join(
-        [*(f"data: {json.dumps(event)}" for event in events), "data: [DONE]", ""]
-    )
+    body = "\n\n".join([*(f"data: {json.dumps(event)}" for event in events), "data: [DONE]", ""])
     return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
 
 
@@ -286,15 +284,11 @@ async def test_ollama_stream_forwards_delta_reasoning_but_yields_only_answer() -
         return stream_response(
             {
                 "model": "qwen3.8:27b-mlx",
-                "choices": [
-                    {"index": 0, "delta": {"content": "", "reasoning": "Inspect"}}
-                ],
+                "choices": [{"index": 0, "delta": {"content": "", "reasoning": "Inspect"}}],
             },
             {
                 "model": "qwen3.8:27b-mlx",
-                "choices": [
-                    {"index": 0, "delta": {"content": "", "reasoning": " files"}}
-                ],
+                "choices": [{"index": 0, "delta": {"content": "", "reasoning": " files"}}],
             },
             {
                 "model": "qwen3.8:27b-mlx",
@@ -306,9 +300,7 @@ async def test_ollama_stream_forwards_delta_reasoning_but_yields_only_answer() -
             },
         )
 
-    provider = OllamaProvider(
-        model="qwen3.8:27b-mlx", transport=httpx.MockTransport(handler)
-    )
+    provider = OllamaProvider(model="qwen3.8:27b-mlx", transport=httpx.MockTransport(handler))
     provider.set_reasoning_handler(reasoning.append)
     chunks = [chunk async for chunk in provider.stream([Message(role="user", content="x")])]
     await provider.close()
@@ -375,9 +367,7 @@ async def test_complete_streams_reasoning_and_reconstructs_fragmented_tool_calls
             },
         )
 
-    provider = OllamaProvider(
-        model="qwen3.8:27b-mlx", transport=httpx.MockTransport(handler)
-    )
+    provider = OllamaProvider(model="qwen3.8:27b-mlx", transport=httpx.MockTransport(handler))
     provider.set_reasoning_handler(reasoning.append)
     result = await provider.complete(
         [Message(role="user", content="inspect")],
@@ -405,9 +395,7 @@ async def test_structured_completion_streams_reasoning_and_json_fragments() -> N
         return stream_response(
             {
                 "model": "qwen3",
-                "choices": [
-                    {"index": 0, "delta": {"thinking": "Check the schema. "}}
-                ],
+                "choices": [{"index": 0, "delta": {"thinking": "Check the schema. "}}],
             },
             {
                 "model": "qwen3",
@@ -440,9 +428,7 @@ async def test_structured_completion_streams_reasoning_and_json_fragments() -> N
 
     provider = OllamaProvider(model="qwen3", transport=httpx.MockTransport(handler))
     provider.set_reasoning_handler(reasoning.append)
-    result = await provider.structured_complete(
-        [Message(role="user", content="answer")], Answer
-    )
+    result = await provider.structured_complete([Message(role="user", content="answer")], Answer)
     await provider.close()
 
     assert result.value == 42

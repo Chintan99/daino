@@ -214,9 +214,7 @@ class RunStore:
 
     # ---------------------------------------------------------------- reading
 
-    def _describe(
-        self, session: Any, row: RunRow, *, with_steps: bool = True
-    ) -> WorkspaceRun:
+    def _describe(self, session: Any, row: RunRow, *, with_steps: bool = True) -> WorkspaceRun:
         tasks = session.scalars(
             select(TaskRow).where(TaskRow.workspace_id == row.workspace_id)
         ).all()

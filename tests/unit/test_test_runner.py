@@ -27,7 +27,7 @@ from daino.testing.reports import (
 )
 
 SUITE = textwrap.dedent(
-    '''
+    """
     def helper(value):
         assert value > 0, "helper says no"
 
@@ -43,7 +43,7 @@ SUITE = textwrap.dedent(
     def test_skipped():
         import pytest
         pytest.skip("not today")
-    '''
+    """
 ).strip()
 
 
@@ -73,7 +73,7 @@ def test_a_python_project_offers_pytest(project: Path) -> None:
 
 
 def test_an_unavailable_runner_is_listed_with_the_reason(tmp_path: Path) -> None:
-    """"No tests found" and "the runner is missing" are different problems."""
+    """ "No tests found" and "the runner is missing" are different problems."""
     (tmp_path / "package.json").write_text(
         '{"name": "app", "devDependencies": {"vitest": "^1"}}', encoding="utf-8"
     )
@@ -144,15 +144,13 @@ async def test_discovery_lists_the_tests_that_exist(project: Path) -> None:
 async def test_a_collection_error_is_reported_rather_than_zero_tests(
     tmp_path: Path,
 ) -> None:
-    """"0 tests" instead of the import error wastes everyone's afternoon."""
+    """ "0 tests" instead of the import error wastes everyone's afternoon."""
     (tmp_path / "pyproject.toml").write_text(
         "[project]\nname = 'broken'\nversion = '0.1.0'\n", encoding="utf-8"
     )
     tests = tmp_path / "tests"
     tests.mkdir()
-    (tests / "test_broken.py").write_text(
-        "import a_module_that_is_not_there\n", encoding="utf-8"
-    )
+    (tests / "test_broken.py").write_text("import a_module_that_is_not_there\n", encoding="utf-8")
     service = TestService(tmp_path)
 
     frameworks, cases = await service.discover()

@@ -89,9 +89,7 @@ def load_extensions(root: Path) -> LoadedExtensions:
     return LoadedExtensions(commands=commands, skills=skills, problems=tuple(problems))
 
 
-def _load_commands(
-    directory: Path, is_global: bool
-) -> tuple[dict[str, SlashCommand], list[str]]:
+def _load_commands(directory: Path, is_global: bool) -> tuple[dict[str, SlashCommand], list[str]]:
     if not directory.is_dir():
         return {}, []
     commands: dict[str, SlashCommand] = {}

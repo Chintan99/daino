@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeVar
 
 from daino.application.checkpoint_service import CheckpointApplicationService
 from daino.application.context import ProjectContext
@@ -18,6 +20,7 @@ from daino.application.settings_service import SettingsApplicationService
 from daino.application.workspace_run_service import WorkspaceRunApplicationService
 from daino.debugger import DebugManager
 from daino.design import DesignService
+from daino.exceptions import TurnBusy
 from daino.git import GitClient
 from daino.observability import AuditLog
 from daino.repository.lsp import PooledLSPAdapter
@@ -27,6 +30,8 @@ from daino.testing import TestService
 from daino.tools.filesystem import FileTools
 from daino.workbench.links import LinkStore
 from daino.workbench.service import WorkbenchService
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -82,6 +87,13 @@ class GuiState:
     #: a second browser tab must wait rather than interleave tool calls with the
     #: first. Declaring it was not enough — every turn now actually takes it.
     turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    #: Set the moment a turn is claimed, cleared when it finishes. The lock
+    #: alone cannot answer "is a turn running?": a turn is claimed
+    #: synchronously and only acquires the lock once its coroutine first runs,
+    #: and in that gap a second caller reads ``locked()`` as False and starts
+    #: its own. Two agents against one working tree is exactly what the lock
+    #: exists to prevent, so the claim closes the gap.
+    turn_claimed: bool = False
     #: The in-flight QA run, if any, plus the newest report it has emitted. QA is
     #: long-running, so the GUI kicks it off and polls rather than holding a request open.
     qa_task: object | None = None
@@ -94,6 +106,57 @@ class GuiState:
     @property
     def root(self) -> Path:
         return self.context.root
+
+    # ------------------------------------------------------------------ turns
+
+    @property
+    def turn_busy(self) -> bool:
+        """Whether an agentic turn is running or about to be."""
+        return self.turn_claimed or self.turn_lock.locked()
+
+    def claim_turn(self) -> bool:
+        """Reserve the project's single turn slot. False when it is taken."""
+        if self.turn_busy:
+            return False
+        self.turn_claimed = True
+        return True
+
+    def release_turn(self) -> None:
+        self.turn_claimed = False
+
+    async def run_exclusive_turn(self, factory: Callable[[], Awaitable[T]]) -> T:
+        """Run one agentic turn under the project-wide lock, or refuse.
+
+        For callers holding an HTTP request open. Refusing rather than queueing
+        is deliberate: a request parked behind a forty-minute mission returns a
+        gateway timeout, and the button that sent it has no way to say "still
+        waiting". Routes that skipped this entirely — design propose and
+        implement did — could run a second agent against the working tree a
+        CODE turn was already editing.
+
+        The turn is registered as :attr:`active_turn` for the same reason a
+        socket turn is: Stop has to be able to reach it from anywhere.
+        """
+        if not self.claim_turn():
+            raise TurnBusy(
+                "Another D[Ai]NO turn is already running for this project — "
+                "wait for it to finish, or stop it there."
+            )
+        task: asyncio.Task[T] = asyncio.ensure_future(self._locked_turn(factory))
+        # Fires even if the task is cancelled before its first step, which a
+        # release inside the coroutine would miss — and a leaked claim would
+        # wedge every later turn.
+        task.add_done_callback(lambda _: self.release_turn())
+        previous, self.active_turn = self.active_turn, task
+        try:
+            return await task
+        finally:
+            if self.active_turn is task:
+                self.active_turn = previous
+
+    async def _locked_turn(self, factory: Callable[[], Awaitable[T]]) -> T:
+        async with self.turn_lock:
+            return await factory()
 
     @classmethod
     def from_context(cls, context: ProjectContext) -> GuiState:
@@ -118,9 +181,7 @@ class GuiState:
             checkpoints=CheckpointApplicationService(context),
             repository=RepositoryApplicationService(context),
             workbench=workbench,
-            runs=WorkspaceRunApplicationService(
-                context, missions, workbench, turn_lock=turn_lock
-            ),
+            runs=WorkspaceRunApplicationService(context, missions, workbench, turn_lock=turn_lock),
             links=LinkStore(context.database, workbench),
             lsp=PooledLSPAdapter(context.root),
             tests=TestService(context.root),

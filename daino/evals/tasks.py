@@ -140,9 +140,7 @@ def _open(root: Path) -> ProjectContext:
             os.environ["DAINO_CONFIG_HOME"] = previous
 
 
-async def run_task_case(
-    case: EvalCase, settings: Settings, *, profile: str = ""
-) -> CaseResult:
+async def run_task_case(case: EvalCase, settings: Settings, *, profile: str = "") -> CaseResult:
     """Run one case end to end and grade it on the working tree afterwards."""
     started = monotonic()
     with ScratchProject(case, settings) as project:
@@ -231,9 +229,7 @@ def _grade(case: EvalCase, project: ScratchProject, outcome: object) -> list[str
             )
     steps = int(getattr(outcome, "steps", 0) or 0)
     if expectation.max_steps and steps > expectation.max_steps:
-        failures.append(
-            f"took {steps} steps, more than the {expectation.max_steps} expected"
-        )
+        failures.append(f"took {steps} steps, more than the {expectation.max_steps} expected")
     return failures
 
 

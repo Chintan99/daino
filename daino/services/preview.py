@@ -105,15 +105,68 @@ def detect_preview_commands(root: Path) -> list[PreviewCommand]:
                     default_url="http://localhost:8501",
                 )
             )
-    if (root / "compose.yaml").is_file() or (root / "docker-compose.yml").is_file():
+    compose = next(
+        (
+            root / name
+            for name in ("compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml")
+            if (root / name).is_file()
+        ),
+        None,
+    )
+    if compose is not None:
         commands.append(
             PreviewCommand(
                 label="docker compose up",
                 command="docker compose up",
-                source="compose.yaml",
+                source=compose.name,
+                # Guessed from the first published port in the file. Without it
+                # the view has nothing to put in the iframe until a log line
+                # happens to mention a URL, and plenty of compose stacks never
+                # print one.
+                default_url=_compose_url(compose),
             )
         )
     return commands
+
+
+def _compose_url(path: Path) -> str:
+    """The first host port a compose file publishes, as a localhost URL.
+
+    Best effort by design: a compose file can publish nothing, publish through
+    an env var, or serve on a path this cannot know. An empty string means "let
+    the log pump find it", which is the behaviour without this.
+    """
+    try:
+        import yaml
+
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ImportError):
+        return ""
+    services = document.get("services") if isinstance(document, dict) else None
+    if not isinstance(services, dict):
+        return ""
+    for service in services.values():
+        if not isinstance(service, dict):
+            continue
+        for entry in service.get("ports") or []:
+            port = _host_port(entry)
+            if port:
+                return f"http://localhost:{port}"
+    return ""
+
+
+def _host_port(entry: object) -> str:
+    """The host side of one compose port mapping, in either supported form."""
+    if isinstance(entry, dict):
+        published = entry.get("published")
+        return str(published) if str(published or "").isdigit() else ""
+    if not isinstance(entry, str | int):
+        return ""
+    # "8080:80", "127.0.0.1:8080:80", "8080", "8080:80/tcp" — the host port is
+    # the second-to-last field of the mapping, or the only one.
+    fields = str(entry).split("/")[0].split(":")
+    candidate = fields[-2] if len(fields) >= 2 else fields[0]
+    return candidate if candidate.isdigit() else ""
 
 
 class PreviewManager:

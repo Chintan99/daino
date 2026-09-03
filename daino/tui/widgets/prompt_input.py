@@ -253,9 +253,7 @@ class PromptInput(Vertical):
             # After the built-ins, mirroring the dispatcher: a project command
             # cannot shadow one of Daino's, so it should not appear to.
             suggestions.extend(
-                (name, hint)
-                for name, hint in self.custom_commands
-                if name.startswith(token)
+                (name, hint) for name, hint in self.custom_commands if name.startswith(token)
             )
         elif token.startswith("@"):
             builtins = ["@file:", "@symbol:", "@image:", "@mission:", "@playbook:"]

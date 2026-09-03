@@ -161,8 +161,7 @@ async def test_the_hook_receives_the_event_payload_on_stdin(tmp_path: Path) -> N
         pre_tool_use=[
             HookDefinition(
                 command=script(
-                    "import sys,pathlib;"
-                    f"pathlib.Path({str(marker)!r}).write_text(sys.stdin.read())"
+                    f"import sys,pathlib;pathlib.Path({str(marker)!r}).write_text(sys.stdin.read())"
                 )
             )
         ],

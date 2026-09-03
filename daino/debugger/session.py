@@ -34,9 +34,7 @@ CONNECT_INTERVAL_SECONDS = 0.1
 #: Variables fetched per scope. A dict with 100k keys must not become 100k rows.
 MAX_VARIABLES = 500
 
-SessionState = Literal[
-    "starting", "running", "stopped", "terminated", "failed"
-]
+SessionState = Literal["starting", "running", "stopped", "terminated", "failed"]
 
 Notify = Callable[[], None]
 
@@ -177,10 +175,7 @@ class DebugManager:
                     "setBreakpoints",
                     {
                         "source": {"path": str(self.root / relative), "name": Path(relative).name},
-                        "breakpoints": [
-                            self._describe(item, client)
-                            for item in wanted
-                        ],
+                        "breakpoints": [self._describe(item, client) for item in wanted],
                     },
                 )
             except DebugError as exc:
@@ -294,9 +289,7 @@ class DebugManager:
                 "attach",
                 {
                     "justMyCode": True,
-                    "pathMappings": [
-                        {"localRoot": str(self.root), "remoteRoot": str(self.root)}
-                    ],
+                    "pathMappings": [{"localRoot": str(self.root), "remoteRoot": str(self.root)}],
                 },
             )
             # Breakpoints only stick after the adapter asks for configuration.

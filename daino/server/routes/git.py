@@ -559,9 +559,7 @@ def conflict_sides(
 
 
 @router.post("/conflict/resolve")
-def resolve_conflict(
-    state: Annotated[GuiState, Depends(get_state)], body: ResolveRequest
-) -> dict:
+def resolve_conflict(state: Annotated[GuiState, Depends(get_state)], body: ResolveRequest) -> dict:
     """Take one whole side of a conflict and mark the file resolved."""
     _require_repository(state)
     safe_path(state, body.path)

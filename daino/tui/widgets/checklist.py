@@ -216,9 +216,7 @@ class TaskChecklist(VerticalScroll):
             return
         width = self._runner_width()
         canvas = [[(" ", palette.DIM) for _ in range(width)] for _ in range(5)]
-        ground = (_GROUND * (width // len(_GROUND) + 2))[
-            self._runner_frame % len(_GROUND) :
-        ]
+        ground = (_GROUND * (width // len(_GROUND) + 2))[self._runner_frame % len(_GROUND) :]
         for column in range(width):
             canvas[4][column] = (ground[column], palette.FAINTEST)
 
@@ -236,17 +234,11 @@ class TaskChecklist(VerticalScroll):
         )
         for sprite_row, line in enumerate(_DINO_BODY):
             self._draw(canvas, 0, dino_y + sprite_row, line, dino_colour)
-        feet = (
-            _DINO_FEET[self._runner_frame % len(_DINO_FEET)]
-            if running
-            else _DINO_STANDING
-        )
+        feet = _DINO_FEET[self._runner_frame % len(_DINO_FEET)] if running else _DINO_STANDING
         self._draw(canvas, 0, dino_y + 2, feet, dino_colour)
 
         if running or self.activity_state == "failed":
-            obstacle_colour = (
-                palette.ALERT if self.activity_state == "failed" else palette.MUTED
-            )
+            obstacle_colour = palette.ALERT if self.activity_state == "failed" else palette.MUTED
             self._draw(canvas, self._obstacle_x, 1, "╷", obstacle_colour)
             self._draw(canvas, self._obstacle_x - 1, 2, "┤│├", obstacle_colour)
             self._draw(canvas, self._obstacle_x, 3, "│", obstacle_colour)

@@ -118,9 +118,7 @@ async def run_cases(
     """
     grouped: dict[str, SuiteResult] = {}
     for suite, case in selected:
-        result = grouped.setdefault(
-            suite.name, SuiteResult(suite=suite.name, model=profile)
-        )
+        result = grouped.setdefault(suite.name, SuiteResult(suite=suite.name, model=profile))
         outcome = await run_case(case, settings=settings, profile=profile)
         result.results.append(outcome)
         if callable(on_result):
@@ -197,7 +195,6 @@ def render_report(results: list[SuiteResult]) -> str:
         )
     if total_tokens or total_cost:
         lines.append(
-            f"Spent: {total_tokens:,} tokens"
-            + (f", ${total_cost:.4f}" if total_cost else "")
+            f"Spent: {total_tokens:,} tokens" + (f", ${total_cost:.4f}" if total_cost else "")
         )
     return "\n".join(lines)

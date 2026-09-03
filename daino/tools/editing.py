@@ -902,9 +902,7 @@ class ActionExecutor:
         #: Records how a workspace's outputs relate. Built from the workbench so
         #: a caller that supplied one gets provenance without asking for it —
         #: the same reasoning as automatic source recording.
-        self.links = (
-            LinkStore(workbench.database, workbench) if workbench is not None else None
-        )
+        self.links = LinkStore(workbench.database, workbench) if workbench is not None else None
         #: The workspace the user has open, so the model does not have to name
         #: one it was never told about.
         self.workspace_id = workspace_id
@@ -965,9 +963,7 @@ class ActionExecutor:
         await self._post_tool_hook(name, arguments, result)
         return result, paths
 
-    async def _pre_tool_hook(
-        self, name: str, arguments: dict[str, Any]
-    ) -> ToolResult | None:
+    async def _pre_tool_hook(self, name: str, arguments: dict[str, Any]) -> ToolResult | None:
         """Ask the pre-tool hooks; return a refusal when one of them says no."""
         if self.hooks is None or not self.hooks.configured_for(HookEvent.PRE_TOOL_USE):
             return None
@@ -1064,6 +1060,8 @@ class ActionExecutor:
             "delete_design_node",
             "connect_design_nodes",
             "disconnect_design_nodes",
+            "add_design_frame",
+            "delete_design_frame",
         }:
             return self._design_action(action), []
         if name in {
@@ -1266,11 +1264,7 @@ class ActionExecutor:
                 error="This project defines no skills.",
             )
         skill = self.skills.get(requested) or next(
-            (
-                item
-                for name, item in self.skills.items()
-                if name.casefold() == requested.casefold()
-            ),
+            (item for name, item in self.skills.items() if name.casefold() == requested.casefold()),
             None,
         )
         if skill is None:
@@ -1724,6 +1718,30 @@ class ActionExecutor:
                     source=action.source_node or None,
                     target=action.target_node or None,
                 )
+            elif name == "add_design_frame":
+                design = self.design.add_frame(
+                    action.design_id,
+                    name=action.frame_name,
+                    frame_id=action.frame_id or None,
+                    width=action.frame_width or 1440,
+                    height=action.frame_height or 900,
+                    children=list(action.frame_elements),
+                )
+            elif name == "update_design_frame":
+                design = self.design.update_frame(
+                    action.design_id,
+                    action.frame_id,
+                    name=action.frame_name or None,
+                    width=action.frame_width or None,
+                    height=action.frame_height or None,
+                    # Only when the model actually sent elements. An empty list
+                    # is indistinguishable from "not mentioned" on the wire, and
+                    # treating the absent case as "empty the screen" would let a
+                    # rename delete the mock-up it was renaming.
+                    children=list(action.frame_elements) or None,
+                )
+            elif name == "delete_design_frame":
+                design = self.design.delete_frame(action.design_id, action.frame_id)
             else:  # pragma: no cover - dispatch guards the set
                 return ToolResult(tool=name, success=False, error="Unknown design operation")
         except DesignError as exc:
@@ -1738,6 +1756,19 @@ class ActionExecutor:
                 "version": design.version,
                 "nodes": self._summarize_nodes(design),
                 "edges": [edge.model_dump(mode="json") for edge in design.edges],
+                # Counts rather than the trees themselves: a frame's elements
+                # are what the model just sent, and echoing them back spends
+                # window restating the request.
+                "frames": [
+                    {
+                        "id": frame.id,
+                        "name": frame.name,
+                        "width": frame.width,
+                        "height": frame.height,
+                        "elements": len(frame.children),
+                    }
+                    for frame in design.frames
+                ],
             },
         )
 

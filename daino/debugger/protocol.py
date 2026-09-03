@@ -236,9 +236,7 @@ class DebugAdapterClient:
                 pending.future.set_result(message.get("body") or {})
                 return
             pending.future.set_exception(
-                DebugError(
-                    str(message.get("message") or f"{pending.command} was refused.")
-                )
+                DebugError(str(message.get("message") or f"{pending.command} was refused."))
             )
             return
         if kind == "event":

@@ -36,7 +36,7 @@ ORIGINAL = "<!DOCTYPE html>\n<html>\n<body>\n<h1>Welcome</h1>\n</body>\n</html>\
 #: the command failed with "not found" both times and the check was never
 #: actually flaky.
 FLAKY_CHECK = (
-    f"{shlex.quote(sys.executable)} -c \"from pathlib import Path; "
+    f'{shlex.quote(sys.executable)} -c "from pathlib import Path; '
     "p=Path('.vasuki-flaky-check'); "
     "first=not p.exists(); p.write_text('seen'); raise SystemExit(0 if first else 1)\""
 )
@@ -286,8 +286,7 @@ async def test_failed_final_verification_does_not_report_the_chat_mission_comple
         assert details["mission"]["status"] == "failed"
         messages = workspace.missions.messages(workspace.session_id)
         assert any(
-            item.kind == "error" and "task is not complete" in item.content
-            for item in messages
+            item.kind == "error" and "task is not complete" in item.content for item in messages
         )
 
 

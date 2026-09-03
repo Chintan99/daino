@@ -629,9 +629,7 @@ def decide_change(
 
 
 @router.get("/{workspace_id}/links")
-def list_links(
-    state: Annotated[GuiState, Depends(get_state)], workspace_id: str
-) -> dict[str, Any]:
+def list_links(state: Annotated[GuiState, Depends(get_state)], workspace_id: str) -> dict[str, Any]:
     """How this workspace's outputs relate, and which may have gone stale."""
     return {
         "links": [item.model_dump(mode="json") for item in state.links.links_for(workspace_id)],

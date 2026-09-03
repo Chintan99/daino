@@ -4,6 +4,21 @@ import { usePreviewDetect, usePreviewStatus, qk } from "../../api/hooks";
 import { api, ApiError } from "../../api/client";
 
 /**
+ * The reasons behind a 409 from the preview start endpoint, or null.
+ *
+ * A 409 here is not a failure — it is the server saying "this one needs a
+ * person". Anything else falls through to the ordinary error path.
+ */
+function approvalRequest(err: unknown): string[] | null {
+  if (!(err instanceof ApiError) || err.status !== 409) return null;
+  const detail = err.detail as
+    | { requires_approval?: boolean; reasons?: string[] }
+    | undefined;
+  if (!detail?.requires_approval) return null;
+  return detail.reasons?.length ? detail.reasons : ["This command needs approval."];
+}
+
+/**
  * Runs the project and shows it, as the Preview workspace used to.
  *
  * It lives under the Inspector because a running app is the other half of an
@@ -37,19 +52,38 @@ export function LiveAppView() {
   }, [status?.running, status?.url]);
 
   const running = !!status?.running;
+  const selected = commands.find((c) => c.command === command);
+  const refused = !!selected?.refused;
+  const needsApproval = !!selected?.requires_approval;
 
-  const start = async () => {
+  const start = async (confirmed = false) => {
     setBusy(true);
     try {
-      await api.previewStart(command, url);
+      await api.previewStart(command, url, confirmed);
       await qc.invalidateQueries({ queryKey: qk.previewStatus });
     } catch (err) {
-      if (err instanceof ApiError && err.status === 403)
-        window.alert("The command was denied by the backend policy.");
-      else
+      // 409 is the backend asking rather than refusing: the command is
+      // startable, it just mutates something (`docker compose up` touches the
+      // host's Docker state) and wants a person to say so first. Confirming
+      // and retrying is the whole approval flow — without it, every Compose
+      // project was simply unable to start here.
+      const approval = approvalRequest(err);
+      if (approval && !confirmed) {
+        const ok = window.confirm(
+          `Start "${command}"?\n\n${approval.join("\n")}`,
+        );
+        if (ok) {
+          setBusy(false);
+          await start(true);
+          return;
+        }
+      } else if (err instanceof ApiError && err.status === 403) {
+        window.alert(`This command cannot be started: ${err.message}`);
+      } else if (!approval) {
         window.alert(
           `Failed to start the app: ${err instanceof Error ? err.message : String(err)}`,
         );
+      }
     } finally {
       setBusy(false);
     }
@@ -105,9 +139,16 @@ export function LiveAppView() {
           <button
             className="btn primary"
             onClick={() => void start()}
-            disabled={busy || !command}
+            disabled={busy || !command || refused}
+            title={
+              refused
+                ? (selected?.approval_reasons ?? []).join("; ")
+                : needsApproval
+                  ? "You will be asked to confirm this command first"
+                  : undefined
+            }
           >
-            Start
+            {needsApproval ? "Start…" : "Start"}
           </button>
         )}
         <button
@@ -130,6 +171,12 @@ export function LiveAppView() {
         {running && (
           <span className="muted" style={{ fontSize: "var(--fs-11)" }}>
             SCAN will probe this URL
+          </span>
+        )}
+        {!running && (refused || needsApproval) && (
+          <span className="muted" style={{ fontSize: "var(--fs-11)" }}>
+            {refused ? "blocked: " : "needs approval: "}
+            {(selected?.approval_reasons ?? []).join("; ")}
           </span>
         )}
         <span className="badge">{running ? "running" : "stopped"}</span>

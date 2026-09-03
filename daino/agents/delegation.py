@@ -181,11 +181,7 @@ class DelegationRunner:
                 "changed": list(outcome.changed),
                 "reports": [_report(item) for item in outcome.members],
             },
-            error=(
-                ""
-                if succeeded
-                else "Every subagent failed; their errors are in the reports."
-            ),
+            error=("" if succeeded else "Every subagent failed; their errors are in the reports."),
         )
 
 

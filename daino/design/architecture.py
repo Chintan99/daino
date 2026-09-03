@@ -126,13 +126,11 @@ def _granularity(paths: list[str]) -> frozenset[str]:
     """
     transparent = set(_TRANSPARENT)
     for _ in range(2):  # at most two levels down; deeper stops being a diagram
-        counts: Counter[str] = Counter(
-            _module_of(path, frozenset(transparent)) for path in paths
-        )
+        counts: Counter[str] = Counter(_module_of(path, frozenset(transparent)) for path in paths)
         if len(counts) < 2:
             biggest = next(iter(counts), "")
         else:
-            (biggest, share), = counts.most_common(1)
+            ((biggest, share),) = counts.most_common(1)
             if share / max(1, sum(counts.values())) < _DOMINANT_SHARE:
                 break
         leaf = biggest.rsplit("/", 1)[-1]
@@ -224,9 +222,7 @@ def analyse(
         "modules": [item for item in ordered if item.name in kept],
         "edges": [
             {"source": source, "target": target, "weight": weight}
-            for (source, target), weight in sorted(
-                weights.items(), key=lambda pair: -pair[1]
-            )
+            for (source, target), weight in sorted(weights.items(), key=lambda pair: -pair[1])
             if weight >= MIN_EDGE_WEIGHT
         ],
         "route_count": len(routes or []),

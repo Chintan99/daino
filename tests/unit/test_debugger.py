@@ -23,7 +23,7 @@ import pytest
 from daino.debugger import DebugError, DebugManager, adapters, available, language_of
 
 PROGRAM = textwrap.dedent(
-    '''
+    """
     def add(left, right):
         total = left + right
         return total
@@ -37,7 +37,7 @@ PROGRAM = textwrap.dedent(
 
 
     main()
-    '''
+    """
 ).strip()
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
@@ -91,7 +91,7 @@ def test_languages_map_to_the_adapters_that_debug_them() -> None:
 
 
 def test_a_missing_adapter_is_reported_with_how_to_install_it(tmp_path: Path) -> None:
-    """"No debugger" must never look the same as "the debugger found nothing"."""
+    """ "No debugger" must never look the same as "the debugger found nothing"."""
     rows = {row["id"]: row for row in available(tmp_path)}
 
     assert "debugpy" in rows
@@ -217,9 +217,7 @@ async def test_variables_are_readable_in_the_stopped_frame(project: Path) -> Non
 
         scopes = await manager.scopes(frames[0].id)
         assert scopes
-        locals_scope = next(
-            (item for item in scopes if "local" in item.name.casefold()), scopes[0]
-        )
+        locals_scope = next((item for item in scopes if "local" in item.name.casefold()), scopes[0])
         variables = await manager.variables(locals_scope.variables_reference)
 
         by_name = {item.name: item.value for item in variables}
@@ -233,7 +231,7 @@ async def test_variables_are_readable_in_the_stopped_frame(project: Path) -> Non
 async def test_an_expression_is_evaluated_in_the_frame_it_was_asked_about(
     project: Path,
 ) -> None:
-    """"What is `left` here" is the question people ask at a breakpoint."""
+    """ "What is `left` here" is the question people ask at a breakpoint."""
     manager = DebugManager(project)
     manager.toggle_breakpoint("program.py", 3)
     try:

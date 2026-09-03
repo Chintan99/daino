@@ -177,9 +177,7 @@ def rebuild(file: FilePatch, indices: list[int] | None = None) -> str:
         # at 0 in Git's numbering, and its counterpart starts at 1.
         if old_count == 0:
             new_start = max(new_start, 1)
-        lines.append(
-            f"@@ -{hunk.old_start},{old_count} +{new_start},{new_count} @@{hunk.heading}"
-        )
+        lines.append(f"@@ -{hunk.old_start},{old_count} +{new_start},{new_count} @@{hunk.heading}")
         lines.extend(hunk.lines)
         drift += new_count - old_count
     return "\n".join(lines) + "\n"

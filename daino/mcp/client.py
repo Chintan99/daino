@@ -430,6 +430,5 @@ def _clip(text: str) -> str:
     if len(text) <= MAX_RESPONSE_CHARS:
         return text
     return (
-        text[:MAX_RESPONSE_CHARS]
-        + f"\n… response truncated at {MAX_RESPONSE_CHARS:,} characters …"
+        text[:MAX_RESPONSE_CHARS] + f"\n… response truncated at {MAX_RESPONSE_CHARS:,} characters …"
     )

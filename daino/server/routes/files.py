@@ -22,8 +22,20 @@ from daino.server.state import GuiState
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
-_IGNORED = {".git", *paths.STATE_DIR_NAMES, ".venv", "venv", "node_modules", "__pycache__",
-            ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist", "build", ".tox"}
+_IGNORED = {
+    ".git",
+    *paths.STATE_DIR_NAMES,
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "dist",
+    "build",
+    ".tox",
+}
 _MAX_EDITABLE_BYTES = 2_000_000
 
 #: Where a file dropped on the chat box lands. Inside the state directory rather
@@ -177,9 +189,7 @@ def delete(
 
 
 @router.post("/attach")
-def attach_file(
-    state: Annotated[GuiState, Depends(get_state)], body: AttachRequest
-) -> dict:
+def attach_file(state: Annotated[GuiState, Depends(get_state)], body: AttachRequest) -> dict:
     """Store an attachment and return the path the agent can act on.
 
     The agent reads files by path, so an attachment becomes a real file it can
@@ -301,9 +311,7 @@ class ReplaceRequest(BaseModel):
 
 
 @router.post("/replace")
-def replace_in_files(
-    state: Annotated[GuiState, Depends(get_state)], body: ReplaceRequest
-) -> dict:
+def replace_in_files(state: Annotated[GuiState, Depends(get_state)], body: ReplaceRequest) -> dict:
     """Write a replacement across the repository.
 
     Recomputed from the query rather than applied from the preview's text: a
@@ -321,9 +329,7 @@ def replace_in_files(
         body.exclude,
         5_000,
     )
-    summary = apply_replacement(
-        state.root, query, body.replacement, only_paths=body.paths or None
-    )
+    summary = apply_replacement(state.root, query, body.replacement, only_paths=body.paths or None)
     if summary.errors and not summary.files:
         raise HTTPException(status_code=400, detail="; ".join(summary.errors))
     if summary.files:

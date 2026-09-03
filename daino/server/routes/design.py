@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from daino.application.design_plan_service import DesignPlanApplicationService
 from daino.design import Design, DesignConflictError, DesignError
 from daino.design.plans import PlanError, PlanGateError
+from daino.exceptions import TurnBusy
 from daino.server.deps import get_state
 from daino.server.state import GuiState
 
@@ -360,14 +361,21 @@ async def propose_plan(
     every mutating tool, ``EditTools`` refuses mutations, and no command runner
     is attached. "Propose a plan before writing code" used to be a sentence in a
     prompt, which the model was free to ignore — and did.
+
+    It still takes the project-wide turn slot. Read-only or not, it is a full
+    agent turn against the same runtime, and two turns sharing one gateway
+    budget and one context pipeline is the interleaving the lock exists to stop.
     """
+    service = _plans(state)
     try:
-        await _plans(state).propose(
-            design_id, body.session_id, profile_override=body.profile
+        await state.run_exclusive_turn(
+            lambda: service.propose(design_id, body.session_id, profile_override=body.profile)
         )
+    except TurnBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except DesignError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _plans(state).status(design_id)
+    return service.status(design_id)
 
 
 @router.post("/{design_id}/plan/approve")
@@ -401,25 +409,38 @@ async def implement_design(
     """Carry out an approved plan.
 
     Refused with 409 when there is no approved plan for *this version* of the
-    design. The version check is the part that matters most: a plan written
-    against version 4 of a canvas describes a canvas that no longer exists once
-    someone has rearranged it, and implementing it would build the wrong thing
-    while looking entirely legitimate.
+    design, and with 409 again when another turn already holds the project. This
+    writes to the working tree, so running it beside a CODE or Workspace turn
+    would have two agents editing the same files with neither aware of the
+    other.
+
+    The version check is the part that matters most: a plan written against
+    version 4 of a canvas describes a canvas that no longer exists once someone
+    has rearranged it, and implementing it would build the wrong thing while
+    looking entirely legitimate.
     """
     service = _plans(state)
     try:
-        outcome = await service.implement(
-            design_id, body.session_id, profile_override=body.profile
+        outcome = await state.run_exclusive_turn(
+            lambda: service.implement(design_id, body.session_id, profile_override=body.profile)
         )
+    except TurnBusy as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PlanGateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except PlanError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except DesignError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    status = service.status(design_id)
+    plan = status.get("plan") or {}
     return {
-        "implemented": True,
+        # The plan's own state, not "we asked and it returned". A turn whose
+        # verification failed, or that changed nothing, leaves the plan approved
+        # and this False — which is what the user needs to see.
+        "implemented": isinstance(plan, dict) and plan.get("status") == "implemented",
+        "verified": outcome.verified,
         "summary": outcome.answer or outcome.summary,
         "files": sorted({diff.path for diff in outcome.diffs}),
-        **service.status(design_id),
+        **status,
     }

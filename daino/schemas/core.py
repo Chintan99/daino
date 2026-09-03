@@ -243,6 +243,57 @@ class TodoItem(StrictModel):
     status: Literal["pending", "in_progress", "completed", "failed"] = "pending"
 
 
+#: What an inspection is asked to cover. "quality" is the historical QA sweep,
+#: "security" is the vulnerability assessment on its own, "full" is both.
+QAScanProfile = Literal["full", "quality", "security"]
+
+#: Ordered worst-first; the release gate reads them in this order.
+QASeverity = Literal["critical", "high", "medium", "low", "info"]
+
+QAFindingCategory = Literal[
+    "secrets",
+    "vulnerability",
+    "dependencies",
+    "configuration",
+    "runtime",
+    "quality",
+    "tests",
+    "browser",
+]
+
+
+class QAFindingDraft(StrictModel):
+    """One issue a review specialist reports, in the shape the gate can read.
+
+    Defined up here, next to :class:`AgentAction`, because a specialist reports
+    its findings *through* ``finish`` — and that is the whole point. Reviewers
+    used to hand back prose, so everything they found was invisible to the
+    release gate and to the file annotations: only the deterministic scanners
+    counted, and a specialist that found a critical authorization hole
+    contributed a paragraph nobody's tooling could act on.
+
+    Deliberately smaller than :class:`QAFinding`. ``id`` and ``source`` are the
+    inspection's to assign — a model inventing either would let one specialist
+    overwrite another's finding, or claim to be a scanner.
+    """
+
+    title: str
+    severity: QASeverity = "medium"
+    category: QAFindingCategory = "vulnerability"
+    #: Repository-relative path, or a URL for a finding against a live target.
+    location: str = ""
+    line: int | None = None
+    detail: str = ""
+    remediation: str = ""
+    #: CWE identifier ("CWE-798") when one applies.
+    cwe: str = ""
+    #: Advisory or rule identifier ("GHSA-…", "CVE-…", "B602").
+    reference: str = ""
+    #: How sure the specialist is that this is real and reachable here. Low
+    #: confidence is a legitimate answer, and far more useful than silence.
+    confidence: Literal["high", "medium", "low"] = "medium"
+
+
 class AgentAction(StrictModel):
     """One step an implementing agent chooses to take.
 
@@ -282,6 +333,9 @@ class AgentAction(StrictModel):
         "delete_design_node",
         "connect_design_nodes",
         "disconnect_design_nodes",
+        "add_design_frame",
+        "update_design_frame",
+        "delete_design_frame",
         "workspace_read",
         "workspace_plan",
         "workspace_task",
@@ -318,6 +372,11 @@ class AgentAction(StrictModel):
     max_chars: int = 0
     #: For ``glob``: a path pattern such as ``src/**/*.py``.
     pattern: str = ""
+    #: For a review specialist's ``finish``: what it found, structured. Empty
+    #: for every other agent, and ignored by every caller that does not ask for
+    #: it — the field lives on the base action because native tool calls are
+    #: validated against this class rather than the caller's narrower schema.
+    findings: list[QAFindingDraft] = Field(default_factory=list)
     #: For ``read_file``: read a window of a large file instead of the head.
     offset: int = 0
     limit: int = 0
@@ -341,6 +400,15 @@ class AgentAction(StrictModel):
     symbol: str = ""
     #: For ``multi_edit``: several replacements applied to one file in order.
     edits: list[EditSpec] = Field(default_factory=list)
+    #: For the ``*_design_frame`` actions: which mock-up frame, and what it
+    #: holds. ``frame_elements`` replaces the frame's contents wholesale rather
+    #: than merging — a frame's children are an ordered tree, and a merge would
+    #: make removing an element impossible to express.
+    frame_id: str = ""
+    frame_name: str = ""
+    frame_width: int = 0
+    frame_height: int = 0
+    frame_elements: list[dict[str, Any]] = Field(default_factory=list)
     #: For ``todo``: the current plan, replaced in full each time.
     todos: list[TodoItem] = Field(default_factory=list)
     summary: str = ""
@@ -597,6 +665,9 @@ class TeamMemberOutcome(StrictModel):
     steps: int = 0
     success: bool = True
     error: str = ""
+    #: Structured findings, for a member that reviews rather than builds. The
+    #: prose in ``summary`` is what a person reads; this is what a gate counts.
+    findings: list[QAFindingDraft] = Field(default_factory=list)
 
 
 class TeamOutcome(StrictModel):
@@ -611,26 +682,8 @@ class TeamOutcome(StrictModel):
 QARunStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 QACheckStatus = Literal["pending", "running", "passed", "failed", "skipped"]
 
-#: What an inspection is asked to cover. "quality" is the historical QA sweep,
-#: "security" is the vulnerability assessment on its own, "full" is both.
-QAScanProfile = Literal["full", "quality", "security"]
-
-#: Ordered worst-first; the release gate reads them in this order.
-QASeverity = Literal["critical", "high", "medium", "low", "info"]
-
 #: The release gate's answer to "is this safe to push?".
 QAVerdict = Literal["unknown", "pass", "warn", "blocked"]
-
-QAFindingCategory = Literal[
-    "secrets",
-    "vulnerability",
-    "dependencies",
-    "configuration",
-    "runtime",
-    "quality",
-    "tests",
-    "browser",
-]
 
 
 class QAFinding(StrictModel):
@@ -700,6 +753,11 @@ class QASpecialist(StrictModel):
     summary: str = ""
     steps: int = 0
     error: str = ""
+    #: How many structured findings this reviewer filed. The findings themselves
+    #: live on the report, merged with every other source, because that is where
+    #: the gate and the file annotations read them from — but a reviewer that
+    #: wrote four pages and filed nothing is worth being able to see at a glance.
+    finding_count: int = 0
 
 
 class QAReport(StrictModel):

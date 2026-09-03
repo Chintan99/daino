@@ -30,7 +30,7 @@ from daino.tools import ActionExecutor, EditTools
 #: the handshake ordering and the pagination are exactly the parts most likely to
 #: be wrong, and a mock of the transport would test none of them.
 SERVER_SOURCE = textwrap.dedent(
-    '''
+    """
     import json, sys
 
     TOOLS = [
@@ -95,7 +95,7 @@ SERVER_SOURCE = textwrap.dedent(
             payload = {"jsonrpc": "2.0", "id": message["id"], "result": result}
         sys.stdout.write(json.dumps(payload) + "\\n")
         sys.stdout.flush()
-    '''
+    """
 )
 
 
@@ -103,9 +103,7 @@ SERVER_SOURCE = textwrap.dedent(
 def stdio_server(tmp_path: Path) -> MCPServerConfig:
     path = tmp_path / "fixture_server.py"
     path.write_text(SERVER_SOURCE, encoding="utf-8")
-    return MCPServerConfig(
-        transport="stdio", command=sys.executable, args=[str(path)], timeout=20
-    )
+    return MCPServerConfig(transport="stdio", command=sys.executable, args=[str(path)], timeout=20)
 
 
 @pytest.mark.asyncio

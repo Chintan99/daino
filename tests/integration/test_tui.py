@@ -1695,7 +1695,7 @@ async def test_the_terminal_client_inhibits_sleep_and_notifies_on_the_outcome(
 
 @pytest.mark.asyncio
 async def test_the_side_panel_lists_files_as_they_are_edited(tmp_path: Path) -> None:
-    """"Which files has it touched so far?" must be answerable mid-turn.
+    """ "Which files has it touched so far?" must be answerable mid-turn.
 
     Otherwise the only record of the edits is the diff cards scrolling past in
     the transcript, and the answer is what a user checks before letting a long

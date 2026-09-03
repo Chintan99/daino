@@ -97,9 +97,7 @@ def _threshold(profile: ModelExecutionProfile, fraction: float = 0.80) -> int:
         (1_310_720, 400_000),
     ],
 )
-def test_scaffolding_always_leaves_room_to_work(
-    context_window: int, input_budget: int
-) -> None:
+def test_scaffolding_always_leaves_room_to_work(context_window: int, input_budget: int) -> None:
     """The regression. Scaffolding is sized against the threshold it fits under."""
     profile = _resolve(_profile(context_window=context_window), input_budget_tokens=input_budget)
 

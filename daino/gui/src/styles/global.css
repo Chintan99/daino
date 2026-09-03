@@ -5540,3 +5540,129 @@ body:has(.docs) {
   width: 2px !important;
   margin-left: 3px;
 }
+
+/* ---- DESIGN ▸ mock-up frames -------------------------------------------
+   Frames are wireframes, so everything here is deliberately flat: outlines and
+   a single accent, never a rendering that could be mistaken for the built UI. */
+.frames-panel {
+  margin-bottom: 12px;
+}
+.frame-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+.frame-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg-2);
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: var(--fs-11);
+  text-align: left;
+  cursor: pointer;
+}
+.frame-row-head:hover {
+  background: var(--bg-3, var(--bg-2));
+}
+.frame-caret {
+  width: 10px;
+  flex: 0 0 auto;
+}
+.frame-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.frame-dims,
+.frame-count {
+  flex: 0 0 auto;
+  font-size: var(--fs-11);
+}
+.frame-body {
+  padding: 8px;
+}
+.frame-body .input.sm {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: var(--fs-11);
+  padding: 3px 6px;
+}
+.frame-body .input.sm.frame-size {
+  flex: 0 0 52px;
+  text-align: right;
+}
+/* The scaled surface keeps its unscaled box, so the wrapper carries the real
+   on-screen size and the layout does not have to know about the transform. */
+.frame-preview {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-0, var(--bg-1));
+}
+.frame-preview-surface {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}
+.frame-element {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg-2, var(--fg));
+  font-size: 13px;
+  line-height: 1.2;
+  overflow: hidden;
+}
+.frame-element > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.frame-element-button {
+  border-color: var(--accent);
+  color: var(--accent);
+  justify-content: center;
+}
+.frame-element-input {
+  border-style: dashed;
+  opacity: 0.85;
+}
+.frame-element-heading {
+  border-color: transparent;
+  font-size: 20px;
+  font-weight: 600;
+  padding: 0;
+}
+.frame-element-text {
+  border-color: transparent;
+  padding: 0;
+  align-items: flex-start;
+}
+.frame-element-image {
+  justify-content: center;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    var(--border) 6px,
+    var(--border) 7px
+  );
+}
+.frame-element-nav {
+  border-width: 0 0 1px 0;
+  border-radius: 0;
+}

@@ -337,8 +337,7 @@ class WorkspaceScreen(Screen[None]):
             [
                 (
                     command.invocation,
-                    f"{command.argument_hint}  {command.description}".strip()
-                    or "project command",
+                    f"{command.argument_hint}  {command.description}".strip() or "project command",
                 )
                 for command in sorted(
                     self.missions.slash_commands().values(), key=lambda item: item.name

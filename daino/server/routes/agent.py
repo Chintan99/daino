@@ -60,9 +60,7 @@ def create_session(
     state: Annotated[GuiState, Depends(get_state)], body: CreateSessionRequest
 ) -> dict:
     title = body.title.strip()
-    session_id = (
-        state.missions.create_session(title) if title else state.missions.create_session()
-    )
+    session_id = state.missions.create_session(title) if title else state.missions.create_session()
     return {"id": session_id, "title": title}
 
 

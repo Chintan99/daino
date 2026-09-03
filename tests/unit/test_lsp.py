@@ -38,7 +38,7 @@ from daino.repository.lsp import (
 #: A minimal but genuine LSP server. Reports one error on line 2 of any file it
 #: is shown, and answers navigation from fixed positions.
 STUB_SERVER = textwrap.dedent(
-    '''
+    """
     import json, sys
 
     def read():
@@ -156,7 +156,7 @@ STUB_SERVER = textwrap.dedent(
             reply(identifier, None)
         elif identifier is not None:
             reply(identifier, None)
-    '''
+    """
 ).strip()
 
 
@@ -335,7 +335,7 @@ async def test_a_rename_is_returned_as_edits_rather_than_applied(project: Path) 
 
 
 async def test_a_language_with_no_server_says_so(project: Path) -> None:
-    """"Nothing installed" and "nothing wrong" must never look the same."""
+    """ "Nothing installed" and "nothing wrong" must never look the same."""
     adapter = PooledLSPAdapter(project)
     try:
         with pytest.raises(LSPError) as caught:
@@ -388,7 +388,7 @@ def test_a_project_pinned_server_beats_a_global_one(tmp_path: Path) -> None:
 
 
 def test_missing_servers_are_listed_with_how_to_install_them(tmp_path: Path) -> None:
-    """"No diagnostics" has to be actionable, not just true."""
+    """ "No diagnostics" has to be actionable, not just true."""
     rows = available_servers(tmp_path)
 
     assert rows
@@ -410,9 +410,7 @@ def _adapter(project: Path) -> PooledLSPAdapter:
     """An adapter whose python server is the stub."""
     adapter = PooledLSPAdapter(project)
     slot = adapter.pool._slot("python")
-    server = LanguageServer(
-        project, _stub_spec(), [sys.executable, str(project / "_stub_lsp.py")]
-    )
+    server = LanguageServer(project, _stub_spec(), [sys.executable, str(project / "_stub_lsp.py")])
     slot.server = server
 
     async def ensure() -> LanguageServer:

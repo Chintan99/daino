@@ -118,9 +118,7 @@ def test_a_warning_can_be_dismissed_and_stays_dismissed(
     assert [item.path for item in links.stale(workspace.id)] == ["proposal.md"]
 
 
-def test_a_citation_is_not_a_dependency(
-    workbench: WorkbenchService, links: LinkStore
-) -> None:
+def test_a_citation_is_not_a_dependency(workbench: WorkbenchService, links: LinkStore) -> None:
     """``references`` means "I mentioned it", which nothing should chase."""
     workspace = workbench.create("Proposal")
     workbench.write_artifact(workspace.id, "notes.md", "v1", author="user")

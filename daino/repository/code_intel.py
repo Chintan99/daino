@@ -102,9 +102,7 @@ class CodeIntelligence:
 
     async def diagnostics(self, relative: str | Path) -> list[dict[str, Any]]:
         """Current problems in one file, or an empty list for any reason at all."""
-        rows = await self._call(
-            "diagnostics", relative, timeout=self.diagnostics_timeout
-        )
+        rows = await self._call("diagnostics", relative, timeout=self.diagnostics_timeout)
         return rows or []
 
     async def definition(self, relative: str | Path, symbol: str) -> dict[str, Any]:

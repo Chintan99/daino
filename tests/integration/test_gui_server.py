@@ -1302,9 +1302,7 @@ def test_an_unhandled_error_is_reported_and_audited(git_repo: Path) -> None:
 
     from daino.observability import AuditLog
 
-    recorded = [
-        item for item in AuditLog(git_repo).read() if item.get("event") == "ServerError"
-    ]
+    recorded = [item for item in AuditLog(git_repo).read() if item.get("event") == "ServerError"]
     assert recorded
     assert "deliberate failure" in str(recorded[-1].get("traceback", ""))
 
@@ -1313,7 +1311,7 @@ def test_an_unhandled_error_is_reported_and_audited(git_repo: Path) -> None:
 
 
 def test_debug_adapters_are_listed_with_install_hints(client: TestClient) -> None:
-    """"No debugger" must never look the same as "the debugger found nothing"."""
+    """ "No debugger" must never look the same as "the debugger found nothing"."""
     payload = client.get("/api/debug/adapters").json()
 
     rows = {row["id"]: row for row in payload["adapters"]}
@@ -1326,18 +1324,14 @@ def test_breakpoints_are_kept_on_the_server_and_survive(client: TestClient) -> N
     root: Path = client.app_root  # type: ignore[attr-defined]
     (root / "prog.py").write_text("a = 1\nb = 2\n", encoding="utf-8")
 
-    first = client.post(
-        "/api/debug/breakpoints/toggle", json={"path": "prog.py", "line": 2}
-    ).json()
+    first = client.post("/api/debug/breakpoints/toggle", json={"path": "prog.py", "line": 2}).json()
     assert [item["line"] for item in first["breakpoints"]] == [2]
 
     # A fresh request — as a reloaded tab would make — still sees it.
     assert [item["line"] for item in client.get("/api/debug/state").json()["breakpoints"]] == [2]
 
     # Toggling the same line removes it.
-    again = client.post(
-        "/api/debug/breakpoints/toggle", json={"path": "prog.py", "line": 2}
-    ).json()
+    again = client.post("/api/debug/breakpoints/toggle", json={"path": "prog.py", "line": 2}).json()
     assert again["breakpoints"] == []
 
 
@@ -1398,9 +1392,7 @@ def test_search_filters_narrow_the_results(client: TestClient) -> None:
     (root / "src" / "b.py").write_text("total = 2\n", encoding="utf-8")
 
     everything = client.get("/api/files/search", params={"q": "total"}).json()
-    only_ts = client.get(
-        "/api/files/search", params={"q": "total", "include": "*.ts"}
-    ).json()
+    only_ts = client.get("/api/files/search", params={"q": "total", "include": "*.ts"}).json()
 
     assert {item["path"] for item in everything["matches"]} >= {
         "src/a.ts",
@@ -1413,9 +1405,7 @@ def test_a_replace_preview_writes_nothing(client: TestClient) -> None:
     root: Path = client.app_root  # type: ignore[attr-defined]
     (root / "one.txt").write_text("total here\n", encoding="utf-8")
 
-    preview = client.get(
-        "/api/files/search", params={"q": "total", "replace": "sum"}
-    ).json()
+    preview = client.get("/api/files/search", params={"q": "total", "replace": "sum"}).json()
 
     assert preview["matches"][0]["replacement"] == "sum here"
     assert (root / "one.txt").read_text(encoding="utf-8") == "total here\n"
@@ -1438,9 +1428,7 @@ def test_applying_a_replace_writes_only_the_chosen_files(client: TestClient) -> 
 
 
 def test_an_invalid_search_pattern_is_reported(client: TestClient) -> None:
-    result = client.get(
-        "/api/files/search", params={"q": "([bad", "regex": True}
-    ).json()
+    result = client.get("/api/files/search", params={"q": "([bad", "regex": True}).json()
 
     assert result["success"] is False
     assert "Invalid pattern" in result["error"]
@@ -1519,9 +1507,7 @@ def test_part_of_a_file_can_be_staged(client: TestClient) -> None:
     assert len(listed["hunks"]) == 2
     assert listed["hunks"][0]["added"] == 1
 
-    staged = client.post(
-        "/api/git/stage-hunks", json={"path": "app.py", "hunks": [0]}
-    )
+    staged = client.post("/api/git/stage-hunks", json={"path": "app.py", "hunks": [0]})
     assert staged.status_code == 200
 
     index_diff = client.get("/api/git/diff", params={"staged": True}).json()["diff"]
@@ -1597,9 +1583,7 @@ def test_a_commit_can_be_amended_with_its_message_prefilled(
 
     (root / "thing.py").write_text("first = 2\n", encoding="utf-8")
     client.post("/api/git/stage", json={"paths": ["thing.py"]})
-    amended = client.post(
-        "/api/git/commit", json={"message": "corrected subject", "amend": True}
-    )
+    amended = client.post("/api/git/commit", json={"message": "corrected subject", "amend": True})
 
     assert amended.status_code == 200
     subject = subprocess.run(  # noqa: S603, S607
@@ -1617,9 +1601,7 @@ def test_branches_are_listed_created_and_switched(client: TestClient) -> None:
     assert listed["repository"] is True
     assert listed["current"] == "main"
 
-    created = client.post(
-        "/api/git/branch", json={"name": "feature/x", "create": True}
-    )
+    created = client.post("/api/git/branch", json={"name": "feature/x", "create": True})
     assert created.status_code == 200
     assert created.json()["branch"] == "feature/x"
 
@@ -1749,9 +1731,7 @@ def test_the_projects_test_frameworks_are_discovered(client: TestClient) -> None
 
     payload = client.get("/api/tests/frameworks").json()
 
-    pytest_entry = next(
-        item for item in payload["frameworks"] if item["id"] == "pytest"
-    )
+    pytest_entry = next(item for item in payload["frameworks"] if item["id"] == "pytest")
     assert pytest_entry["available"] is True
     assert pytest_entry["test_count"] == 2
     assert {item["name"] for item in payload["tests"]} == {"test_ok", "test_bad"}
@@ -1766,8 +1746,7 @@ def test_a_run_reports_failures_with_a_place_to_click(client: TestClient) -> Non
     tests_dir = root / "tests"
     tests_dir.mkdir(exist_ok=True)
     (tests_dir / "test_sample.py").write_text(
-        "def test_ok():\n    assert True\n\n\ndef test_bad():\n"
-        "    assert 1 == 2, 'nope'\n",
+        "def test_ok():\n    assert True\n\n\ndef test_bad():\n    assert 1 == 2, 'nope'\n",
         encoding="utf-8",
     )
 
@@ -1802,9 +1781,7 @@ def test_only_the_failures_can_be_re_run_over_the_api(client: TestClient) -> Non
     )
 
     # Nothing has failed yet, so there is nothing to re-run.
-    assert (
-        client.post("/api/tests/run", json={"failed_only": True}).status_code == 400
-    )
+    assert client.post("/api/tests/run", json={"failed_only": True}).status_code == 400
 
     client.post("/api/tests/run", json={})
     for _ in range(400):
@@ -1833,9 +1810,7 @@ def test_test_reports_never_dirty_the_working_tree(client: TestClient) -> None:
     )
     tests_dir = root / "tests"
     tests_dir.mkdir(exist_ok=True)
-    (tests_dir / "test_sample.py").write_text(
-        "def test_ok():\n    assert True\n", encoding="utf-8"
-    )
+    (tests_dir / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
     client.post("/api/tests/run", json={})
     for _ in range(400):
@@ -1846,9 +1821,7 @@ def test_test_reports_never_dirty_the_working_tree(client: TestClient) -> None:
 
     status = client.get("/api/git/status").json()
     touched = {
-        item["path"]
-        for group in ("staged", "modified", "untracked")
-        for item in status[group]
+        item["path"] for group in ("staged", "modified", "untracked") for item in status[group]
     }
     assert not any("test-reports" in path for path in touched)
 
@@ -1857,7 +1830,7 @@ def test_test_reports_never_dirty_the_working_tree(client: TestClient) -> None:
 
 
 def test_language_servers_are_listed_with_install_hints(client: TestClient) -> None:
-    """"No diagnostics" must be distinguishable from "no problems"."""
+    """ "No diagnostics" must be distinguishable from "no problems"."""
     payload = client.get("/api/lsp/servers").json()
 
     servers = {row["id"]: row for row in payload["servers"]}
@@ -1871,9 +1844,7 @@ def test_diagnostics_for_an_unanalysable_file_say_so(client: TestClient) -> None
     root: Path = client.app_root  # type: ignore[attr-defined]
     (root / "notes.txt").write_text("plain text\n", encoding="utf-8")
 
-    payload = client.post(
-        "/api/lsp/diagnostics", json={"path": "notes.txt"}
-    ).json()
+    payload = client.post("/api/lsp/diagnostics", json={"path": "notes.txt"}).json()
 
     assert payload["supported"] is False
     assert payload["diagnostics"] == []
@@ -1902,14 +1873,10 @@ def test_diagnostics_without_a_server_report_the_gap_not_an_error(
 def test_workspace_symbol_search_falls_back_to_the_index(client: TestClient) -> None:
     """The search box has to work in a checkout with nothing installed."""
     root: Path = client.app_root  # type: ignore[attr-defined]
-    (root / "shapes.py").write_text(
-        "class Rectangle:\n    pass\n", encoding="utf-8"
-    )
+    (root / "shapes.py").write_text("class Rectangle:\n    pass\n", encoding="utf-8")
     client.post("/api/repository/index", json={})
 
-    payload = client.get(
-        "/api/lsp/workspace-symbols", params={"query": "Rectangle"}
-    ).json()
+    payload = client.get("/api/lsp/workspace-symbols", params={"query": "Rectangle"}).json()
 
     assert payload["source"] == "index"
     assert any(item["name"] == "Rectangle" for item in payload["symbols"])
@@ -1918,9 +1885,7 @@ def test_workspace_symbol_search_falls_back_to_the_index(client: TestClient) -> 
 def test_a_rename_is_previewed_then_applied(client: TestClient) -> None:
     """Applying is a separate, explicit call from computing the edits."""
     root: Path = client.app_root  # type: ignore[attr-defined]
-    (root / "shapes.py").write_text(
-        "class Rectangle:\n    pass\n", encoding="utf-8"
-    )
+    (root / "shapes.py").write_text("class Rectangle:\n    pass\n", encoding="utf-8")
 
     applied = client.post(
         "/api/lsp/rename/apply",
@@ -1956,20 +1921,33 @@ def test_multiple_edits_in_one_file_do_not_shift_each_other(
         json={
             "edits": {
                 "many.py": [
-                    {"start_line": 1, "start_column": 1, "end_line": 1,
-                     "end_column": 3, "text": "value"},
-                    {"start_line": 2, "start_column": 6, "end_line": 2,
-                     "end_column": 8, "text": "value"},
-                    {"start_line": 2, "start_column": 11, "end_line": 2,
-                     "end_column": 13, "text": "value"},
+                    {
+                        "start_line": 1,
+                        "start_column": 1,
+                        "end_line": 1,
+                        "end_column": 3,
+                        "text": "value",
+                    },
+                    {
+                        "start_line": 2,
+                        "start_column": 6,
+                        "end_line": 2,
+                        "end_column": 8,
+                        "text": "value",
+                    },
+                    {
+                        "start_line": 2,
+                        "start_column": 11,
+                        "end_line": 2,
+                        "end_column": 13,
+                        "text": "value",
+                    },
                 ]
             }
         },
     )
 
-    assert (root / "many.py").read_text(encoding="utf-8") == (
-        "value = 1\nbb = value + value\n"
-    )
+    assert (root / "many.py").read_text(encoding="utf-8") == ("value = 1\nbb = value + value\n")
 
 
 # --------------------------------------------------------------- change review
@@ -2003,9 +1981,12 @@ def test_an_unresolvable_base_is_a_bad_request_not_a_failed_run(
     )
 
     assert response.status_code == 400
-    assert client.post(
-        "/api/review/run", json={"scope": "branch", "base_ref": "no-such-branch"}
-    ).status_code == 400
+    assert (
+        client.post(
+            "/api/review/run", json={"scope": "branch", "base_ref": "no-such-branch"}
+        ).status_code
+        == 400
+    )
 
 
 def test_a_review_runs_and_is_reloadable(client: TestClient) -> None:
@@ -2119,4 +2100,3 @@ def test_only_one_review_runs_at_a_time(client: TestClient) -> None:
     assert first.status_code == 200
     assert second.status_code in {200, 409}
     client.post("/api/review/cancel")
-

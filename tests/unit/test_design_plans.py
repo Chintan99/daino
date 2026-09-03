@@ -47,9 +47,7 @@ def _propose(plans: PlanStore, design_id: str, *, version: int = 2) -> None:
 # ------------------------------------------------------------------ the gate
 
 
-def test_implementation_is_refused_with_no_plan(
-    service: DesignService, plans: PlanStore
-) -> None:
+def test_implementation_is_refused_with_no_plan(service: DesignService, plans: PlanStore) -> None:
     design = service.create("Login", "ui")
 
     with pytest.raises(PlanGateError) as caught:
@@ -71,9 +69,7 @@ def test_implementation_is_refused_while_a_plan_is_only_proposed(
     assert "not been approved" in str(caught.value)
 
 
-def test_an_approved_plan_opens_the_gate(
-    service: DesignService, plans: PlanStore
-) -> None:
+def test_an_approved_plan_opens_the_gate(service: DesignService, plans: PlanStore) -> None:
     design = service.create("Login", "ui")
     _propose(plans, design.id, version=design.version)
     plans.approve(design.id)
@@ -253,9 +249,12 @@ def test_frames_can_be_created_updated_and_deleted(service: DesignService) -> No
     ]
 
     updated = service.update_frame(
-        design.id, "login", children=[{"type": "button", "label": "Sign in"}]
+        design.id,
+        "login",
+        children=[{"type": "button", "label": "Sign in", "x": 24, "y": 700}],
     )
-    assert updated.frames[0].children == [{"type": "button", "label": "Sign in"}]
+    element = updated.frames[0].children[0]
+    assert (element.type, element.label, element.x, element.y) == ("button", "Sign in", 24, 700)
 
     # Children are replaced, not merged — otherwise removing one is impossible.
     emptied = service.update_frame(design.id, "login", children=[])
@@ -409,9 +408,7 @@ def test_an_import_cycle_does_not_hang_the_layout() -> None:
     """Cycles are common in real code and are not an error here."""
     from daino.design import architecture
 
-    analysis = architecture.analyse(
-        _index({"a/one.py": ["b.two"], "b/two.py": ["a.one"]})
-    )
+    analysis = architecture.analyse(_index({"a/one.py": ["b.two"], "b/two.py": ["a.one"]}))
 
     nodes, edges = architecture.layout(analysis)
 

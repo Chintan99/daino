@@ -235,8 +235,13 @@ class WorkspaceRun(BaseModel):
     @property
     def active(self) -> bool:
         """Whether the executor is still attached to this run."""
-        return self.status in {"pending", "running", "paused", "waiting_for_approval",
-                               "waiting_for_user"}
+        return self.status in {
+            "pending",
+            "running",
+            "paused",
+            "waiting_for_approval",
+            "waiting_for_user",
+        }
 
 
 class PendingApproval(BaseModel):

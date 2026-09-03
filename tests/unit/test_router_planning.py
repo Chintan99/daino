@@ -84,11 +84,8 @@ def test_execution_profile_auto_detects_small_local_model() -> None:
     # the bundle plus memory has to leave the transcript real room, or the
     # agent loses what it reads and re-reads it. See test_execution_profiles.
     assert standard.initial_context_tokens > compact.initial_context_tokens
-    assert (
-        standard.instruction_tokens
-        + standard.source_tokens
-        + standard.memory_tokens
-        < int(standard.input_budget_tokens * 0.8)
+    assert standard.instruction_tokens + standard.source_tokens + standard.memory_tokens < int(
+        standard.input_budget_tokens * 0.8
     )
     assert standard.max_steps is None
 
@@ -185,9 +182,7 @@ def test_unrated_local_model_keeps_the_full_window() -> None:
     # derived from the compaction threshold and changing that must not silently
     # change what this test is protecting.
     assert profile.initial_context_tokens > 8_192
-    scaffold = (
-        profile.instruction_tokens + profile.source_tokens + profile.memory_tokens
-    )
+    scaffold = profile.instruction_tokens + profile.source_tokens + profile.memory_tokens
     assert scaffold < int(profile.input_budget_tokens * 0.8)
 
 
@@ -437,7 +432,10 @@ async def test_resize_refuses_a_single_task_answer() -> None:
                 mode=ProjectMode.DIRECT,
                 tasks=[
                     TaskSpec(
-                        id="x", title="t", objective="o", acceptance_criteria=["a"],
+                        id="x",
+                        title="t",
+                        objective="o",
+                        acceptance_criteria=["a"],
                         verification_commands=[],
                     )
                 ],

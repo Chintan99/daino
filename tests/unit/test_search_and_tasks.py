@@ -99,9 +99,7 @@ def test_case_and_whole_word_narrow_the_results(project: Path) -> None:
 
     insensitive = search(project, SearchQuery(query="total"))
     sensitive = search(project, SearchQuery(query="Total", case_sensitive=True))
-    whole = search(
-        project, SearchQuery(query="total", whole_word=True, include=("case.txt",))
-    )
+    whole = search(project, SearchQuery(query="total", whole_word=True, include=("case.txt",)))
 
     assert len(insensitive.matches) > len(sensitive.matches)
     assert [match.text for match in sensitive.matches] == ["Total"]
@@ -136,9 +134,7 @@ def test_include_and_exclude_take_globs(project: Path) -> None:
 def test_a_bare_glob_matches_on_the_basename() -> None:
     """`*.ts` should mean "any .ts file", not "one at the root"."""
     assert matches_filters("src/deep/app.ts", SearchQuery(query="x", include=("*.ts",)))
-    assert not matches_filters(
-        "src/deep/app.py", SearchQuery(query="x", include=("*.ts",))
-    )
+    assert not matches_filters("src/deep/app.py", SearchQuery(query="x", include=("*.ts",)))
 
 
 def test_a_truncated_search_says_so(project: Path) -> None:
@@ -239,8 +235,7 @@ def test_a_file_without_a_trailing_newline_does_not_gain_one(project: Path) -> N
 
 def test_npm_scripts_become_run_configs(tmp_path: Path) -> None:
     (tmp_path / "package.json").write_text(
-        '{"name": "app", "scripts": {"dev": "vite", "build": "vite build",'
-        ' "test": "vitest run"}}',
+        '{"name": "app", "scripts": {"dev": "vite", "build": "vite build", "test": "vitest run"}}',
         encoding="utf-8",
     )
     (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")

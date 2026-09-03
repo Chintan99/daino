@@ -102,9 +102,7 @@ class HookRunner:
         payload: dict[str, Any] | None = None,
     ) -> HookOutcome:
         """Run every hook matching ``event`` and combine what they said."""
-        definitions = [
-            item for item in self.hooks.for_event(event) if _matches(item, tool_name)
-        ]
+        definitions = [item for item in self.hooks.for_event(event) if _matches(item, tool_name)]
         if not definitions:
             return HookOutcome()
         body = {
@@ -115,9 +113,7 @@ class HookRunner:
             **(payload or {}),
         }
         encoded = json.dumps(body, default=str)
-        results = await asyncio.gather(
-            *(self._invoke(item, encoded) for item in definitions)
-        )
+        results = await asyncio.gather(*(self._invoke(item, encoded) for item in definitions))
         return _combine(event, definitions, results)
 
     async def _invoke(self, definition: HookDefinition, encoded: str) -> _HookResult:
@@ -255,9 +251,7 @@ def _parse_output(result: _HookResult) -> dict[str, str]:
         return {"failure": f"stdout was not valid JSON: {exc}"}
     if not isinstance(payload, dict):
         return {"failure": "stdout JSON was not an object"}
-    decision = str(
-        payload.get("permissionDecision") or payload.get("decision") or ""
-    ).casefold()
+    decision = str(payload.get("permissionDecision") or payload.get("decision") or "").casefold()
     if decision == "block":
         # The Claude Code spelling for the same thing.
         decision = "deny"
@@ -265,12 +259,8 @@ def _parse_output(result: _HookResult) -> dict[str, str]:
         decision = ""
     return {
         "decision": decision,
-        "reason": str(
-            payload.get("permissionDecisionReason") or payload.get("reason") or ""
-        ),
-        "context": str(
-            payload.get("additionalContext") or payload.get("systemMessage") or ""
-        ),
+        "reason": str(payload.get("permissionDecisionReason") or payload.get("reason") or ""),
+        "context": str(payload.get("additionalContext") or payload.get("systemMessage") or ""),
     }
 
 

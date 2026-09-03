@@ -212,9 +212,7 @@ class OnboardingScreen(Screen[None]):
                     if picker.has_class("hidden") or picker.value is Select.BLANK
                     else str(picker.value)
                 )
-                model = (
-                    picked or self.query_one("#provider-model", Input).value or default_model
-                )
+                model = picked or self.query_one("#provider-model", Input).value or default_model
                 if not model:
                     raise ValueError(
                         "No model was chosen. Pull one with `ollama pull <model>` and "

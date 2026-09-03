@@ -28,6 +28,7 @@ from daino.design import DesignService
 from daino.design.models import Design
 from daino.design.plans import (
     PLAN_INSTRUCTION,
+    REJECTION_FEEDBACK,
     DesignPlan,
     PlanGateError,
     PlanStep,
@@ -86,9 +87,7 @@ class DesignPlanApplicationService:
             "can_implement": allowed,
             "reason": reason,
             "design_version": design.version,
-            "stale": bool(
-                plan and plan.design_version and plan.design_version != design.version
-            ),
+            "stale": bool(plan and plan.design_version and plan.design_version != design.version),
         }
 
     # -------------------------------------------------------------- proposing
@@ -98,11 +97,22 @@ class DesignPlanApplicationService:
     ) -> DesignPlan:
         """Run one read-only turn to produce a plan."""
         design = self.design.get(design_id)
+        # The rejection the user wrote is the single most useful thing the next
+        # proposal could know, and it was being stored for the UI and then
+        # thrown away — so the model re-proposed the plan that had just been
+        # turned down, and the user had to type the objection again.
+        previous = self.plans.get(design_id)
+        feedback = (
+            REJECTION_FEEDBACK.format(reason=previous.rejection_reason.strip())
+            if previous and previous.status == "rejected" and previous.rejection_reason.strip()
+            else ""
+        )
         outcome = await self.missions.chat(
             PLAN_INSTRUCTION.format(
                 name=design.name,
                 design_id=design.id,
                 outline=_outline(design),
+                feedback=feedback,
             ),
             session_id,
             profile_override=profile_override,
@@ -130,7 +140,14 @@ class DesignPlanApplicationService:
     async def implement(
         self, design_id: str, session_id: str, *, profile_override: str = ""
     ) -> ChatOutcome:
-        """Carry out an approved plan. Refuses if there is not one."""
+        """Carry out an approved plan. Refuses if there is not one.
+
+        The plan is closed out only if the turn actually did something. It used
+        to be marked implemented the moment :meth:`chat` returned, which made
+        "implemented" mean "we asked" — a turn whose verification failed, or
+        that changed nothing at all, still flipped the plan to a terminal state
+        the gate then refused to let anyone retry.
+        """
         design = self.design.get(design_id)
         plan = self.plans.require_approved(design_id, design_version=design.version)
         outcome = await self.missions.chat(
@@ -138,8 +155,37 @@ class DesignPlanApplicationService:
             session_id,
             profile_override=profile_override,
         )
-        self.plans.mark_implemented(design_id)
+        failure = _implementation_failure(outcome)
+        if failure:
+            self.plans.record_implementation_failure(design_id, failure)
+        else:
+            self.plans.mark_implemented(design_id, verified=outcome.verified)
         return outcome
+
+
+def _implementation_failure(outcome: ChatOutcome) -> str:
+    """Why this turn does not count as having implemented the plan, if it does not.
+
+    Two cases, and both used to be reported as success. A verification failure
+    means the code is there and wrong; an empty turn means the code is not
+    there at all. Neither is a plan that has been carried out, and in both the
+    plan stays approved so Implement can be pressed again.
+    """
+    if outcome.verified is False:
+        return "The implementing turn's verification failed" + (
+            f": {outcome.verification_summary.strip()}" if outcome.verification_summary else "."
+        )
+    if not outcome.changed and not outcome.diffs:
+        said = outcome.answer or outcome.summary
+        return "The implementing turn finished without changing any files" + (
+            f": {_one_line(said)}" if said else "."
+        )
+    return ""
+
+
+def _one_line(text: str, limit: int = 300) -> str:
+    collapsed = " ".join(text.split())
+    return collapsed if len(collapsed) <= limit else collapsed[: limit - 1] + "…"
 
 
 def _outline(design: Design) -> str:
@@ -219,11 +265,7 @@ def parse_plan(markdown: str) -> dict[str, object]:
             for item in _items(sections["steps"])
         ],
         "reviewed": sorted(
-            {
-                path
-                for item in _items(sections["reviewed"])
-                for path in _PATHS.findall(item)
-            }
+            {path for item in _items(sections["reviewed"]) for path in _PATHS.findall(item)}
         ),
         "questions": _items(sections["questions"]),
     }

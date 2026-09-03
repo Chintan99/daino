@@ -209,8 +209,7 @@ def _error_text(exc: Exception | None) -> str:
     name = type(exc).__name__
     if isinstance(exc, httpx.TimeoutException):
         hint = (
-            "the model did not respond in time; raise the provider timeout "
-            "or use a smaller model"
+            "the model did not respond in time; raise the provider timeout or use a smaller model"
         )
         return f"{name}: {detail or hint}"
     return f"{name}: {detail}" if detail else name

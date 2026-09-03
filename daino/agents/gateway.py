@@ -539,9 +539,7 @@ class ModelGateway:
                     # A generator abandoned mid-stream (the user cancelled) has
                     # a half-read response body on the wire, so it is discarded
                     # rather than returned to the pool for the next borrower.
-                    await self.pool.release(
-                        provider, discard=transport_failure or not success
-                    )
+                    await self.pool.release(provider, discard=transport_failure or not success)
                     self._charge(budget, usage)
                     record = ModelCall(
                         id=new_id("model-call"),
@@ -572,9 +570,7 @@ class ModelGateway:
         raise ProviderError(f"No usable model provider is configured for {role.value}")
 
 
-def _without_unusable_images(
-    messages: list[Message], selection: ModelSelection
-) -> list[Message]:
+def _without_unusable_images(messages: list[Message], selection: ModelSelection) -> list[Message]:
     """Drop image parts a model cannot read, leaving a note in their place.
 
     Returns the original list untouched when there is nothing to strip, which is
@@ -608,9 +604,7 @@ def _without_unusable_images(
     return stripped
 
 
-def _call_attributes(
-    mission_id: str, role: ModelRole, selection: ModelSelection
-) -> dict[str, Any]:
+def _call_attributes(mission_id: str, role: ModelRole, selection: ModelSelection) -> dict[str, Any]:
     """Identity of one model call, in OpenTelemetry's GenAI attribute names.
 
     Deliberately no prompt, no completion, no file contents. A trace collector

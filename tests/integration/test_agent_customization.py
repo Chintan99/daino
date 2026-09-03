@@ -36,9 +36,7 @@ def session(client: TestClient) -> str:
     return client.post("/api/sessions", json={"title": "config"}).json()["id"]
 
 
-def test_config_reports_session_policy_and_customizations(
-    client: TestClient, session: str
-) -> None:
+def test_config_reports_session_policy_and_customizations(client: TestClient, session: str) -> None:
     payload = client.get("/api/agent/config", params={"session_id": session}).json()
 
     # Autonomy options carry the same descriptions the TUI shows.
@@ -76,12 +74,18 @@ def test_config_reports_session_policy_and_customizations(
 def test_autonomy_effort_and_verbose_persist_to_the_session(
     client: TestClient, session: str
 ) -> None:
-    assert client.post(
-        "/api/agent/autonomy", json={"session_id": session, "mode": "plan"}
-    ).json()["mode"] == "plan"
-    assert client.post(
-        "/api/agent/verbose", json={"session_id": session, "enabled": False}
-    ).json()["verbose"] is False
+    assert (
+        client.post("/api/agent/autonomy", json={"session_id": session, "mode": "plan"}).json()[
+            "mode"
+        ]
+        == "plan"
+    )
+    assert (
+        client.post("/api/agent/verbose", json={"session_id": session, "enabled": False}).json()[
+            "verbose"
+        ]
+        is False
+    )
 
     payload = client.get("/api/agent/config", params={"session_id": session}).json()
     assert payload["autonomy"]["mode"] == "plan"
@@ -108,17 +112,15 @@ def test_autonomy_effort_and_verbose_persist_to_the_session(
     )
 
 
-def test_instruction_layers_are_reported_with_precedence(
-    client: TestClient, session: str
-) -> None:
+def test_instruction_layers_are_reported_with_precedence(client: TestClient, session: str) -> None:
     root: Path = client.app_root  # type: ignore[attr-defined]
     (root / "DAINO.md").write_text("style: terse\n", encoding="utf-8")
     (root / "src").mkdir()
     (root / "src" / "DAINO.md").write_text("style: verbose\n", encoding="utf-8")
 
-    files = client.get("/api/agent/config", params={"session_id": session}).json()[
-        "instructions"
-    ]["files"]
+    files = client.get("/api/agent/config", params={"session_id": session}).json()["instructions"][
+        "files"
+    ]
     by_path = {item["relative_path"]: item for item in files}
     assert by_path["DAINO.md"]["exists"] is True
     assert by_path["src/DAINO.md"]["scope"] == "scoped"
@@ -126,9 +128,7 @@ def test_instruction_layers_are_reported_with_precedence(
 
     # The closer layer wins on a conflicting key — the resolver's own behaviour,
     # which is exactly why the panel shows the resolved text rather than a list.
-    resolved = client.get(
-        "/api/agent/instructions/effective", params={"path": "src/app.py"}
-    ).json()
+    resolved = client.get("/api/agent/instructions/effective", params={"path": "src/app.py"}).json()
     assert "style: verbose" in resolved["text"]
     assert "style: terse" not in resolved["text"]
     assert len(resolved["sources"]) == 2
@@ -143,9 +143,7 @@ def test_instruction_layers_are_reported_with_precedence(
     assert "always run tests" in client.get("/api/agent/instructions/effective").json()["text"]
 
 
-def test_memory_can_be_added_inspected_and_forgotten(
-    client: TestClient, session: str
-) -> None:
+def test_memory_can_be_added_inspected_and_forgotten(client: TestClient, session: str) -> None:
     created = client.post(
         "/api/agent/memory",
         json={"content": "Deploys go out on Thursdays", "summary": "release day"},
@@ -163,9 +161,10 @@ def test_memory_can_be_added_inspected_and_forgotten(
     assert client.get("/api/agent/memory", params={"type": "decision"}).json()["items"] == []
     assert client.post(f"/api/agent/memory/{created['id']}/verify").json()["verified"] is True
 
-    assert client.get("/api/agent/config", params={"session_id": session}).json()["memory"][
-        "total"
-    ] == 1
+    assert (
+        client.get("/api/agent/config", params={"session_id": session}).json()["memory"]["total"]
+        == 1
+    )
 
     assert client.delete(f"/api/agent/memory/{created['id']}").json()["forgotten"] is True
     assert client.get("/api/agent/memory").json()["items"] == []
@@ -196,9 +195,7 @@ def test_every_customization_slash_command_has_a_browser_route(client: TestClien
     # misses anything nested inside an included router.
     schema = client.get("/openapi.json").json()["paths"]
     routes = {
-        (method.upper(), path)
-        for path, operations in schema.items()
-        for method in operations
+        (method.upper(), path) for path, operations in schema.items() for method in operations
     }
     for command, endpoint in covered.items():
         assert endpoint in routes, f"{command} has no browser equivalent at {endpoint}"

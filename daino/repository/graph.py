@@ -54,7 +54,6 @@ HUB_FANIN_LIMIT = 25
 _AMBIGUOUS_SYMBOL_LIMIT = 5
 
 
-
 def is_test_path(path: str) -> bool:
     """Whether a path is test code.
 
@@ -68,9 +67,8 @@ def is_test_path(path: str) -> bool:
     if not parts:
         return False
     name = parts[-1].lower()
-    return (
-        "test" in name
-        or any(part.lower() in {"tests", "test", "__tests__", "spec", "specs"} for part in parts)
+    return "test" in name or any(
+        part.lower() in {"tests", "test", "__tests__", "spec", "specs"} for part in parts
     )
 
 

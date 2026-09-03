@@ -206,9 +206,9 @@ class GitClient:
         status = self.run("status", "--porcelain=v1", check=False).stdout
         # ``diff HEAD`` covers tracked edits, staged and unstaged alike.
         tracked = self.run("diff", "HEAD", check=False).stdout if commit else ""
-        payload = "\0".join(
-            (commit, status, tracked, self._untracked_stamp())
-        ).encode("utf-8", "replace")
+        payload = "\0".join((commit, status, tracked, self._untracked_stamp())).encode(
+            "utf-8", "replace"
+        )
         return {
             "commit": commit,
             "branch": branch,
@@ -230,9 +230,7 @@ class GitClient:
         would go unnoticed. ``--exclude-standard`` means an ignored tree such as
         node_modules is never walked.
         """
-        listing = self.run(
-            "ls-files", "--others", "--exclude-standard", "-z", check=False
-        )
+        listing = self.run("ls-files", "--others", "--exclude-standard", "-z", check=False)
         stamps: list[str] = []
         for relative in listing.stdout.split("\0"):
             if not relative:
@@ -287,9 +285,7 @@ class GitClient:
         return found
 
     def remote_branches(self) -> list[str]:
-        result = self.run(
-            "for-each-ref", "--format=%(refname:short)", "refs/remotes", check=False
-        )
+        result = self.run("for-each-ref", "--format=%(refname:short)", "refs/remotes", check=False)
         if not result.succeeded:
             return []
         return [
@@ -457,9 +453,7 @@ class GitClient:
             args.append("--allow-empty")
         return self.run(*args, check=False)
 
-    def apply_patch(
-        self, patch: str, *, cached: bool = True, reverse: bool = False
-    ) -> GitResult:
+    def apply_patch(self, patch: str, *, cached: bool = True, reverse: bool = False) -> GitResult:
         """Apply a patch, optionally to the index only, optionally backwards.
 
         This is how partial staging works: a patch containing only the chosen

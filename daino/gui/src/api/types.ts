@@ -613,12 +613,42 @@ export interface DesignPlanStatus {
   stale: boolean;
 }
 
+/** The shapes a wireframe is made of. Mirrors `FrameElementType` on the server. */
+export type FrameElementType =
+  | "box"
+  | "text"
+  | "heading"
+  | "button"
+  | "input"
+  | "image"
+  | "list"
+  | "nav";
+
+/**
+ * One element inside a mock-up frame.
+ *
+ * Coordinates are relative to the frame's own top-left corner, in the frame's
+ * pixels, so a mock-up drawn at 1440x900 renders the same at any preview scale.
+ * Unknown keys are preserved by the server, hence the index signature.
+ */
+export interface DesignFrameElement {
+  id?: string;
+  type: FrameElementType | string;
+  label?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  children?: DesignFrameElement[];
+  [key: string]: unknown;
+}
+
 export interface DesignFrame {
   id: string;
   name: string;
   width: number;
   height: number;
-  children: Record<string, unknown>[];
+  children: DesignFrameElement[];
 }
 
 export interface DesignList {
@@ -632,6 +662,11 @@ export interface PreviewCommand {
   command: string;
   source: string;
   default_url: string;
+  /** Refused outright by policy — no confirmation can start it. */
+  refused?: boolean;
+  /** Startable, but only after the user confirms the reasons below. */
+  requires_approval?: boolean;
+  approval_reasons?: string[];
 }
 
 export interface PreviewDetect {

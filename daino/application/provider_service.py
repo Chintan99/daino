@@ -506,9 +506,7 @@ class ProviderApplicationService:
             if not isinstance(data, list):
                 return None
             return [
-                str(item.get("id"))
-                for item in data
-                if isinstance(item, dict) and item.get("id")
+                str(item.get("id")) for item in data if isinstance(item, dict) and item.get("id")
             ]
         except Exception:  # noqa: BLE001 - absence of a catalog is not a failure
             return None
@@ -578,7 +576,8 @@ class ProviderApplicationService:
             elif provider_type == "openrouter":
                 try:
                     details = await asyncio.wait_for(
-                        provider.validate_key(), timeout=self._AUTH_TIMEOUT  # type: ignore[attr-defined]
+                        provider.validate_key(),  # type: ignore[attr-defined]
+                        timeout=self._AUTH_TIMEOUT,
                     )
                 except TimeoutError:
                     record("credentials", "fail", f"no response within {self._AUTH_TIMEOUT:.0f}s")
@@ -760,9 +759,7 @@ class ProviderApplicationService:
             "high",
             "max",
         }:
-            raise ValueError(
-                "Ollama effort must be auto, none, low, medium, high, or max."
-            )
+            raise ValueError("Ollama effort must be auto, none, low, medium, high, or max.")
         if (
             provider.type not in {"openrouter", "openai-compatible", "ollama"}
             and normalized != "auto"

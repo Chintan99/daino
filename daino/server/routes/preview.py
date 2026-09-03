@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from daino.events import PreviewStarted, PreviewStopped
+from daino.security import PolicyEngine
+from daino.security.policy import Permission
 from daino.server.deps import get_state
 from daino.server.state import GuiState
 
@@ -19,11 +21,53 @@ router = APIRouter(prefix="/api/preview", tags=["preview"])
 class StartPreviewRequest(BaseModel):
     command: str
     url: str = ""
+    #: The user has seen why this command needs approval and said yes. Sent by
+    #: the Start button's confirmation step, never defaulted on.
+    confirm: bool = False
+
+
+def _policy(state: GuiState) -> PolicyEngine:
+    return PolicyEngine(state.context.settings.security)
+
+
+def _approval(state: GuiState, command: str) -> tuple[bool, list[str], bool]:
+    """Classify one preview command: (refused, reasons, needs confirmation).
+
+    Three outcomes, not two. The route used to collapse the middle one into a
+    refusal, which is what stopped Docker Compose projects starting at all:
+    ``docker compose up`` mutates the host's Docker state, so the policy asks
+    before it runs — and an endpoint with no way to ask read that as "denied".
+    """
+    decision = _policy(state).command_decision(command)
+    if decision.allowed:
+        return False, [], False
+    if decision.permission is Permission.DELETE_RESOURCE:
+        # A destructive pattern is never a dev server, whoever confirms it.
+        return True, list(decision.reasons), False
+    if decision.requires_approval:
+        return False, list(decision.reasons), True
+    return True, list(decision.reasons), False
 
 
 @router.get("/detect")
 def detect(state: Annotated[GuiState, Depends(get_state)]) -> dict:
-    return {"commands": [asdict(item) for item in state.preview.detect()]}
+    """Candidate commands, each carrying whether starting it needs a yes.
+
+    Reported here as well as enforced at start, so the button can say
+    "Start (needs approval)" instead of failing on the click.
+    """
+    commands = []
+    for item in state.preview.detect():
+        refused, reasons, needs_approval = _approval(state, item.command)
+        commands.append(
+            {
+                **asdict(item),
+                "refused": refused,
+                "requires_approval": needs_approval,
+                "approval_reasons": reasons,
+            }
+        )
+    return {"commands": commands}
 
 
 @router.get("/status")
@@ -41,14 +85,23 @@ def status(state: Annotated[GuiState, Depends(get_state)]) -> dict:
 
 @router.post("/start")
 def start(state: Annotated[GuiState, Depends(get_state)], body: StartPreviewRequest) -> dict:
-    # The command is deliberately user-selected in the GUI; refuse only the
-    # patterns the security policy classifies as never-approvable.
-    from daino.security import PolicyEngine
-
-    decision = PolicyEngine(state.context.settings.security).command_decision(body.command)
-    if not decision.allowed:
+    # The command is deliberately user-selected in the GUI, so selection plus an
+    # explicit confirmation *is* the approval. What is refused outright is only
+    # what no confirmation should buy: a destructive pattern, a command the
+    # project has denied, shell syntax that cannot run without a shell.
+    refused, reasons, needs_approval = _approval(state, body.command)
+    if refused:
         raise HTTPException(
-            status_code=403, detail="; ".join(decision.reasons) or "Command denied by policy"
+            status_code=403, detail="; ".join(reasons) or "Command denied by policy"
+        )
+    if needs_approval and not body.confirm:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "requires_approval": True,
+                "command": body.command,
+                "reasons": reasons,
+            },
         )
     proc = state.preview.start(body.command, url=body.url)
     state.context.events.publish(PreviewStarted(url=proc.url, command=proc.command))

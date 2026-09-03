@@ -95,7 +95,6 @@ class Planner:
         )
         return plan.model_copy(update={"mode": mode})
 
-
     async def resize(
         self,
         mission_id: str,

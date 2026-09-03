@@ -131,9 +131,7 @@ async def test_the_skill_tool_returns_the_body_on_request(tmp_path: Path) -> Non
 
 @pytest.mark.asyncio
 async def test_a_wrong_skill_name_is_answered_with_the_real_list(tmp_path: Path) -> None:
-    write_skill(
-        tmp_path, "migrations", "---\ndescription: schema changes\n---\nAdd a down step."
-    )
+    write_skill(tmp_path, "migrations", "---\ndescription: schema changes\n---\nAdd a down step.")
     executor = ActionExecutor(EditTools(tmp_path), skills=load_extensions(tmp_path).skills)
     result, _ = await executor.execute(
         AgentAction(thought="t", action="skill", skill_name="migration")

@@ -200,7 +200,7 @@ def test_selecting_nothing_produces_nothing() -> None:
 
 
 def test_no_newline_markers_are_not_counted_as_lines() -> None:
-    """"\\ No newline at end of file" is a note about a line, not a line."""
+    """ "\\ No newline at end of file" is a note about a line, not a line."""
     patch = textwrap.dedent(
         """\
         diff --git a/x.txt b/x.txt

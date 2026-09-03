@@ -156,8 +156,7 @@ class VerificationEngine:
         checks: list[VerificationCheck] = []
         failures: list[FailureReport] = []
         requested = [
-            self.resolve_interpreter(item)
-            for item in (commands or self.discover_commands())
+            self.resolve_interpreter(item) for item in (commands or self.discover_commands())
         ]
         usable = [command for command in requested if self.runnable(command)]
         skipped = [command for command in requested if not self.runnable(command)]

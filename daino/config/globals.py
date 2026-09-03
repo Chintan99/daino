@@ -36,6 +36,7 @@ GLOBAL_SECTIONS = (
     "notifications",
 )
 
+
 def global_config_dir() -> Path:
     """Directory holding user-level configuration and secrets.
 

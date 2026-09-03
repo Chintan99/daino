@@ -71,9 +71,7 @@ def install(root: Path) -> Path | None:
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / "crash.log"
         handle = path.open("a", encoding="utf-8", buffering=1)
-        handle.write(
-            f"\n=== daino started {datetime.now(UTC).isoformat()} pid={os.getpid()} ===\n"
-        )
+        handle.write(f"\n=== daino started {datetime.now(UTC).isoformat()} pid={os.getpid()} ===\n")
         # faulthandler's handler is written in C: it dumps the stack and then
         # re-raises the signal properly. That is the only safe way to react to a
         # SIGSEGV from Python.

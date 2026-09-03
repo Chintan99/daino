@@ -135,9 +135,7 @@ def read_settings(state: Annotated[GuiState, Depends(get_state)]) -> dict:
 
 
 @router.patch("")
-def patch_settings(
-    state: Annotated[GuiState, Depends(get_state)], body: SettingsPatch
-) -> dict:
+def patch_settings(state: Annotated[GuiState, Depends(get_state)], body: SettingsPatch) -> dict:
     settings = state.context.settings
     roles = {role.value for role in ModelRole}
 
@@ -164,9 +162,7 @@ def patch_settings(
             if role not in roles:
                 raise HTTPException(status_code=400, detail=f"Unknown agent role {role}")
             if profile_name not in settings.models:
-                raise HTTPException(
-                    status_code=400, detail=f"Unknown model profile {profile_name}"
-                )
+                raise HTTPException(status_code=400, detail=f"Unknown model profile {profile_name}")
             settings.routing[role] = profile_name
 
     if body.runtime is not None:
@@ -248,9 +244,7 @@ def _status(item) -> dict:  # noqa: ANN001 - ProviderStatus view model
 
 
 @router.post("/providers")
-async def save_provider(
-    state: Annotated[GuiState, Depends(get_state)], body: ProviderForm
-) -> dict:
+async def save_provider(state: Annotated[GuiState, Depends(get_state)], body: ProviderForm) -> dict:
     """Create or update a provider.
 
     OpenRouter is validated *before* anything is written — the key is checked and
@@ -275,17 +269,13 @@ async def save_provider(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "provider": _status(status),
-        "catalog": [
-            {"id": item.id, "name": item.name, "detail": ""} for item in models
-        ],
+        "catalog": [{"id": item.id, "name": item.name, "detail": ""} for item in models],
         "settings": _payload(state),
     }
 
 
 @router.post("/providers/test")
-async def test_provider(
-    state: Annotated[GuiState, Depends(get_state)], body: ProviderForm
-) -> dict:
+async def test_provider(state: Annotated[GuiState, Depends(get_state)], body: ProviderForm) -> dict:
     """Test a provider form end to end without saving anything.
 
     Returns one entry per step — endpoint, credentials, model, generation — so a
@@ -336,9 +326,11 @@ async def provider_catalog(
         if body.type == "openrouter":
             items = await state.providers.openrouter_models(
                 api_key_input=body.api_key
-                or (state.context.settings.providers.get(body.name.strip()).api_key
+                or (
+                    state.context.settings.providers.get(body.name.strip()).api_key
                     if body.name.strip() in state.context.settings.providers
-                    else ""),
+                    else ""
+                ),
                 base_url=body.base_url,
             )
             return {

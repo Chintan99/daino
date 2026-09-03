@@ -431,9 +431,7 @@ def _diff_parts(text: str) -> list[str | Content | tuple[str, str]]:
     return card._diff_spans()
 
 
-def _changed_code(
-    parts: list[str | Content | tuple[str, str]], marker: str
-) -> list[Content]:
+def _changed_code(parts: list[str | Content | tuple[str, str]], marker: str) -> list[Content]:
     return [
         parts[index + 1]
         for index, part in enumerate(parts[:-1])
@@ -446,11 +444,7 @@ def _changed_code(
 def test_added_and_removed_lines_get_filled_backgrounds() -> None:
     """Change meaning comes from the fill, not green/red source text."""
     body = render(build_file_diff("a.py", "a\nb\nc\n", "a\nB\nc\nd\n"))
-    marker_styles = {
-        text: style
-        for text, style in _spans(body)
-        if text in {"+ ", "- "}
-    }
+    marker_styles = {text: style for text, style in _spans(body) if text in {"+ ", "- "}}
 
     assert marker_styles["+ "] == f"{palette.TEXT} on {palette.DIFF_ADDED_BG}"
     assert marker_styles["- "] == f"{palette.TEXT} on {palette.DIFF_REMOVED_BG}"

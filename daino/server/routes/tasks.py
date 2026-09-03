@@ -65,9 +65,7 @@ def list_tasks(state: Annotated[GuiState, Depends(get_state)]) -> dict[str, Any]
 
 
 @router.get("/{task_id:path}")
-def get_task(
-    state: Annotated[GuiState, Depends(get_state)], task_id: str
-) -> dict[str, Any]:
+def get_task(state: Annotated[GuiState, Depends(get_state)], task_id: str) -> dict[str, Any]:
     """One command, resolved — what a Run button would actually execute."""
     found = runconfigs.by_id(state.root, task_id)
     if found is None:

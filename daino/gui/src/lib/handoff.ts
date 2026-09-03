@@ -46,17 +46,21 @@ export function handOffToCode(text: string): void {
 }
 
 /**
- * Claim the message queued for this socket target, if there is one.
+ * Send the message queued for this socket target, if it can be sent right now.
  *
- * Called by the session socket once the server has confirmed the session, so a
- * queued handoff is delivered exactly once, and only to the conversation it was
- * addressed to.
+ * Called by the session socket once the server has confirmed the session, and
+ * again every time a turn ends. The second call is the one that matters: the
+ * destination conversation is frequently mid-turn when the handoff arrives, and
+ * this used to claim the message anyway and then discard it because it could
+ * not be delivered — the brief simply vanished, with nothing shown to the user.
+ * A message that cannot be sent yet stays queued and goes out at the next turn
+ * boundary instead.
  */
-export function claimQueuedMessage(target: string): string | null {
-  if (pending === null || pending.target !== target) return null;
+export function flushQueuedMessage(target: string): void {
+  if (pending === null || pending.target !== target) return;
   const { text } = pending;
+  if (!deliverNow(text)) return;
   pending = null;
-  return text;
 }
 
 /**

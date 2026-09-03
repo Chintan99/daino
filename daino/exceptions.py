@@ -25,6 +25,16 @@ class StructuredConstraintUnsupported(ProviderError):
     """Raised when a backend rejects its JSON-schema decoding parameter."""
 
 
+class TurnBusy(DainoError):
+    """Raised when an agentic turn is asked for while another one is running.
+
+    One working tree and one runtime cannot serve two agents at once. Callers
+    that can wait take the turn lock; callers that cannot — an HTTP request
+    behind a button — get this instead, so the user is told rather than left
+    watching a request that will time out.
+    """
+
+
 class VerificationError(DainoError):
     """Raised when required verification does not pass."""
 

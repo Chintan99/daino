@@ -132,9 +132,7 @@ async def test_session_approval_covers_search_and_followup_fetch() -> None:
             return httpx.Response(
                 200,
                 headers={"content-type": "text/html"},
-                text=(
-                    '<a class="result__a" href="https://example.com/report">Report</a>'
-                ),
+                text=('<a class="result__a" href="https://example.com/report">Report</a>'),
             )
         return httpx.Response(
             200,
@@ -160,9 +158,7 @@ async def test_session_approval_covers_search_and_followup_fetch() -> None:
     assert fetched.data["title"] == "Primary report"
     assert "Verified information" in fetched.data["content"]
     assert "ignore me" not in fetched.data["content"]
-    assert fetched.data["links"] == [
-        {"text": "Appendix", "url": "https://example.com/appendix"}
-    ]
+    assert fetched.data["links"] == [{"text": "Appendix", "url": "https://example.com/appendix"}]
     detail = _detail(
         AgentAction(
             thought="read",
@@ -293,9 +289,7 @@ async def private_dns(_: str) -> list[str]:
     return ["127.0.0.1"]
 
 
-def json_handler(
-    expected: str, payload: dict[str, object], seen: list[httpx.Request]
-) -> object:
+def json_handler(expected: str, payload: dict[str, object], seen: list[httpx.Request]) -> object:
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         assert str(request.url).startswith(expected)
@@ -387,9 +381,7 @@ async def test_searxng_may_reach_the_instance_the_user_configured() -> None:
             json_handler("http://127.0.0.1:8888", payload, seen)  # type: ignore[arg-type]
         ),
         resolver=private_dns,
-        search_backend=SearchBackendConfig(
-            provider="searxng", base_url="http://127.0.0.1:8888"
-        ),
+        search_backend=SearchBackendConfig(provider="searxng", base_url="http://127.0.0.1:8888"),
     )
 
     result = await web.search("local query")
@@ -405,9 +397,7 @@ async def test_the_searxng_allowance_does_not_extend_to_fetching() -> None:
         require_approval=False,
         transport=httpx.MockTransport(lambda request: httpx.Response(200, text="secret")),
         resolver=private_dns,
-        search_backend=SearchBackendConfig(
-            provider="searxng", base_url="http://127.0.0.1:8888"
-        ),
+        search_backend=SearchBackendConfig(provider="searxng", base_url="http://127.0.0.1:8888"),
     )
 
     result = await web.fetch("http://192.168.1.1/admin")

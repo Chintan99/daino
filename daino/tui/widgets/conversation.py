@@ -191,9 +191,7 @@ class ConversationView(VerticalScroll):
         # each append. Per-chunk redaction misses credentials split across SSE
         # frames (``api_`` then ``key=...``), and redacting a partial token loses
         # the context needed when its remaining characters arrive.
-        self._reasoning_raw_buffer = self._bounded_reasoning(
-            self._reasoning_raw_buffer + safe
-        )
+        self._reasoning_raw_buffer = self._bounded_reasoning(self._reasoning_raw_buffer + safe)
         self._reasoning_buffer = self._bounded_reasoning(redact(self._reasoning_raw_buffer))
         self._reasoning_dirty = True
         if self._reasoning_panel is None or not self._reasoning_panel.is_mounted:
@@ -285,9 +283,7 @@ class ConversationView(VerticalScroll):
         frame = self._PENDING_FRAMES[self._pending_frame % len(self._PENDING_FRAMES)]
         dots = "." * (self._pending_frame % 3 + 1)
         elapsed = max(0, int(monotonic() - self._pending_started))
-        self._pending_card.replace_content(
-            f"{frame} {self._pending_label} · {elapsed}s{dots}"
-        )
+        self._pending_card.replace_content(f"{frame} {self._pending_label} · {elapsed}s{dots}")
 
     def _animate_pending(self) -> None:
         if self._pending_card is None or not self._pending_card.is_mounted:

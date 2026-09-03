@@ -163,9 +163,7 @@ def main(
     gui: Annotated[
         bool, typer.Option("--gui", help="Launch the local browser IDE instead of the TUI.")
     ] = False,
-    tui: Annotated[
-        bool, typer.Option("--tui", help="Launch the terminal UI workspace.")
-    ] = False,
+    tui: Annotated[bool, typer.Option("--tui", help="Launch the terminal UI workspace.")] = False,
     host: Annotated[
         str, typer.Option("--host", help="Host to bind the GUI server to.")
     ] = "127.0.0.1",
@@ -337,8 +335,7 @@ def gui_kill(
     killed = kill_server(target)
     if killed:
         console.print(
-            f"Stopped {branding.NAME} GUI session "
-            f"[bold]{killed['id']}[/bold] ({killed['url']})."
+            f"Stopped {branding.NAME} GUI session [bold]{killed['id']}[/bold] ({killed['url']})."
         )
     else:
         where = target or "the current directory"
@@ -1016,9 +1013,7 @@ def missions_approve(mission_id: Annotated[str, typer.Argument()]) -> None:
                 approved=True,
             )
         )
-    console.print(
-        f"[green]Approved[/green] {mission_id}; run `daino missions resume {mission_id}`"
-    )
+    console.print(f"[green]Approved[/green] {mission_id}; run `daino missions resume {mission_id}`")
 
 
 @missions_app.command("discard")
@@ -1401,9 +1396,7 @@ def eval_run(
         str,
         typer.Option("--model", help="Model profile to run task cases against."),
     ] = "",
-    as_json: Annotated[
-        bool, typer.Option("--json", help="Emit machine-readable results.")
-    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit machine-readable results.")] = False,
 ) -> None:
     """Run the eval suites.
 
@@ -1439,15 +1432,16 @@ def eval_run(
             )
             raise typer.Exit(code=2)
         _, settings, _ = _context()
+
     def announce(_suite: Any, item: Any, outcome: Any) -> None:
-        mark = "[green]✓[/green]" if outcome.passed else (
-            "[yellow]~[/yellow]" if outcome.skipped else "[red]✗[/red]"
+        mark = (
+            "[green]✓[/green]"
+            if outcome.passed
+            else ("[yellow]~[/yellow]" if outcome.skipped else "[red]✗[/red]")
         )
         console.print(f"{mark} {item.id} ({outcome.duration_seconds:.1f}s)")
 
-    results = asyncio.run(
-        run_cases(selected, settings=settings, profile=model, on_result=announce)
-    )
+    results = asyncio.run(run_cases(selected, settings=settings, profile=model, on_result=announce))
     if as_json:
         _json(
             [

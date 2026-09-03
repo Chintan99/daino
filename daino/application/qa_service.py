@@ -14,6 +14,7 @@ user has confirmed they own a remote one.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import shlex
 import shutil
@@ -39,6 +40,7 @@ from daino.schemas import (
     QAAgentAction,
     QACheck,
     QAFinding,
+    QAFindingDraft,
     QAReport,
     QAScanProfile,
     QASeverity,
@@ -829,6 +831,14 @@ class QAApplicationService:
             item.summary = outcome.summary
             item.steps = outcome.steps
             item.error = outcome.error
+            # The summariser reads every specialist's findings in its briefing
+            # and restates the ones it agrees with; absorbing its copies too
+            # would double-count each of them in the tally the gate reads.
+            if outcome.id != "qa-summary":
+                found = specialist_findings(outcome, _specialist_label(outcome.id))
+                item.finding_count = len(found)
+                _absorb(report, found)
+                self._apply_gate(report)
             self._notify(report, on_update)
 
         outcome = await TeamRunner(
@@ -838,6 +848,10 @@ class QAApplicationService:
             system=QA_REVIEW_SYSTEM,
             tools=QA_TOOL_SPECS,
             action_schema=QAAgentAction,
+            # The surface advertises find_definition, find_references and
+            # diagnostics; without this every one of them answered "not
+            # available in this context".
+            code_intel=self.missions.code_intel,
         ).run(
             report.mission_id,
             plan,
@@ -918,6 +932,46 @@ def _live_probe_check() -> QACheck:
         command="",
         summary="",
     )
+
+
+def specialist_findings(outcome: TeamMemberOutcome, label: str = "") -> list[QAFinding]:
+    """Turn one reviewer's reported findings into records the gate can read.
+
+    ``id`` and ``source`` are assigned here rather than taken from the model.
+    An id it chose could collide with another specialist's, silently replacing
+    a real finding through :func:`_absorb`'s de-duplication; a source it chose
+    could name a scanner, so a model's opinion would be filed as a tool's
+    measurement.
+    """
+    source = label or outcome.id
+    findings: list[QAFinding] = []
+    for index, draft in enumerate(outcome.findings, start=1):
+        title = draft.title.strip()
+        if not title:
+            continue
+        findings.append(
+            QAFinding(
+                id=f"{outcome.id}:{index:03d}:{_finding_slug(draft)}",
+                title=title,
+                severity=draft.severity,
+                category=draft.category,
+                source=source,
+                location=draft.location.strip(),
+                line=draft.line,
+                detail=draft.detail.strip(),
+                remediation=draft.remediation.strip(),
+                cwe=draft.cwe.strip(),
+                reference=draft.reference.strip(),
+                confidence=draft.confidence,
+            )
+        )
+    return findings
+
+
+def _finding_slug(draft: QAFindingDraft) -> str:
+    """A short, stable tail for a finding id, from what the finding is about."""
+    seed = f"{draft.location}:{draft.line or 0}:{draft.title}".casefold()
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:10]
 
 
 def _absorb(report: QAReport, findings: list[QAFinding]) -> None:
@@ -1075,22 +1129,25 @@ def evaluate_gate(report: QAReport) -> tuple[QAVerdict, list[str]]:
     ]
 
 
-
 def _advisory_caveats(report: QAReport) -> list[str]:
-    """Say plainly what the deterministic gate did *not* weigh.
+    """Say what the reviewers contributed, and what is only in their prose.
 
-    The AI reviewers write prose, and prose cannot be counted. Their evidence is
-    kept and shown, but a verdict computed without it must admit that rather
-    than let a clean badge imply the reviewers agreed.
+    Their structured findings *are* weighed now — they go through the same
+    severity and confidence rules as a scanner's. What still is not weighed is
+    everything a reviewer said and did not file as a finding, which is most of
+    an architecture review. A badge that stayed silent about that would imply
+    the reviewers had nothing further to say.
     """
-    reported = [item.label for item in report.specialists if item.status == "passed"]
+    reported = [item for item in report.specialists if item.status == "passed"]
     if not reported:
         return []
+    filed = sum(item.finding_count for item in reported)
     return [
         "Advisory: "
-        + ", ".join(reported)
-        + " reviewed this as well. Their notes are in the summary and are NOT part "
-        "of this verdict — read them before you push."
+        + ", ".join(item.label for item in reported)
+        + f" reviewed this as well and filed {filed} finding(s), counted above. "
+        "The rest of their assessment is prose in the summary and is NOT part of "
+        "this verdict — read it before you push."
     ]
 
 

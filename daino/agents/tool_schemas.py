@@ -432,6 +432,47 @@ _MEMORY_TOOLS = [
 #: model chooses which the request called for.
 _DESIGN_TYPES = ["architecture", "flowchart", "database", "api_flow", "ui", "prototype"]
 _ARTIFACT_KINDS = ["html", "svg", "markdown", "text"]
+#: One level of nesting is described to the model and more is accepted. A
+#: schema that recursed properly would be either a `$ref` cycle — which several
+#: providers reject outright — or unbounded inline nesting, and a wireframe two
+#: containers deep is already past what a mock-up usefully says.
+_FRAME_ELEMENT_FIELDS: dict[str, Any] = {
+    "id": {"type": "string", "description": "Optional stable id."},
+    "type": {
+        "type": "string",
+        "enum": ["box", "text", "heading", "button", "input", "image", "list", "nav"],
+    },
+    "label": {
+        "type": "string",
+        "description": "Visible text: a caption, a placeholder, a heading.",
+    },
+    "x": {"type": "integer", "description": "Left offset inside its container, in pixels."},
+    "y": {"type": "integer", "description": "Top offset inside its container, in pixels."},
+    "width": {"type": "integer"},
+    "height": {"type": "integer"},
+}
+
+_FRAME_ELEMENTS: dict[str, Any] = {
+    "type": "array",
+    "description": (
+        "The elements of this screen. Top-level elements are positioned "
+        "relative to the frame's top-left corner and nested ones relative to "
+        "their parent. Replaces the frame's contents in full."
+    ),
+    "items": {
+        "type": "object",
+        "properties": {
+            **_FRAME_ELEMENT_FIELDS,
+            "children": {
+                "type": "array",
+                "description": "Elements nested inside this one.",
+                "items": {"type": "object", "properties": dict(_FRAME_ELEMENT_FIELDS)},
+            },
+        },
+        "required": ["type"],
+    },
+}
+
 _DESIGN_TOOLS = [
     _tool(
         "create_design",
@@ -535,6 +576,41 @@ _DESIGN_TOOLS = [
             "target_node": {"type": "string"},
         },
         ["design_id"],
+    ),
+    _tool(
+        "add_design_frame",
+        "Add a UI mock-up frame: a device viewport holding laid-out elements. "
+        "Use this for screens and wireframes; use nodes and edges for diagrams. "
+        "The user sees the frame drawn in the DESIGN tab's inspector.",
+        {
+            "design_id": {"type": "string"},
+            "frame_name": {"type": "string", "description": "Screen name, e.g. 'Login'."},
+            "frame_width": {"type": "integer", "description": "Viewport width, default 1440."},
+            "frame_height": {"type": "integer", "description": "Viewport height, default 900."},
+            "frame_elements": _FRAME_ELEMENTS,
+        },
+        ["design_id", "frame_name"],
+    ),
+    _tool(
+        "update_design_frame",
+        "Change a frame's name, size, or contents. Sending frame_elements "
+        "replaces every element in the frame, so send the whole screen — a "
+        "partial list deletes what it leaves out.",
+        {
+            "design_id": {"type": "string"},
+            "frame_id": {"type": "string"},
+            "frame_name": {"type": "string"},
+            "frame_width": {"type": "integer"},
+            "frame_height": {"type": "integer"},
+            "frame_elements": _FRAME_ELEMENTS,
+        },
+        ["design_id", "frame_id"],
+    ),
+    _tool(
+        "delete_design_frame",
+        "Delete one UI mock-up frame and everything in it.",
+        {"design_id": {"type": "string"}, "frame_id": {"type": "string"}},
+        ["design_id", "frame_id"],
     ),
 ]
 
@@ -731,6 +807,91 @@ RESEARCH_TOOL_SPECS: list[dict[str, Any]] = [
     _FETCH_URL,
 ]
 
+#: A reviewer's ``finish``: the prose report, plus the findings as records.
+#:
+#: The generic ``finish`` asks for ``verification_commands``, which a read-only
+#: reviewer cannot run, and gives it nowhere to put a finding except the prose.
+#: That was the whole gap: a specialist could identify a critical authorization
+#: hole and the release gate would never see it, because the gate reads findings
+#: and the specialist produced a paragraph. Both halves are wanted — the report
+#: is what a person reads, the records are what the gate counts and what the
+#: file annotations are drawn from — so this asks for both.
+_QA_FINISH = _tool(
+    "finish",
+    "Stop reviewing. Give your prose report in `summary`, and every issue you are "
+    "reporting as a structured entry in `findings`. Anything omitted from "
+    "`findings` is invisible to the release gate and to the file annotations, "
+    "however clearly the summary describes it.",
+    {
+        "summary": {
+            "type": "string",
+            "description": "Your prioritized Markdown report.",
+        },
+        "findings": {
+            "type": "array",
+            "description": (
+                "One entry per issue. Include every issue your summary raises, and "
+                "nothing your evidence does not support."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "One line naming the specific issue.",
+                    },
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high", "medium", "low", "info"],
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": [
+                            "secrets",
+                            "vulnerability",
+                            "dependencies",
+                            "configuration",
+                            "runtime",
+                            "quality",
+                            "tests",
+                            "browser",
+                        ],
+                    },
+                    "location": {
+                        "type": "string",
+                        "description": "Repository-relative path, or a URL for a live target.",
+                    },
+                    "line": {"type": "integer", "description": "1-based line number."},
+                    "detail": {
+                        "type": "string",
+                        "description": (
+                            "What goes wrong, the precondition that triggers it, and the "
+                            "evidence you read."
+                        ),
+                    },
+                    "remediation": {"type": "string", "description": "The concrete fix."},
+                    "cwe": {"type": "string", "description": "CWE identifier, when one applies."},
+                    "reference": {
+                        "type": "string",
+                        "description": "Advisory or rule identifier, when one applies.",
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                        "description": (
+                            "How sure you are this is real and reachable here. Only "
+                            "high and medium count toward the gate; use low when you "
+                            "are flagging something for a person to check."
+                        ),
+                    },
+                },
+                "required": ["title", "severity", "category", "detail"],
+            },
+        },
+    },
+    ["summary"],
+)
+
 #: Read-only evidence-gathering surface used by QA specialists. Omitting edit,
 #: command, todo, and respond tools makes the no-write guarantee visible to the
 #: model as well as enforced by ``EditTools``.
@@ -748,7 +909,12 @@ _QA_ACTIONS = frozenset(
     }
 )
 QA_TOOL_SPECS: list[dict[str, Any]] = [
-    spec for spec in AGENT_TOOL_SPECS if spec["function"]["name"] in _QA_ACTIONS
+    *(
+        spec
+        for spec in AGENT_TOOL_SPECS
+        if spec["function"]["name"] in _QA_ACTIONS and spec["function"]["name"] != "finish"
+    ),
+    _QA_FINISH,
 ]
 
 #: Every action that can change the working tree or run a process. Named as one
@@ -780,11 +946,7 @@ MUTATING_ACTIONS: frozenset[str] = frozenset(
 #: model is never offered a write tool, and in ``EditTools(read_only=True)``, so
 #: a hallucinated call is refused rather than executed.
 PLANNING_TOOL_SPECS: list[dict[str, Any]] = [
-    *(
-        spec
-        for spec in AGENT_TOOL_SPECS
-        if spec["function"]["name"] not in MUTATING_ACTIONS
-    ),
+    *(spec for spec in AGENT_TOOL_SPECS if spec["function"]["name"] not in MUTATING_ACTIONS),
     _RESPOND,
 ]
 

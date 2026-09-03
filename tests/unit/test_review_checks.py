@@ -130,9 +130,7 @@ def test_syntax_is_checked_through_a_grammar_for_other_languages() -> None:
 """
     )
 
-    findings = review_change(
-        changes, read_file=lambda path: "const a = 1;\nfunction broken( {\n"
-    )
+    findings = review_change(changes, read_file=lambda path: "const a = 1;\nfunction broken( {\n")
 
     assert _one(findings, "review-syntax").severity == "high"
 

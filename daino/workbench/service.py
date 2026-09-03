@@ -451,9 +451,7 @@ class WorkbenchService:
                 f"{source_relative} cannot be read as text, so it cannot be rendered."
             )
         try:
-            payload = deliverables.render(
-                source.content, fmt, title=title or source.artifact.title
-            )
+            payload = deliverables.render(source.content, fmt, title=title or source.artifact.title)
         except deliverables.DeliverableError as exc:
             raise WorkbenchError(str(exc)) from exc
         relative = deliverables.deliverable_path(source_relative, fmt)

@@ -154,9 +154,7 @@ def create_app(context: ProjectContext, *, host: str = "127.0.0.1") -> FastAPI:
         still no internals leaked beyond the exception's own class name.
         """
         detail = f"{type(exc).__name__}: {exc}".strip()
-        trace = "".join(
-            traceback.format_exception(type(exc), exc, exc.__traceback__)
-        )
+        trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         with contextlib.suppress(Exception):
             AuditLog(context.root).emit(
                 "ServerError",
@@ -166,8 +164,11 @@ def create_app(context: ProjectContext, *, host: str = "127.0.0.1") -> FastAPI:
                 traceback=trace[-8_000:],
             )
         # Also to stderr, which is where the GUI log file points.
-        print(f"[daino] unhandled error on {request.method} {request.url.path}\n{trace}",
-              file=sys.stderr, flush=True)
+        print(
+            f"[daino] unhandled error on {request.method} {request.url.path}\n{trace}",
+            file=sys.stderr,
+            flush=True,
+        )
         return JSONResponse(
             status_code=500,
             content={

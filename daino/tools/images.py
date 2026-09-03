@@ -65,9 +65,7 @@ def load_image(root: Path, relative: str, *, description: str = "") -> ToolResul
             ),
         )
     if not target.is_file():
-        return ToolResult(
-            tool="read_image", success=False, error=f"{normalized} does not exist."
-        )
+        return ToolResult(tool="read_image", success=False, error=f"{normalized} does not exist.")
     size = target.stat().st_size
     if size > MAX_IMAGE_BYTES:
         return ToolResult(

@@ -119,7 +119,7 @@ def test_reverse_edges_are_the_exact_transpose() -> None:
 
 
 def test_a_hub_does_not_nominate_everything_that_imports_it() -> None:
-    """"Everything that imports the schemas package" is the repository."""
+    """ "Everything that imports the schemas package" is the repository."""
     importers = {f"mod_{index}.py": ["hub"] for index in range(HUB_FANIN_LIMIT + 10)}
     graph = ImportGraph.build(repository_index({"hub.py": [], **importers}))
 
@@ -151,18 +151,14 @@ def test_a_package_init_that_re_exports_is_a_barrel() -> None:
 def test_a_fat_init_is_a_module_rather_than_a_barrel() -> None:
     """Hopping through it would spray candidates across the whole package."""
     modules = {f"pkg/m{index}.py": [] for index in range(BARREL_FANOUT_LIMIT + 5)}
-    graph = ImportGraph.build(
-        repository_index({"pkg/__init__.py": list(modules), **modules})
-    )
+    graph = ImportGraph.build(repository_index({"pkg/__init__.py": list(modules), **modules}))
 
     assert not graph.is_barrel("pkg/__init__.py")
 
 
 def test_directory_siblings_are_available_for_a_file_with_no_edges() -> None:
     """The common planner case: a task scoped to a file that does not exist yet."""
-    graph = ImportGraph.build(
-        repository_index({"pkg/a.py": [], "pkg/b.py": [], "other/c.py": []})
-    )
+    graph = ImportGraph.build(repository_index({"pkg/a.py": [], "pkg/b.py": [], "other/c.py": []}))
 
     assert graph.siblings("pkg/a.py") == {"pkg/b.py"}
 
@@ -181,9 +177,7 @@ def test_a_symbol_defined_in_one_place_identifies_that_file() -> None:
 def test_a_symbol_defined_everywhere_is_not_a_signal() -> None:
     """`run`, `main` and `build` are in every third file and identify nothing."""
     files = {f"mod_{index}.py": [] for index in range(8)}
-    graph = ImportGraph.build(
-        repository_index(files, symbols={path: ["run"] for path in files})
-    )
+    graph = ImportGraph.build(repository_index(files, symbols={path: ["run"] for path in files}))
 
     assert graph.defines("run") == set()
 

@@ -183,7 +183,8 @@ def select_candidates(
     # matching, which found tests the graph cannot: a Go test, or a Python one
     # that reaches its subject only through a fixture, imports nothing.
     subjects = scoped | {
-        path for path, (distance, _, _) in found.items()
+        path
+        for path, (distance, _, _) in found.items()
         if distance < _LEXICAL and not is_test_path(path)
     }
     for file in index.files:
@@ -235,9 +236,9 @@ def _seeds(
     seeds: list[str] = [path for path in required if path in graph.paths]
     # A scoped path with no index entry is one the task will create. It cannot
     # be expanded from, but it still says where the work is happening.
-    unindexed = [
-        path for path in required if path not in graph.paths and "*" not in path
-    ][:MAX_SEEDS]
+    unindexed = [path for path in required if path not in graph.paths and "*" not in path][
+        :MAX_SEEDS
+    ]
     if len(seeds) < MAX_SEEDS:
         seeds.extend(path for path in _named_paths(task, graph) if path not in seeds)
     if not seeds and not unindexed:

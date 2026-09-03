@@ -242,9 +242,7 @@ class BudgetLedger:
     def enabled(self) -> bool:
         """Whether any ceiling is configured. Nothing is tracked when none is."""
         return bool(
-            self.config.max_cost_usd
-            or self.config.max_total_tokens
-            or self.config.max_model_calls
+            self.config.max_cost_usd or self.config.max_total_tokens or self.config.max_model_calls
         )
 
     def budget_for(self, mission_id: str) -> RunBudget | None:
@@ -254,9 +252,7 @@ class BudgetLedger:
         with self._lock:
             existing = self._budgets.get(mission_id)
             if existing is None:
-                existing = RunBudget(
-                    config=self.config, mission_id=mission_id, events=self.events
-                )
+                existing = RunBudget(config=self.config, mission_id=mission_id, events=self.events)
                 self._budgets[mission_id] = existing
             return existing
 

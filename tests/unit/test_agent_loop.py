@@ -918,8 +918,7 @@ def test_incomplete_message_distinguishes_step_budget_from_stall() -> None:
 async def test_default_loop_can_continue_past_the_old_24_step_limit(tmp_path: Path) -> None:
     executor = ActionExecutor(EditTools(tmp_path))
     actions = [
-        AgentAction(thought="continue", action="list_directory", path=".")
-        for _ in range(24)
+        AgentAction(thought="continue", action="list_directory", path=".") for _ in range(24)
     ]
     actions.append(AgentAction(thought="done", action="finish", summary="finished"))
     gateway = ScriptedGateway(actions)
@@ -1092,9 +1091,7 @@ async def test_gateway_uses_configured_fallback_after_provider_failure(
         async def close(self) -> None:
             return None
 
-    monkeypatch.setattr(
-        "daino.agents.gateway.create_provider", lambda name, config: Provider(name)
-    )
+    monkeypatch.setattr("daino.agents.gateway.create_provider", lambda name, config: Provider(name))
     response = await ModelGateway(settings, database).complete(  # type: ignore[arg-type]
         "mission-1", ModelRole.BUILDER, [Message(role="user", content="work")]
     )
@@ -1210,9 +1207,7 @@ async def test_a_no_op_write_tells_the_agent_nothing_changed(tmp_path: Path) -> 
 
     await loop.run("mission-noop", context())
 
-    observations = [
-        message.content for message in gateway.seen_messages if message.role == "tool"
-    ]
+    observations = [message.content for message in gateway.seen_messages if message.role == "tool"]
     assert any("already contained exactly this content" in item for item in observations), (
         observations
     )
@@ -1400,7 +1395,7 @@ async def test_a_superseded_copy_of_a_file_collapses_to_a_pointer(
 async def test_a_pointer_is_never_given_for_a_body_compaction_dropped(
     tmp_path: Path,
 ) -> None:
-    """"Unchanged since step 4" is worthless if step 4 is no longer in context."""
+    """ "Unchanged since step 4" is worthless if step 4 is no longer in context."""
     source = tmp_path / "app.py"
     source.write_text("line\n" * 200, encoding="utf-8")
     executor = ActionExecutor(EditTools(tmp_path, require_read_before_write=False))
@@ -1424,8 +1419,7 @@ async def test_a_pointer_is_never_given_for_a_body_compaction_dropped(
     assert "line" in messages[-1].content, "the file has to be sent again"
     # And the dead entry is not left behind to mislead a later read.
     assert all(
-        any(item is record.message for item in messages)
-        for record in loop._read_cache.values()
+        any(item is record.message for item in messages) for record in loop._read_cache.values()
     )
 
 
@@ -1796,11 +1790,7 @@ async def test_independent_reads_run_concurrently(tmp_path: Path) -> None:
     assert executor.peak_in_flight == 4
     # Observations still arrive in the order the model asked for them, so the
     # transcript reads the way the model expects regardless of who finished first.
-    answered = [
-        message.tool_call_id
-        for message in gateway.seen_messages
-        if message.role == "tool"
-    ]
+    answered = [message.tool_call_id for message in gateway.seen_messages if message.role == "tool"]
     assert answered == ["call_1", "call_2", "call_3", "call_4"]
 
 

@@ -67,9 +67,9 @@ class SlashCommand:
             substituted = True
         if _POSITIONAL.search(text):
             text = _POSITIONAL.sub(
-                lambda match: words[int(match.group(1)) - 1]
-                if int(match.group(1)) <= len(words)
-                else "",
+                lambda match: (
+                    words[int(match.group(1)) - 1] if int(match.group(1)) <= len(words) else ""
+                ),
                 text,
             )
             substituted = True

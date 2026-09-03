@@ -172,9 +172,7 @@ async def launch(
 
 
 @router.post("/{command}")
-async def control(
-    state: Annotated[GuiState, Depends(get_state)], command: str
-) -> dict[str, Any]:
+async def control(state: Annotated[GuiState, Depends(get_state)], command: str) -> dict[str, Any]:
     """Continue, pause, step, or stop.
 
     One endpoint because they are one thing from the user's point of view — the

@@ -63,8 +63,7 @@ async def test_a_command_cannot_see_the_user_s_keys(
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-live-should-not-appear")
     runtime = SandboxedLocalRuntime(tmp_path, mechanism="")
     result = await runtime.execute(
-        f"{sys.executable} -c "
-        "\"import os;print(os.environ.get('OPENROUTER_API_KEY','ABSENT'))\"",
+        f"{sys.executable} -c \"import os;print(os.environ.get('OPENROUTER_API_KEY','ABSENT'))\"",
         approved=True,
     )
     assert result.exit_code == 0
@@ -80,8 +79,7 @@ async def test_the_unsandboxed_runtime_still_inherits_everything(
     monkeypatch.setenv("DAINO_TEST_MARKER", "present")
     runtime = LocalRuntime(tmp_path)
     result = await runtime.execute(
-        f"{sys.executable} -c "
-        "\"import os;print(os.environ.get('DAINO_TEST_MARKER','ABSENT'))\"",
+        f"{sys.executable} -c \"import os;print(os.environ.get('DAINO_TEST_MARKER','ABSENT'))\"",
         approved=True,
     )
     assert "present" in result.stdout
@@ -93,7 +91,7 @@ async def test_the_project_toolchain_still_works(tmp_path: Path) -> None:
     (tmp_path / "src" / "greeter.py").write_text("VALUE = 7\n", encoding="utf-8")
     runtime = SandboxedLocalRuntime(tmp_path, mechanism="")
     result = await runtime.execute(
-        f"{sys.executable} -c \"import greeter;print(greeter.VALUE)\"", approved=True
+        f'{sys.executable} -c "import greeter;print(greeter.VALUE)"', approved=True
     )
     assert result.exit_code == 0
     assert "7" in result.stdout

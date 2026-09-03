@@ -100,9 +100,7 @@ async def test_an_edit_reports_what_it_broke(tmp_path: Path) -> None:
     assert "Undefined name 'helpr'" in feedback
     assert "1 error(s)" in feedback
     # And it reaches the model, ahead of the rest of the observation.
-    rendered = _detail(
-        AgentAction(thought="t", action="write", path="a.py"), result
-    )
+    rendered = _detail(AgentAction(thought="t", action="write", path="a.py"), result)
     assert rendered.startswith("LANGUAGE SERVER")
 
 
@@ -162,9 +160,7 @@ async def test_a_broken_server_is_not_retried_after_every_edit(tmp_path: Path) -
     )
     for index in range(3):
         result, _ = await executor.execute(
-            AgentAction(
-                thought="t", action="write", path=f"a{index}.py", content="x = 1\n"
-            )
+            AgentAction(thought="t", action="write", path=f"a{index}.py", content="x = 1\n")
         )
         assert result.success
     assert adapter.calls == 1
@@ -195,15 +191,11 @@ async def test_find_references_resolves_a_name_not_a_coordinate(tmp_path: Path) 
     adapter = FakeAdapter()
     executor = ActionExecutor(EditTools(tmp_path), code_intel=intel(tmp_path, adapter))
     result, _ = await executor.execute(
-        AgentAction(
-            thought="who calls it", action="find_references", path="a.py", symbol="helper"
-        )
+        AgentAction(thought="who calls it", action="find_references", path="a.py", symbol="helper")
     )
     assert result.success
     assert [item["path"] for item in result.data["locations"]] == ["a.py", "b.py"]
-    rendered = _detail(
-        AgentAction(thought="t", action="find_references", path="a.py"), result
-    )
+    rendered = _detail(AgentAction(thought="t", action="find_references", path="a.py"), result)
     assert "a.py:3:5" in rendered
 
 
@@ -226,9 +218,7 @@ async def test_definition_includes_the_server_s_own_summary(tmp_path: Path) -> N
         AgentAction(thought="t", action="find_definition", path="a.py", symbol="helper")
     )
     assert result.success
-    assert "def helper(value: int) -> str" in render_locations(
-        result.data, label="definition"
-    )
+    assert "def helper(value: int) -> str" in render_locations(result.data, label="definition")
 
 
 @pytest.mark.asyncio
@@ -239,9 +229,7 @@ async def test_diagnostics_without_a_server_is_not_a_clean_bill_of_health(
     instance = CodeIntelligence(tmp_path, adapter=FakeAdapter())
     instance._supported["python"] = False  # noqa: SLF001
     executor = ActionExecutor(EditTools(tmp_path), code_intel=instance)
-    result, _ = await executor.execute(
-        AgentAction(thought="t", action="diagnostics", path="a.py")
-    )
+    result, _ = await executor.execute(AgentAction(thought="t", action="diagnostics", path="a.py"))
     assert not result.success
     assert "No language server is installed" in (result.error or "")
 

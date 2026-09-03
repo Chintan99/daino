@@ -72,9 +72,7 @@ class AuditLog:
             if mission_id is None or item.get("mission_id") == mission_id:
                 events.append(item)
         if skipped:
-            logger.warning(
-                "Skipped %d unreadable line(s) in %s", skipped, self.path
-            )
+            logger.warning("Skipped %d unreadable line(s) in %s", skipped, self.path)
         return events
 
 

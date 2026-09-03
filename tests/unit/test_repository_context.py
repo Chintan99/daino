@@ -389,9 +389,10 @@ def test_a_dependency_behind_a_re_export_outranks_a_word_match() -> None:
     # The decoy shares a word with the task; the real dependency does not.
     task = _retrieval_task("Change the compiler", "Change svc/compiler.py and the decoy path")
 
-    ranked = [item.path for item in select_candidates(
-        index, task, ["svc/compiler.py"], ImportGraph.build(index)
-    )]
+    ranked = [
+        item.path
+        for item in select_candidates(index, task, ["svc/compiler.py"], ImportGraph.build(index))
+    ]
 
     assert ranked.index("repo/indexer.py") < ranked.index("decoy.py")
 
@@ -429,9 +430,10 @@ def test_a_scoped_file_that_does_not_exist_yet_retrieves_its_neighbours() -> Non
     index = repository_index({"svc/existing.py": [], "other/far.py": []})
     task = _retrieval_task("Add a module", "Create svc/brand_new.py")
 
-    ranked = [item.path for item in select_candidates(
-        index, task, ["svc/brand_new.py"], ImportGraph.build(index)
-    )]
+    ranked = [
+        item.path
+        for item in select_candidates(index, task, ["svc/brand_new.py"], ImportGraph.build(index))
+    ]
 
     assert ranked[0] == "svc/existing.py"
 
@@ -445,9 +447,10 @@ def test_an_indexed_leaf_does_not_drag_in_its_folder() -> None:
     index = repository_index({"svc/leaf.py": [], "svc/neighbour.py": []})
     task = _retrieval_task("Change the leaf", "Change svc/leaf.py")
 
-    ranked = [item.path for item in select_candidates(
-        index, task, ["svc/leaf.py"], ImportGraph.build(index)
-    )]
+    ranked = [
+        item.path
+        for item in select_candidates(index, task, ["svc/leaf.py"], ImportGraph.build(index))
+    ]
 
     assert "svc/neighbour.py" not in ranked
 
@@ -467,9 +470,10 @@ def test_a_file_and_its_test_stay_together() -> None:
     )
     task = _retrieval_task("Change the compiler", "Change svc/compiler.py")
 
-    ranked = [item.path for item in select_candidates(
-        index, task, ["svc/compiler.py"], ImportGraph.build(index)
-    )]
+    ranked = [
+        item.path
+        for item in select_candidates(index, task, ["svc/compiler.py"], ImportGraph.build(index))
+    ]
 
     assert ranked.index("tests/test_store.py") == ranked.index("svc/store.py") + 1
     assert "tests/test_something_else.py" not in ranked

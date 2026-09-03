@@ -197,8 +197,7 @@ def render(text: str, fmt: str, *, title: str = "") -> bytes:
     """Render one markdown document into ``fmt``, as bytes ready to write."""
     if fmt not in SUPPORTED_FORMATS:
         raise DeliverableError(
-            f"{fmt} is not a format Daino produces. Choose one of: "
-            + ", ".join(SUPPORTED_FORMATS)
+            f"{fmt} is not a format Daino produces. Choose one of: " + ", ".join(SUPPORTED_FORMATS)
         )
     blocks = parse_markdown(text)
     heading = document_title(blocks, title or "Document")
@@ -533,9 +532,7 @@ def _pdf_bytes(pages: list[list[tuple[str, str, int]]], title: str) -> bytes:
             )
         )
     kids = " ".join(f"{identifier} 0 R" for identifier in page_ids)
-    objects[pages_id - 1] = (
-        f"<< /Type /Pages /Count {len(page_ids)} /Kids [{kids}] >>".encode()
-    )
+    objects[pages_id - 1] = f"<< /Type /Pages /Count {len(page_ids)} /Kids [{kids}] >>".encode()
     catalog = add(f"<< /Type /Catalog /Pages {pages_id} 0 R >>".encode())
     info = add(b"<< /Title (" + _pdf_text(title).encode("latin-1", "replace") + b") >>")
 

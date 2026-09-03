@@ -141,6 +141,8 @@ def workspace_system_prompt(
     workspace: Workspace,
     template: WorkspaceTemplate,
     envelope: CapabilityEnvelope | None = None,
+    *,
+    confined: bool = False,
 ) -> str:
     """The workspace agent's contract, plus this workspace's own context.
 
@@ -162,10 +164,46 @@ def workspace_system_prompt(
         parts.extend(
             ["", f"This is a {template.title.lower()} workspace.", template.preamble.strip()]
         )
+    if confined:
+        # Says out loud what `EditTools` already enforces. The gate is the tool,
+        # not this line — but a model that learns its scope from a rejection has
+        # already spent an action finding out.
+        parts.append(
+            f"You may only create or modify files inside {workspace.folder}/. Edits "
+            "elsewhere in the repository are refused. If the work genuinely needs a "
+            "change outside the workspace, describe it and let the user make it."
+        )
     scale = _workspace_step_scale(envelope)
     if scale:
         parts.extend(["", scale])
     return "\n".join(parts)
+
+
+def workspace_edit_scope(workspace: Workspace | None, *, gated: bool) -> list[str]:
+    """Where a workspace turn may write. Empty means "anywhere in the repository".
+
+    A workspace run gates every action: writing outside the workspace folder is
+    classified ``EXTERNAL_ACTION`` and a person is asked before it lands, so an
+    unattended run keeps the whole tree and the answer comes from the user.
+
+    An interactive workspace chat has no such gate, and it was handed exactly
+    the same repository-root editor. "Tidy up the notes" could rewrite
+    ``src/main.py`` with nothing to refuse it and nobody asked — the protection
+    the unattended path is careful about simply was not there on the path a
+    person actually uses. Scoping the editor to the workspace folder is that
+    missing boundary, and it is enforced by the tool rather than by the prompt.
+
+    Repository sessions are untouched: editing the repository is what they are
+    for, and their scope comes from the task.
+    """
+    if workspace is None or gated:
+        return []
+    folder = workspace.folder.strip("/")
+    if not folder:
+        # A workspace with no folder cannot be bounded, and guessing a scope
+        # would silently refuse every write instead of refusing the wrong ones.
+        return []
+    return [folder, f"{folder}/**"]
 
 
 def _workspace_step_scale(envelope: CapabilityEnvelope | None) -> str:
@@ -1092,15 +1130,12 @@ class MissionApplicationService:
                 "or /provider), fill in the form, and press Validate + save."
             )
         hooks = self.hook_runner(session_id)
-        submitted = await hooks.run(
-            HookEvent.USER_PROMPT_SUBMIT, payload={"prompt": instruction}
-        )
+        submitted = await hooks.run(HookEvent.USER_PROMPT_SUBMIT, payload={"prompt": instruction})
         if submitted.blocked:
             # A refusal here costs nothing: no mission has been opened, no
             # checkpoint taken, no model call made.
             raise ConfigurationError(
-                "A project hook refused this request: "
-                + (submitted.reason or "no reason given")
+                "A project hook refused this request: " + (submitted.reason or "no reason given")
             )
         # Read before this turn is persisted, or the instruction would appear
         # twice: once as history and again as the task.
@@ -1184,9 +1219,8 @@ class MissionApplicationService:
                             "Project skills — load one with the skill tool when the task "
                             "matches its description:\n"
                             + "\n".join(
-                                skill.summary_line() for skill in sorted(
-                                    skills.values(), key=lambda item: item.name
-                                )
+                                skill.summary_line()
+                                for skill in sorted(skills.values(), key=lambda item: item.name)
                             ),
                         )
                         if item
@@ -1202,9 +1236,7 @@ class MissionApplicationService:
             base_context = base_context.model_copy(
                 update={
                     "effective_instructions": "\n\n".join(
-                        item
-                        for item in (base_context.effective_instructions, catalogue)
-                        if item
+                        item for item in (base_context.effective_instructions, catalogue) if item
                     )
                 }
             )
@@ -1229,6 +1261,10 @@ class MissionApplicationService:
             )
         editor = EditTools(
             self.context.root,
+            # A workspace chat writes inside its own folder. An unattended run
+            # keeps the wider scope because `approve_action` asks a person
+            # before anything lands outside it.
+            allowed_files=workspace_edit_scope(workspace, gated=approve_action is not None),
             require_read_before_write=True,
             seen_files=set(base_context.included_paths),
             read_only=read_only,
@@ -1324,7 +1360,10 @@ class MissionApplicationService:
             # verification commands that a written report cannot have.
             system=(
                 workspace_system_prompt(
-                    workspace, workbench.templates.get(workspace.kind), turn_envelope
+                    workspace,
+                    workbench.templates.get(workspace.kind),
+                    turn_envelope,
+                    confined=bool(editor.allowed_files),
                 )
                 if workspace
                 else CHAT_AGENT_SYSTEM

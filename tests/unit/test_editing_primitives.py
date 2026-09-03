@@ -229,9 +229,9 @@ class TestReadBeforeWrite:
 # the lines and drifts on indentation, which byte-exact matching cannot forgive.
 
 HTML = (
-    "<div class=\"panel\">\n"
-    "    <label class=\"toggle\">\n"
-    "        <input type=\"checkbox\" id=\"darkToggle\">\n"
+    '<div class="panel">\n'
+    '    <label class="toggle">\n'
+    '        <input type="checkbox" id="darkToggle">\n'
     "        <span>Dark</span>\n"
     "    </label>\n"
     "</div>\n"
@@ -291,9 +291,7 @@ def test_an_exact_anchor_is_still_matched_exactly(tmp_path: Path) -> None:
 
 
 def test_a_relaxed_anchor_that_matches_twice_is_refused(tmp_path: Path) -> None:
-    (tmp_path / "page.html").write_text(
-        "<p>one</p>\n    <p>one</p>\n", encoding="utf-8"
-    )
+    (tmp_path / "page.html").write_text("<p>one</p>\n    <p>one</p>\n", encoding="utf-8")
     editor = tools(tmp_path)
     result = editor.replace_in_file("page.html", "<p>one</p>", "<p>two</p>")
     # Exact matching finds two, so it is refused before the relaxed path runs.
@@ -303,17 +301,15 @@ def test_a_relaxed_anchor_that_matches_twice_is_refused(tmp_path: Path) -> None:
     ambiguous = editor.replace_in_file("page.html", "  <p>one</p>  ", "<p>two</p>")
     assert not ambiguous.success
     assert "several places" in (ambiguous.error or "")
-    assert (tmp_path / "page.html").read_text(encoding="utf-8") == (
-        "<p>one</p>\n    <p>one</p>\n"
-    )
+    assert (tmp_path / "page.html").read_text(encoding="utf-8") == ("<p>one</p>\n    <p>one</p>\n")
 
 
 def test_a_near_miss_is_told_where_to_look(tmp_path: Path) -> None:
-    """"Read the file again" is advice a weak model follows by repeating itself."""
+    """ "Read the file again" is advice a weak model follows by repeating itself."""
     editor = _html_tools(tmp_path)
     result = editor.replace_in_file(
         "page.html",
-        '<span>Dark</span>\n<span>Nonexistent</span>',
+        "<span>Dark</span>\n<span>Nonexistent</span>",
         "<span>Theme</span>",
     )
     assert not result.success
@@ -321,13 +317,11 @@ def test_a_near_miss_is_told_where_to_look(tmp_path: Path) -> None:
     assert "matches line(s) 4" in (result.error or "")
 
 
-def test_relaxed_matching_still_rolls_back_broken_python(
-    module: Path, tmp_path: Path
-) -> None:
+def test_relaxed_matching_still_rolls_back_broken_python(module: Path, tmp_path: Path) -> None:
     """A relaxed match must not bypass the syntax guard."""
     # Anchor with the indentation stripped, so only the relaxed path can match.
     result = tools(tmp_path).replace_in_file(
-        "greet.py", "return f\"hello {name}\"", "return f\"hello {name}"
+        "greet.py", 'return f"hello {name}"', 'return f"hello {name}'
     )
     assert not result.success
     assert module.read_text(encoding="utf-8") == SOURCE

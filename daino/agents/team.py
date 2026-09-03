@@ -33,6 +33,7 @@ from daino.agents.loop import OnActionCallback, OnActionStartCallback, ToolLoop
 from daino.memory import MemoryManager
 from daino.model_router import ModelRole
 from daino.prompts import TEAM_LEAD_SYSTEM
+from daino.repository.code_intel import CodeIntelligence
 from daino.schemas import (
     AgentAction,
     ContextBundle,
@@ -211,6 +212,7 @@ class TeamRunner:
         memory_task_id: str | None = None,
         memory_session_id: str | None = None,
         web: WebResearch | None = None,
+        code_intel: CodeIntelligence | None = None,
     ) -> None:
         self.gateway = gateway
         self.root = root
@@ -226,6 +228,12 @@ class TeamRunner:
         #: that must stay inside the repository — code review, QA — where an
         #: outbound request is not part of the job.
         self.web = web
+        #: Language-server lookups. Required by any roster whose tool surface
+        #: advertises `find_definition`, `find_references`, or `diagnostics` —
+        #: the QA and review surfaces do, and without this every one of those
+        #: calls came back "not available in this context", so a reviewer asked
+        #: to trace a caller spent a step learning it could not.
+        self.code_intel = code_intel
 
     async def run(
         self,
@@ -300,6 +308,7 @@ class TeamRunner:
                 memory=self.memory,
                 memory_task_id=self.memory_task_id,
                 memory_session_id=self.memory_session_id,
+                code_intel=self.code_intel,
             ),
             max_steps=self.max_steps,
             system=self.system,
@@ -329,6 +338,7 @@ class TeamRunner:
             summary=outcome.implementation.summary,
             changed=outcome.changed,
             steps=outcome.steps,
+            findings=list(outcome.findings),
             success=outcome.completed,
             error=(
                 "The agent exhausted its step budget before finishing."

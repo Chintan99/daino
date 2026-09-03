@@ -88,9 +88,7 @@ class WebSearchConfig(BaseModel):
     @classmethod
     def search_secret_must_be_reference(cls, value: str) -> str:
         if value and not value.startswith(("env://", "keyring://", "file://")):
-            raise ValueError(
-                "web.api_key must be a secret reference (env://, keyring://, file://)"
-            )
+            raise ValueError("web.api_key must be a secret reference (env://, keyring://, file://)")
         return value
 
 
@@ -147,9 +145,9 @@ class ProviderConfig(BaseModel):
     application_name: str | None = None
     referring_url: str | None = None
     features: list[str] = Field(default_factory=list)
-    reasoning_effort: Literal[
-        "none", "minimal", "low", "medium", "high", "xhigh", "max"
-    ] | None = None
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = (
+        None
+    )
     #: How many generation requests may be in flight at once. ``None`` resolves
     #: to 1 for a local runtime (Ollama/vLLM serve one model, so concurrent
     #: requests queue there and each returns slower) and to unlimited for a
@@ -183,9 +181,9 @@ class ModelProfileConfig(BaseModel):
     local: bool = False
     context_window: int = 32_768
     max_output_tokens: int = 16_384
-    reasoning_effort: Literal[
-        "none", "minimal", "low", "medium", "high", "xhigh", "max"
-    ] | None = None
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = (
+        None
+    )
     planning_score: int = 5
     coding_score: int = 5
     debugging_score: int = 5

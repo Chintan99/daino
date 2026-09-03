@@ -74,9 +74,7 @@ def parse_junit(xml: str, root: Path) -> list[TestResult]:
         tree = ElementTree.fromstring(xml)  # noqa: S314 - local runner output
     except ElementTree.ParseError:
         return []
-    suites = (
-        tree.iter("testsuite") if tree.tag in {"testsuites", "testsuite"} else iter(())
-    )
+    suites = tree.iter("testsuite") if tree.tag in {"testsuites", "testsuite"} else iter(())
     results: list[TestResult] = []
     for suite in suites:
         suite_name = suite.get("name", "")
