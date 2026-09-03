@@ -232,17 +232,27 @@ html[data-theme="dark"] .workflow-section { color: #eff8f2; }
 .workflow-grid p { margin: 0; color: color-mix(in srgb, var(--text) 68%, transparent); font-size: 11px; }
 
 .interfaces-section { background: var(--surface); }
-.interface-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-.interface-card { min-height: 500px; padding: 30px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg); }
-.interface-card.gui-card { background: var(--surface-soft); }
+.interface-stack { display: grid; gap: 14px; }
+/* Copy beside the screenshot rather than above it: at this width a full-bleed
+   terminal shot is unreadable, and the point of showing it is that it is read. */
+.interface-block { display: grid; grid-template-columns: 340px 1fr; gap: 34px; align-items: center; padding: 30px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg); }
+.interface-block.gui-block { background: var(--surface-soft); }
+.interface-copy > p { max-width: 490px; margin: 0; color: var(--muted); font-size: 12px; }
+.interface-copy h3 { margin: 19px 0 10px; font-size: 30px; letter-spacing: -.045em; }
+.interface-copy ul { margin: 27px 0 30px; padding: 0; border-top: 1px solid var(--line); list-style: none; }
+.interface-copy li { padding: 11px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+.interface-copy li code { display: inline-block; min-width: 72px; color: var(--green); font-size: 10px; }
+.interface-copy > a { color: var(--green); font-size: 11px; font-weight: 750; }
+.interface-copy > a span { margin-left: 6px; }
+.interface-shot, .tab-shot { margin: 0; min-width: 0; }
+.interface-shot img, .tab-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--line-bright); border-radius: 11px; background: var(--surface); }
+.interface-shot figcaption, .tab-shot figcaption { margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.6; }
+/* Spans both columns of `.tab-row`, so the shot sits under the copy and the
+   detail grid rather than being squeezed into one of them. */
+.tab-shot { grid-column: 1 / -1; margin-top: 4px; }
 .card-label { color: var(--green); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-.interface-card h3 { margin: 19px 0 10px; font-size: 30px; letter-spacing: -.045em; }
-.interface-card > p { max-width: 490px; margin: 0; color: var(--muted); font-size: 12px; }
-.interface-card ul { margin: 34px 0 38px; padding: 0; border-top: 1px solid var(--line); list-style: none; }
-.interface-card li { padding: 11px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; }
-.interface-card li code { display: inline-block; min-width: 72px; color: var(--green); font-size: 10px; }
-.interface-card > a, .text-link { color: var(--green); font-size: 11px; font-weight: 750; }
-.interface-card > a span, .text-link span { margin-left: 6px; }
+.text-link { color: var(--green); font-size: 11px; font-weight: 750; }
+.text-link span { margin-left: 6px; }
 .workspace-pills { display: flex; gap: 7px; margin-top: 27px; }
 .workspace-pills span { padding: 6px 10px; border: 1px solid var(--line-bright); border-radius: 99px; color: var(--green); background: var(--surface); font-size: 9px; }
 /* One row per GUI tab, so all five get the same weight on the page. */
@@ -336,7 +346,8 @@ html[data-theme="dark"] .workflow-section { color: #eff8f2; }
   .workflow-grid { grid-template-columns: 1fr 1fr; }
   .workflow-grid article:nth-child(2) { border-right: 0; }
   .workflow-grid article:nth-child(-n+2) { border-bottom: 1px solid color-mix(in srgb, var(--green-bright) 18%, transparent); }
-  .interface-grid, .feature-groups { grid-template-columns: 1fr; }
+  .feature-groups { grid-template-columns: 1fr; }
+  .interface-block { grid-template-columns: 1fr; gap: 24px; }
   .tab-row { grid-template-columns: 1fr; gap: 20px; }
   .footer-inner { grid-template-columns: 1fr 1fr; }
   .footer-note { grid-column: 1 / -1; text-align: left; }
@@ -370,7 +381,8 @@ html[data-theme="dark"] .workflow-section { color: #eff8f2; }
   .workflow-grid article:nth-child(2) { border-right: 0; }
   .workflow-grid article:nth-child(-n+2) { border-bottom: 1px solid color-mix(in srgb, var(--green-bright) 18%, transparent); }
   .workflow-grid h3 { margin-top: 50px; }
-  .interface-card, .feature-groups > article { min-height: auto; padding: 23px; }
+  .feature-groups > article { min-height: auto; padding: 23px; }
+  .interface-block { padding: 23px; }
   .tab-row { padding: 23px; }
   .workspace-columns { grid-template-columns: 1fr; }
   .workspace-columns > div { min-height: auto; }

@@ -19,7 +19,8 @@ instructions follow the files being edited, useful project facts and decisions c
 future sessions, and source-derived facts become stale when their files change. User memory stays
 under `~/.daino`; no external vector database is required. See [memory](docs/memory.md).
 
-![D[Ai]NO interactive terminal workspace](docs/assets/daino-tui.png)
+There are two ways to drive it, over one runtime: a keyboard-first
+[terminal workspace](#terminal-ui-tui) and a local [browser IDE](#browser-ide-gui).
 
 ## Install
 
@@ -93,10 +94,31 @@ Type an instruction. The agent decides whether you asked a question or asked for
 Edits land in your working tree. A checkpoint is taken before the first one, so `/restore` always
 has a way back, and `/diff` shows the full change.
 
-## Browser IDE (`daino . --gui`)
+## Terminal UI (TUI)
 
-D[Ai]NO also ships a local, VS Code-style browser IDE driven by the **same** agent runtime as the
-terminal. Nothing runs in the cloud; the server binds to `127.0.0.1` only.
+`daino . --tui` is the keyboard-first workspace: one persistent conversation, with everything the
+agent did beside it. Tabs across the top cover chat, missions, the inspector, files, changes,
+tests, logs, and the per-prompt execution map; the right rail keeps the live task checklist and the
+current model, mode, token spend, and cost in view while work runs.
+
+![D[Ai]NO terminal workspace: an edit landing in the working tree, with the live task checklist beside it](docs/assets/daino-tui.png)
+
+- **Edits arrive as diffs, not as advice.** Each change is shown where it landed, with a checkpoint
+  taken before the first one so `/restore` always has a way back.
+- **The header is the receipt.** Model, provider, access mode, cumulative tokens and cost, and the
+  state of the current mission — visible without asking for them.
+- **Everything is a slash command.** `/diff`, `/test`, `/review`, `/team`, `/plan`, `/mode` and the
+  rest, with `@` to attach a file or symbol and `!` to run a shell command yourself.
+- **`Shift+Tab` cycles the access mode** between Plan, Ask, Session, and Full, so how much the
+  agent may do on its own is a one-key decision rather than a config edit.
+
+See [the TUI guide](docs/tui.md) for every command, shortcut, and view.
+
+## Browser IDE (GUI)
+
+`daino . --gui` serves a local, VS Code-style IDE driven by the **same** agent runtime, session
+store, memory, and approval policy as the terminal. Nothing runs in the cloud; the server binds to
+`127.0.0.1` only.
 
 ```bash
 daino . --tui    # terminal UI
@@ -104,48 +126,74 @@ daino . --gui    # browser IDE at http://127.0.0.1:4173
 daino . --gui --port 5000
 ```
 
-The GUI opens your default browser to a local URL and gives you three workspaces that share one
-D[Ai]NO agent and one session:
+![D[Ai]NO browser IDE, CODE tab: file explorer, Monaco editor, integrated terminal, and the agent panel](docs/assets/daino-gui-code.png)
 
-- **Code** — file explorer, Monaco editor with tabs and dirty-state, an integrated terminal, and a
-  persistent D[Ai]NO agent panel with streamed responses, tool cards, and command approvals (the
-  same security model as the TUI). Diagnostics, go-to-definition, find-references and rename come
-  from whichever language servers the machine has — pyright, tsserver, gopls, rust-analyzer — and
-  when none is installed the Problems panel says so rather than reporting a clean file. Tests are
-  discovered and run per test, with failures linking to the line they failed on. Git covers
-  hunk-level staging, commits and amends, branches, fetch/pull/push, merges and conflict
-  resolution; nothing runs without an explicit click. A debugger drives the Debug Adapter Protocol
-  (Python via debugpy) with gutter breakpoints, stepping, call stack, variables, and expression
-  evaluation. Search supports regex, filters, and previewed replace across the repository; ⌘T jumps
-  to any symbol and ⇧⌘P runs any command the project declares.
-- **Design** — structured, AI-editable diagrams (architecture, flowchart, database, API flow) on a
-  React Flow canvas you can also edit by hand, plus UI frames and live HTML/SVG prototypes rendered
-  in place. Files placed from CODE keep their path and digest, so the canvas says when the source
-  has moved on and can pull from or push to it. JSX/TSX is placed as source text — it is not
-  compiled or previewed. **Generate from code** derives the architecture from the repository index:
-  modules from the source layout, edges from import statements weighted by how many files carry
-  them, and layers from the dependency order. Design never writes production code directly:
-  implementation is gated on a plan you have read and approved, and the planning turn has read-only
-  tools so it cannot write while proposing.
-- **Workspace** — the work that is not code. Give Daino a goal, upload the files it needs (PDF,
-  Word, Excel and PowerPoint are extracted to text), and the documents it writes land under
-  `.daino/workspaces/<name>/` as ordinary files — greppable and openable in the editor, without
-  scattering folders through your source tree. Then **Run Plan**, and Daino works the plan a step at
-  a time: researching, writing, diagramming in DESIGN, preparing coding work for CODE, and rendering
-  finished Word, Excel, PowerPoint and PDF files. Steer it mid-run by typing, pause it between
-  steps, review everything it changed in one place, and undo any of it. Research is cited from a
-  recorded source list, and every save is a restorable version (the newest 50 per document, plus
-  any a change set still refers to).
-- **Inspector** — the pre-production check. **Scan** audits the whole repository; **Review** reads one change — your working tree, what is staged, or this branch against its base — re-parses every file it touches, finds what was left behind, and says whether it can be merged. **Scan** runs end-to-end QA and a vulnerability assessment —
-  a built-in offline audit for secrets, insecure code, and weak configuration; the project's own
-  lint/type/test commands; whichever security scanners the host has; and a non-destructive probe of
-  the running app — then answers with a release-gate verdict: safe to push, review first, or do not
-  push. **Live app** runs your project's dev server (through the normal approval flow), embeds the
-  running app, and becomes what the scan probes.
+The window is one agent behind five tabs. They are five kinds of work rather than five tools: the
+conversation, the context you attach, the approval flow, and the project database are shared, so
+work started in one tab is visible from the others.
+
+### CODE — the repository
+
+File explorer with Git status, Monaco editing with tabs and dirty state, real PTY terminals, and a
+persistent agent panel with streamed responses, tool cards, and command approvals. Diagnostics,
+go-to-definition, find-references and rename come from whichever language servers the machine has —
+pyright, tsserver, gopls, rust-analyzer — and when none is installed the Problems panel says so
+rather than reporting a clean file. Tests are discovered and run per test, with failures linking to
+the line they failed on. Git covers hunk-level staging, commits and amends, branches,
+fetch/pull/push, merges and conflict resolution; nothing runs without an explicit click. A debugger
+drives the Debug Adapter Protocol (Python via debugpy) with gutter breakpoints, stepping, call
+stack, variables, and expression evaluation. Search supports regex, filters, and previewed replace;
+⌘T jumps to any symbol and ⇧⌘P runs any command the project declares.
+
+### DESIGN — diagrams, UI, and prototypes
+
+Structured, AI-editable diagrams (architecture, flowchart, database, API flow) on a React Flow
+canvas you can also edit by hand, plus UI mock-up frames and live HTML/SVG prototypes rendered in
+place. Files placed from CODE keep their path and digest, so the canvas says when the source has
+moved on and can pull from or push to it. JSX/TSX is placed as source text — it is not compiled or
+previewed. **Generate from code** derives the architecture from the repository index: modules from
+the source layout, edges from import statements weighted by how many files carry them, and layers
+from the dependency order. Design never writes production code directly: implementation is gated on
+a plan you have read and approved, and the planning turn has read-only tools so it cannot write
+while proposing.
+
+### WORKSPACE — the work that is not code
+
+Give Daino a goal, upload the files it needs (PDF, Word, Excel and PowerPoint are extracted to
+text), and the documents it writes land under `.daino/workspaces/<name>/` as ordinary files —
+greppable and openable in the editor, without scattering folders through your source tree. Then
+**Run Plan**, and Daino works the plan a step at a time: researching, writing, diagramming in
+DESIGN, preparing coding work for CODE, and rendering finished Word, Excel, PowerPoint and PDF
+files. Steer it mid-run by typing, pause it between steps, review everything it changed in one
+place, and undo any of it. Research is cited from a recorded source list, and every save is a
+restorable version (the newest 50 per document, plus any a change set still refers to).
+
+### INSPECTOR — the pre-production check
+
+**Scan** audits the whole repository: a built-in offline audit for secrets, insecure code, and weak
+configuration; the project's own lint/type/test commands; whichever security scanners the host has;
+AI specialists for architecture, security, threat modelling, supply chain, frontend and backend;
+and a non-destructive probe of the running app. It ends in a release-gate verdict — safe to push,
+review first, or do not push — computed deterministically from the findings, with every reason it
+depended on stated. **Review** reads one change instead — your working tree, what is staged, or
+this branch against its base — re-parses every file it touches, finds what was left behind, and
+says whether it can be merged. **Live app** runs your project's dev server through the normal
+approval flow, embeds it, and becomes what the scan probes.
+
+### INSIGHTS — evidence and audit
+
+What actually happened, built from redacted structured audit events rather than from the chat
+transcript. The execution map draws a per-prompt graph of every model call, tool call, file change
+and test, with its timing, tokens, and cost; **Logs** follows live activity and the recorded audit
+log; **Missions** and **Checkpoints** hold planned work with its persisted evidence and the
+snapshots you can restore to; **Approvals** lists every gated decision and how it was answered; and
+**Repository** exposes the intelligence index the agent reads from.
+
+![D[Ai]NO browser IDE, INSIGHTS tab: the per-prompt execution graph with tokens, cost, and timing](docs/assets/daino-gui-insights.png)
 
 See [the GUI guide](docs/gui.md) for the full feature tour.
 
-### The agent has a shell
+## The agent has a shell
 
 It can run your tests, read the failure, fix it, and re-run — which is what turns one edit into a
 loop that converges. Commands are gated by category:
@@ -158,7 +206,7 @@ loop that converges. Commands are gated by category:
 
 Widen or narrow the safe set with `security.allowed_commands` and `security.denied_commands`.
 
-### Run your own commands
+## Run your own commands
 
 A prompt beginning with `!` is a command you run yourself, through a real shell:
 
@@ -172,7 +220,7 @@ Its output joins the conversation, so you can run something and then ask the age
 result. It is never policy-gated: the gate exists to stop the *model* running something you did not
 ask for.
 
-### Teams of sub-agents
+## Teams of sub-agents
 
 `/team <instruction>` splits work across sub-agents that run at the same time:
 
@@ -188,7 +236,7 @@ Members sharing a wave must have non-overlapping file scopes — the roster is r
 model call otherwise — and read-only members cannot write at all. A failing member does not abort
 its peers. See [the TUI guide](docs/tui.md#teams-of-sub-agents).
 
-### Approval-gated missions
+## Approval-gated missions
 
 For larger work, `/plan` and `/run` use the full mission workflow: requirements, an approval-gated
 task plan, an isolated Git worktree, bounded repair attempts, independent review, and per-task

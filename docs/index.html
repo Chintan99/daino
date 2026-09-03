@@ -32,7 +32,7 @@
           <a href="#installation">Installation</a>
           <a href="#getting-started">Get started</a>
           <a href="#interfaces">Interfaces</a>
-          <a href="#workspaces">Tabs</a>
+          <a href="#workspaces">GUI tabs</a>
           <a href="#providers">Providers</a>
           <a href="#features">Features</a>
           <a href="#reference">Reference</a>
@@ -233,21 +233,36 @@ daino --gui</code></pre>
             <p>Both clients are presentation layers over one runtime. A task started in one can be inspected from the other without changing its safety model.</p>
           </div>
 
-          <div class="interface-grid">
-            <article class="interface-card terminal-card">
-              <div class="card-label">Terminal UI · daino --tui</div>
-              <h3>Stay close to the shell.</h3>
-              <p>Persistent chat, files, Git changes, QA, tests, plans, approvals, providers, memory, logs, and repository maps in a keyboard-first workspace.</p>
-              <ul><li><code>/diff</code> review changes</li><li><code>/test</code> run verification</li><li><code>/team</code> parallel scoped agents</li><li><code>@</code> attach files or symbols</li></ul>
-              <a href="https://github.com/Chintan99/daino/blob/v2/docs/tui.md">Terminal guide <span>→</span></a>
+          <div class="interface-stack">
+            <article class="interface-block terminal-block">
+              <div class="interface-copy">
+                <div class="card-label">Terminal UI · daino . --tui</div>
+                <h3>Stay close to the shell.</h3>
+                <p>One persistent conversation with everything the agent did beside it: chat, missions, inspector, files, changes, tests, logs, and the execution map, in a keyboard-first workspace.</p>
+                <ul><li><code>/diff</code> review changes</li><li><code>/test</code> run verification</li><li><code>/team</code> parallel scoped agents</li><li><code>@</code> attach files or symbols</li><li><code>⇧⇥</code> cycle the access mode</li></ul>
+                <a href="https://github.com/Chintan99/daino/blob/v2/docs/tui.md">Terminal guide <span>→</span></a>
+              </div>
+              <figure class="interface-shot">
+                <img src="assets/daino-tui.png" width="1728" height="992" loading="lazy" decoding="async"
+                     alt="D[Ai]NO terminal workspace: an edit landing in the working tree as a diff, with the live task checklist, model, token count, and cost in the right rail." />
+                <figcaption>Edits arrive as diffs in your working tree. The header carries the model, access mode, tokens, and cost the whole time.</figcaption>
+              </figure>
             </article>
-            <article class="interface-card gui-card">
-              <div class="card-label">Browser IDE · daino --gui</div>
-              <h3>See the whole workspace.</h3>
-              <p>A local VS Code-style environment with Monaco editing, terminals, source control, and streamed agent activity, organised into five top tabs.</p>
-              <div class="workspace-pills"><span>Code</span><span>Design</span><span>Workspace</span><span>Inspector</span><span>Insights</span></div>
-              <ul><li>Inline approvals and changesets</li><li>Shared sessions and context</li><li>Same database, memory, and routing</li><li>Binds to localhost, never 0.0.0.0 implicitly</li></ul>
-              <a href="https://github.com/Chintan99/daino/blob/v2/docs/gui.md">Browser IDE guide <span>→</span></a>
+
+            <article class="interface-block gui-block">
+              <div class="interface-copy">
+                <div class="card-label">Browser IDE · daino . --gui</div>
+                <h3>See the whole workspace.</h3>
+                <p>A local VS Code-style environment with Monaco editing, terminals, source control, and streamed agent activity — the same runtime, session store, memory, and approval policy as the terminal.</p>
+                <div class="workspace-pills"><span>Code</span><span>Design</span><span>Workspace</span><span>Inspector</span><span>Insights</span></div>
+                <ul><li>Inline approvals and changesets</li><li>Shared sessions and context</li><li>Same database, memory, and routing</li><li>Binds to localhost, never 0.0.0.0 implicitly</li></ul>
+                <a href="https://github.com/Chintan99/daino/blob/v2/docs/gui.md">Browser IDE guide <span>→</span></a>
+              </div>
+              <figure class="interface-shot">
+                <img src="assets/daino-gui-code.png" width="1728" height="952" loading="lazy" decoding="async"
+                     alt="D[Ai]NO browser IDE on the CODE tab: file explorer, Monaco editor with open tabs, an integrated terminal, and the agent panel streaming its task list." />
+                <figcaption>The CODE tab. The agent panel on the right is the same conversation the terminal client shows.</figcaption>
+              </figure>
             </article>
           </div>
         </div>
@@ -257,10 +272,10 @@ daino --gui</code></pre>
         <div class="shell">
           <div class="section-heading">
             <div>
-              <div class="section-kicker">04 · The five tabs</div>
-              <h2>One agent,<br />five surfaces.</h2>
+              <div class="section-kicker">04 · Inside the browser IDE</div>
+              <h2>One agent,<br />five tabs.</h2>
             </div>
-            <p>Each tab is a different kind of work rather than a different tool. They share the agent, the session, the approval flow, and the project database.</p>
+            <p>Each tab of the GUI is a different kind of work rather than a different tool. They share the agent, the session, the context you attach, the approval flow, and the project database.</p>
           </div>
 
           <div class="tab-rows">
@@ -276,6 +291,11 @@ daino --gui</code></pre>
                 <div><strong>Review before you keep it</strong><p>Side-by-side diffs of working tree against index or index against HEAD. Stage, unstage, or discard per file.</p></div>
                 <div><strong>Give precise context</strong><p>Attach the active file, a line selection, terminal output, or a Git diff to the composer while you keep navigating.</p></div>
               </div>
+              <figure class="tab-shot">
+                <img src="assets/daino-gui-code.png" width="1728" height="952" loading="lazy" decoding="async"
+                     alt="The CODE tab: file explorer with Git markers, Monaco editor with several open tabs, an integrated terminal, and the agent panel working through its task list." />
+                <figcaption>Explorer, editor, terminal, and agent in one window — the agent's task list stays visible while you keep editing.</figcaption>
+              </figure>
             </article>
 
             <article class="tab-row">
@@ -335,6 +355,11 @@ daino --gui</code></pre>
                 <div><strong>Missions and checkpoints</strong><p>Planned work with its persisted evidence, and recoverable snapshots you can restore.</p></div>
                 <div><strong>Approvals and repository</strong><p>Every gated decision and its outcome, alongside the repository intelligence index.</p></div>
               </div>
+              <figure class="tab-shot">
+                <img src="assets/daino-gui-insights.png" width="1728" height="951" loading="lazy" decoding="async"
+                     alt="The INSIGHTS tab: a list of past prompts with their token counts, and the per-prompt execution graph showing each model call, tool call, and task update with its timing and cost." />
+                <figcaption>Every prompt keeps its own execution graph: which model ran, which tools it called, what each step cost, and how long it took.</figcaption>
+              </figure>
             </article>
           </div>
         </div>
