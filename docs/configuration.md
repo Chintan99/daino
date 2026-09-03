@@ -53,6 +53,72 @@ key: it checks the key before saving and stores a valid key in the private `.dai
 directory while persisting only its reference. PostgreSQL is enabled by setting `database.url` or
 `DATABASE_URL` to a SQLAlchemy PostgreSQL URL and installing the desired database driver.
 
+## Budget
+
+Every model call's cost has always been recorded. These are the settings that
+make it *enforced*. Each defaults to `0`, meaning unlimited, so an existing
+project behaves exactly as it did — the gap was never a missing default, it was
+the absence of any way to set one.
+
+```yaml
+budget:
+  max_cost_usd: 5.0        # per mission; 0 is unlimited
+  max_total_tokens: 500000
+  max_model_calls: 200
+  warn_at_fraction: 0.8    # warn once at 80% of the tightest ceiling
+```
+
+The stall guard already ends an *unproductive* run in about a dozen actions.
+These bound the other case: an agent making genuine, non-repeating progress on a
+task it will never finish. A run that hits a ceiling stops the way a step limit
+does — incomplete, with a reason, and with whatever already landed in the working
+tree reported rather than discarded.
+
+A mission's budget is shared by everything it spawns: a pinned session, a team's
+nine members, and every delegated subagent draw on one account, not nine.
+
+`max_cost_usd` binds only where the provider reports a charge. A local Ollama or
+a self-hosted vLLM reports none and has none, so use `max_total_tokens` there.
+
+## Web search
+
+`web_search` scrapes DuckDuckGo by default, which needs no account and is the
+option most likely to break — it is a scrape of an endpoint that discourages
+scraping. The alternatives are documented APIs:
+
+```yaml
+web:
+  provider: brave          # duckduckgo | brave | tavily | searxng | google-pse
+  api_key: env://BRAVE_SEARCH_API_KEY
+```
+
+`searxng` needs only `base_url` and keeps queries inside your network; the
+private-address block is lifted for exactly that hostname and nothing else, and
+a redirect away from it is validated normally. `google-pse` needs `api_key` and
+`engine_id`. Whichever backend answers, the SSRF validation, redirect
+revalidation, byte ceiling and content-type check are the same single
+implementation all network access passes through.
+
+## Tracing
+
+Set an OTLP endpoint and D[Ai]NO emits spans around every model call, loop step,
+tool execution, and delegation:
+
+```yaml
+observability:
+  otel_endpoint: http://localhost:4318/v1/traces
+```
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` is honoured when the setting is absent, so a
+deployment that configures every other service through the standard variable gets
+these too. Spans carry identity and cost — role, model, profile, token counts,
+latency — and never prompts, file contents, or command output. A trace collector
+is usually the least access-controlled sink in a deployment, and shipping source
+code to it would be a leak dressed as observability.
+
+Tracing degrades to nothing when the OpenTelemetry SDK is absent or the collector
+is unreachable. A mission must not fail because a collector went away.
+
 ## Browser IDE
 
 `daino . --gui` starts the local browser IDE. It binds `127.0.0.1` by default (never `0.0.0.0`) on

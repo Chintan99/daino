@@ -34,9 +34,20 @@ class ReasoningProvider:
     def __init__(self, timeline: list[str]) -> None:
         self.timeline = timeline
         self.reasoning_handler: Callable[[str], None] | None = None
+        #: Every handler this adapter was given, in order. The gateway now
+        #: borrows adapters from a pool and clears the handler on return, so
+        #: "was a handler attached for the call?" can no longer be answered by
+        #: looking at the adapter afterwards — a detached handler is the
+        #: correct end state, not a missing one.
+        self.handler_history: list[Callable[[str], None] | None] = []
 
     def set_reasoning_handler(self, handler: Callable[[str], None] | None) -> None:
         self.reasoning_handler = handler
+        self.handler_history.append(handler)
+
+    def assert_handler_attached_then_cleared(self) -> None:
+        assert any(handler is not None for handler in self.handler_history)
+        assert self.reasoning_handler is None
 
     def supports_tools(self) -> bool:
         return True
@@ -155,7 +166,7 @@ async def test_complete_publishes_tagged_reasoning_before_return(
     )
 
     assert response.content == "done"
-    assert provider.reasoning_handler is not None
+    provider.assert_handler_attached_then_cleared()
     assert_reasoning_event(events, "Inspecting the request")
     assert timeline.index("event:ModelReasoningChunk") < timeline.index("provider:complete")
 
@@ -174,7 +185,7 @@ async def test_structured_publishes_tagged_reasoning_before_return(
     )
 
     assert response.value == 42
-    assert provider.reasoning_handler is not None
+    provider.assert_handler_attached_then_cleared()
     assert_reasoning_event(events, "Preparing structured output")
     assert timeline.index("event:ModelReasoningChunk") < timeline.index("provider:structured")
 
@@ -195,6 +206,6 @@ async def test_stream_publishes_tagged_reasoning_before_answer_chunk(
         chunks.append(chunk)
 
     assert chunks == ["answer"]
-    assert provider.reasoning_handler is not None
+    provider.assert_handler_attached_then_cleared()
     assert_reasoning_event(events, "Preparing the answer")
     assert timeline.index("event:ModelReasoningChunk") < timeline.index("consumer:answer")

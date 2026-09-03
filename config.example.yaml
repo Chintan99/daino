@@ -5,9 +5,19 @@ project:
 database:
   url: sqlite:///.daino/daino.db
 runtime:
+  # local   - a plain subprocess with your full environment. No isolation.
+  # sandbox - the host toolchain, but with credentials scrubbed from the
+  #           environment and, where the platform provides one (sandbox-exec on
+  #           macOS, bubblewrap on Linux), writes confined to the project and
+  #           the network denied. Use this when Docker needs an image you have
+  #           not built. `daino` reports which level is actually in force.
+  # docker  - full container isolation; needs an image with your toolchain.
   default: docker
   network_access: restricted
   command_timeout_seconds: 600
+  # Extra variables the sandbox passes through. Credential-shaped names are
+  # still filtered, so listing one here cannot leak a token.
+  sandbox_passthrough_env: []
   # Non-slim: it includes Git, which the fallback verification command needs.
   docker_image: python:3.12
 verification:
@@ -22,6 +32,25 @@ security:
   require_approval_for_install: true
   require_approval_for_network: true
   require_approval_for_production: true
+# Hard ceilings on one mission's spend. Every limit is 0 (unlimited) by default;
+# the stall guard still ends an unproductive run in about a dozen actions, but
+# only these stop a run that keeps making genuine progress on a task it will
+# never finish. max_cost_usd binds only where the provider reports a charge —
+# use max_total_tokens for a local Ollama or vLLM, which has no bill to report.
+# Where web_search results come from. `duckduckgo` needs no account and scrapes
+# an endpoint that discourages scraping, so it is the option most likely to
+# break; the others are documented APIs. `searxng` needs only base_url and keeps
+# queries inside your network. `google-pse` needs api_key and engine_id.
+web:
+  provider: duckduckgo        # duckduckgo | brave | tavily | searxng | google-pse
+  # api_key: env://BRAVE_SEARCH_API_KEY
+  # base_url: http://127.0.0.1:8888
+  # engine_id: ""
+budget:
+  max_cost_usd: 0
+  max_total_tokens: 0
+  max_model_calls: 0
+  warn_at_fraction: 0.8
 memory:
   enabled: true
   auto_save: true

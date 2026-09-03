@@ -99,3 +99,13 @@ class LLMProvider(ABC):
     def last_usage(self) -> ProviderUsage:
         """Return usage accumulated during the current provider call."""
         return ProviderUsage()
+
+    def reset_usage(self) -> None:
+        """Forget the previous call's usage.
+
+        Needed because an adapter is no longer built and thrown away per call:
+        :mod:`daino.providers.pool` keeps warm instances, and a reused one that
+        still carried the last borrower's counters would report them again for a
+        request that failed before producing any of its own.
+        """
+        return None

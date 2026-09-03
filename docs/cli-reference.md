@@ -146,4 +146,24 @@ See [Deployment](deployment.md) for target configuration and safety behavior.
 | `daino logs --mission <id>` | Filter audit events to one mission |
 
 OpenTelemetry export is optional and installed with the `otel` package extra. Audit logs and
-database events remain local unless you deliberately configure an exporter.
+database events remain local unless you deliberately configure an exporter. With
+`observability.otel_endpoint` set, spans are emitted around every model call, loop step, tool
+execution, and delegation, carrying identity, token counts, latency and cost — never prompts or
+file contents.
+
+## Evals
+
+| Command | Purpose |
+|---|---|
+| `daino eval list` | Show every case and whether it needs a model |
+| `daino eval run` | Run the model-free retrieval and sizing cases |
+| `daino eval run --suite retrieval` | Limit to one suite |
+| `daino eval run --tag graph` | Limit to cases carrying a tag |
+| `daino eval run --case <id>` | Run one case |
+| `daino eval run --tasks --model <profile>` | Include end-to-end cases against a real model |
+| `daino eval run --json` | Emit machine-readable results |
+
+`daino eval run` exits non-zero when anything failed or could not run, so it works as a CI gate.
+Task cases are opt-in because each drives a real model against a real repository and costs money.
+Add your own suites under `.daino/evals/`; a project suite replaces a built-in one of the same
+name. See [evals](evals.md).

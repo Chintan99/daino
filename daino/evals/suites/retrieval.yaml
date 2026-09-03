@@ -1,0 +1,126 @@
+name: retrieval
+description: >
+  Pins the ranking constants in daino/context/retrieval.py. Each case is a small
+  synthetic repository plus one task, and asserts which files the ranking chose
+  and which it left out. These run with no model and no network, so they belong
+  in CI: the constants were tuned against real failures and had, until now, no
+  way to be checked.
+
+cases:
+  - id: import-neighbour-beats-an-unrelated-file
+    kind: retrieval
+    description: A file the scope imports is the nearest thing to it.
+    tags: [graph]
+    instruction: Fix the proration arithmetic in the invoice total.
+    required: [billing/invoice.py]
+    files:
+      billing/invoice.py: |
+        from billing.proration import prorate
+
+        def total(items):
+            return sum(prorate(item) for item in items)
+      billing/proration.py: |
+        def prorate(item):
+            return item.amount
+      shipping/labels.py: |
+        def print_label(order):
+            return order.id
+    retrieval:
+      includes: [billing/proration.py]
+      excludes: [shipping/labels.py]
+      top: [billing/proration.py]
+      top_n: 1
+
+  - id: reverse-edges-are-followed-too
+    kind: retrieval
+    description: A caller of the file being changed is context for changing it.
+    tags: [graph]
+    instruction: Change the signature of prorate.
+    required: [billing/proration.py]
+    files:
+      billing/proration.py: |
+        def prorate(item):
+            return item.amount
+      billing/invoice.py: |
+        from billing.proration import prorate
+
+        def total(items):
+            return sum(prorate(item) for item in items)
+      docs/notes.md: |
+        Some prose about billing.
+    retrieval:
+      includes: [billing/invoice.py]
+      top: [billing/invoice.py]
+      top_n: 1
+
+  - id: a-test-of-the-subject-ranks-with-its-subject
+    kind: retrieval
+    description: The test that covers the file being changed is worth having.
+    tags: [tests]
+    instruction: Fix the discount calculation.
+    required: [pricing/discount.py]
+    files:
+      pricing/discount.py: |
+        def apply_discount(amount, percent):
+            return amount - percent
+      tests/test_discount.py: |
+        from pricing.discount import apply_discount
+
+        def test_apply_discount():
+            assert apply_discount(100, 10) == 90
+      tests/test_shipping.py: |
+        def test_shipping():
+            assert True
+    retrieval:
+      includes: [tests/test_discount.py]
+      # Both tests are reachable as directory siblings, so the assertion is
+      # about order, not membership: _TEST_OF_SUBJECT_OFFSET must keep the
+      # relevant test above the one _UNRELATED_TEST_PENALTY pushes down, which
+      # is what decides which of them the budget actually reaches.
+      order: ["tests/test_discount.py > tests/test_shipping.py"]
+      top: [tests/test_discount.py]
+      top_n: 1
+
+  - id: a-named-symbol-pulls-in-what-defines-it
+    kind: retrieval
+    description: A planner that names a symbol should get the file defining it.
+    tags: [symbols]
+    instruction: Make the retry backoff exponential.
+    symbols: [retry_with_backoff]
+    files:
+      core/retry.py: |
+        def retry_with_backoff(fn, attempts):
+            return fn()
+      core/http.py: |
+        def get(url):
+            return url
+      README.md: |
+        A project.
+    retrieval:
+      includes: [core/retry.py]
+      top: [core/retry.py]
+      top_n: 1
+
+  - id: lexical-matches-are-weaker-than-graph-edges
+    kind: retrieval
+    description: >
+      A file that merely mentions the words ranks below one the scope actually
+      imports. This is what the gap between _IMPORTS_SEED and _LEXICAL encodes.
+    tags: [ranking]
+    instruction: Fix the webhook signature verification.
+    required: [webhooks/handler.py]
+    files:
+      webhooks/handler.py: |
+        from webhooks.signature import verify
+
+        def handle(request):
+            return verify(request)
+      webhooks/signature.py: |
+        def verify(request):
+            return True
+      docs/webhook_signature_guide.md: |
+        How webhook signature verification works in this project.
+    retrieval:
+      includes: [webhooks/signature.py]
+      top: [webhooks/signature.py]
+      top_n: 1

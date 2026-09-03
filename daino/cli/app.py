@@ -24,6 +24,7 @@ from daino.config import (
     config_path,
     find_project_root,
     load_settings,
+    paths,
     save_settings,
     set_value,
 )
@@ -65,6 +66,7 @@ checkpoints_app = typer.Typer(help="Create and restore workspace checkpoints.")
 deploy_app = typer.Typer(help="Inspect and deploy versioned Docker Compose releases.")
 playbooks_app = typer.Typer(help="Discover and run versioned engineering playbooks.")
 infra_app = typer.Typer(help="Validate and apply Terraform/OpenTofu projects.")
+evals_app = typer.Typer(help="Measure whether the agent finishes tasks, not only whether it runs.")
 app.add_typer(config_app, name="config")
 app.add_typer(providers_app, name="providers")
 app.add_typer(models_app, name="models")
@@ -75,6 +77,7 @@ app.add_typer(checkpoints_app, name="checkpoints")
 app.add_typer(deploy_app, name="deploy")
 app.add_typer(playbooks_app, name="playbooks")
 app.add_typer(infra_app, name="infra")
+app.add_typer(evals_app, name="eval")
 
 
 def _root() -> Path:
@@ -142,6 +145,7 @@ KNOWN_SUBCOMMANDS = frozenset(
         "deploy",
         "playbooks",
         "infra",
+        "eval",
         "ps",
         "kill",
     }
@@ -1341,3 +1345,140 @@ def _install_crash_handling(project: Path | None) -> None:
     except Exception:  # noqa: BLE001 - diagnostics must never stop the command
         root = project or Path.cwd()
     crashlog.install(root)
+
+
+@evals_app.command("list")
+def eval_list() -> None:
+    """Show every eval case that is available, and any suite that will not load."""
+    from daino.evals import load_suites
+
+    root = _root() if paths.is_project(_root()) else None
+    suites, problems = load_suites(root)
+    for problem in problems:
+        console.print(f"[yellow]![/yellow] {problem}")
+    if not suites:
+        console.print("No eval suites found.")
+        return
+    table = Table(title="Eval cases")
+    table.add_column("Suite")
+    table.add_column("Case")
+    table.add_column("Kind")
+    table.add_column("Needs a model")
+    table.add_column("Description")
+    for suite in suites:
+        for case in suite.cases:
+            table.add_row(
+                suite.name,
+                case.id,
+                case.kind,
+                "yes" if case.needs_a_model else "no",
+                " ".join((case.description or "").split())[:70],
+            )
+    console.print(table)
+
+
+@evals_app.command("run")
+def eval_run(
+    suite: Annotated[
+        list[str] | None,
+        typer.Option("--suite", help="Limit to these suites. Repeatable."),
+    ] = None,
+    case: Annotated[
+        list[str] | None,
+        typer.Option("--case", help="Limit to these case ids. Repeatable."),
+    ] = None,
+    tag: Annotated[
+        list[str] | None, typer.Option("--tag", help="Limit to cases with these tags.")
+    ] = None,
+    tasks: Annotated[
+        bool,
+        typer.Option(
+            "--tasks",
+            help="Include end-to-end task cases. These call a real model and cost money.",
+        ),
+    ] = False,
+    model: Annotated[
+        str,
+        typer.Option("--model", help="Model profile to run task cases against."),
+    ] = "",
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Emit machine-readable results.")
+    ] = False,
+) -> None:
+    """Run the eval suites.
+
+    Offline by default. The retrieval and sizing kinds need no model and no
+    network, which is what makes them suitable for CI — and they cover the
+    ranking constants and sizing thresholds that nothing else tests. Task cases
+    are opt-in because each one drives a real model against a real repository.
+    """
+    from daino.evals import load_suites, render_report, run_cases, select_cases
+
+    root = _root()
+    project = root if paths.is_project(root) else None
+    suites, problems = load_suites(project)
+    for problem in problems:
+        console.print(f"[yellow]![/yellow] {problem}")
+    kinds = ["retrieval", "sizing", "task"] if tasks else ["retrieval", "sizing"]
+    selected = select_cases(
+        suites,
+        suite_names=list(suite or []),
+        kinds=kinds,
+        tags=list(tag or []),
+        case_ids=list(case or []),
+    )
+    if not selected:
+        console.print("No eval cases matched.")
+        raise typer.Exit(code=1)
+    settings = None
+    if tasks:
+        if project is None:
+            console.print(
+                "[red]Task cases need a configured project[/red] — run them from a "
+                "directory where `daino init` has been run, so a provider is available."
+            )
+            raise typer.Exit(code=2)
+        _, settings, _ = _context()
+    def announce(_suite: Any, item: Any, outcome: Any) -> None:
+        mark = "[green]✓[/green]" if outcome.passed else (
+            "[yellow]~[/yellow]" if outcome.skipped else "[red]✗[/red]"
+        )
+        console.print(f"{mark} {item.id} ({outcome.duration_seconds:.1f}s)")
+
+    results = asyncio.run(
+        run_cases(selected, settings=settings, profile=model, on_result=announce)
+    )
+    if as_json:
+        _json(
+            [
+                {
+                    "suite": item.suite,
+                    "model": item.model,
+                    "passed": item.passed,
+                    "failed": item.failed,
+                    "errored": item.errored,
+                    "success_rate": item.success_rate,
+                    "cost_usd": item.total_cost_usd,
+                    "total_tokens": item.total_tokens,
+                    "cases": [
+                        {
+                            "id": case_result.case_id,
+                            "kind": case_result.kind,
+                            "passed": case_result.passed,
+                            "failures": case_result.failures,
+                            "error": case_result.error,
+                            "steps": case_result.steps,
+                            "duration_seconds": case_result.duration_seconds,
+                        }
+                        for case_result in item.results
+                    ],
+                }
+                for item in results
+            ]
+        )
+    else:
+        console.print()
+        console.print(render_report(results))
+    # A non-zero exit is what makes this usable as a CI gate.
+    if any(item.failed or item.errored for item in results):
+        raise typer.Exit(code=1)

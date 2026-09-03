@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -134,6 +135,23 @@ MODE_DESCRIPTIONS: dict[InteractionMode, str] = {
     InteractionMode.SESSION: "approval-gated agent commands are allowed for this session",
     InteractionMode.FULL: "normal in-scope work and mission gates run without prompts",
 }
+
+
+#: ``@image:screenshots/bug.png`` in a prompt, the same shape as the ``@file:``
+#: and ``@symbol:`` references the input already completes. A dedicated marker
+#: rather than sniffing paths out of prose: attaching a megabyte of base64
+#: because the user mentioned a filename would be an expensive surprise.
+_IMAGE_REFERENCE = re.compile(r"@image:(\S+)")
+
+
+def _image_references(text: str) -> list[str]:
+    """The image paths a prompt attached.
+
+    The reference is left in the prompt rather than stripped out, matching how
+    ``@file:`` behaves: the transcript then shows what the user actually typed,
+    and the filename is context the model can use.
+    """
+    return [match.group(1).rstrip(".,;") for match in _IMAGE_REFERENCE.finditer(text)]
 
 
 class WorkspaceScreen(Screen[None]):
@@ -314,6 +332,19 @@ class WorkspaceScreen(Screen[None]):
             f"@playbook:{item.name}" for item in PlaybookLoader(self.context.root).list()
         )
         self.app.call_from_thread(self.query_one(PromptInput).set_references, references)
+        self.app.call_from_thread(
+            self.query_one(PromptInput).set_custom_commands,
+            [
+                (
+                    command.invocation,
+                    f"{command.argument_hint}  {command.description}".strip()
+                    or "project command",
+                )
+                for command in sorted(
+                    self.missions.slash_commands().values(), key=lambda item: item.name
+                )
+            ],
+        )
 
     def _update_context_files(self) -> None:
         if not self.session_id:
@@ -1236,7 +1267,21 @@ class WorkspaceScreen(Screen[None]):
         elif command in {"/bye", "/quit", "/exit"}:
             self.action_safe_quit()
         else:
-            self.notify(f"Unknown command: {command}. Use /help.", severity="warning")
+            # A name Daino does not own may be one the project defined. Checked
+            # last so a user-authored file can never shadow a built-in command
+            # and quietly change what /diff or /model does.
+            expanded = self.missions.expand_command(command, arguments)
+            if expanded is None:
+                self.notify(f"Unknown command: {command}. Use /help.", severity="warning")
+                return
+            await self._echo_user(raw)
+            self._chat_previous_status = self.active_status
+            self._chat_running = True
+            self.active_status = "Working"
+            self.query_one("#task-checklist", TaskChecklist).clear_changes()
+            self._set_activity("thinking", "running project command")
+            self.request_refresh()
+            self.run_chat_agent(expanded)
 
     async def new_session(self, title: str = "New conversation") -> None:
         self.session_id = self.missions.create_session(title)
@@ -1370,6 +1415,7 @@ class WorkspaceScreen(Screen[None]):
                 self.session_id,
                 profile_override=self.providers.session_profile(self.session_id),
                 approve=self._approve_command,
+                attachments=_image_references(instruction),
             )
             # The service persisted the answer, each diff, and any verification
             # result, so reload rather than echo them a second time.

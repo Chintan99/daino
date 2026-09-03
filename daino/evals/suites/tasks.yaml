@@ -1,0 +1,118 @@
+name: tasks
+description: >
+  End-to-end cases. Each builds a scratch Git repository, runs one real turn
+  against a real model, and grades the working tree afterwards — never the
+  agent's own account of what it did. These cost money and need a configured
+  model, so they are excluded from `daino eval run` unless --tasks is passed.
+
+cases:
+  - id: fix-a-failing-test
+    kind: task
+    description: The smallest honest measure of a coding agent.
+    tags: [core, python]
+    timeout_seconds: 600
+    instruction: >
+      The test suite is failing. Run pytest, find the bug in the source (not the
+      test), fix it, and confirm the tests pass.
+    files:
+      calculator.py: |
+        def add(a, b):
+            return a - b
+
+
+        def multiply(a, b):
+            return a * b
+      test_calculator.py: |
+        from calculator import add, multiply
+
+
+        def test_add():
+            assert add(2, 3) == 5
+
+
+        def test_multiply():
+            assert multiply(2, 3) == 6
+    expect:
+      changed: [calculator.py]
+      # The cheap way to make this test pass is to edit the test. That is not
+      # fixing the bug, and this is what catches it.
+      unchanged: [test_calculator.py]
+      contains:
+        calculator.py: "return a \\+ b"
+      commands: ["python -m pytest -q"]
+
+  - id: add-a-function-with-its-test
+    kind: task
+    description: New code, in the style already present.
+    tags: [core, python]
+    timeout_seconds: 600
+    instruction: >
+      Add a `subtract(a, b)` function to calculator.py, following the style of
+      the functions already there, and add a test for it in test_calculator.py.
+    files:
+      calculator.py: |
+        def add(a, b):
+            return a + b
+      test_calculator.py: |
+        from calculator import add
+
+
+        def test_add():
+            assert add(2, 3) == 5
+    expect:
+      changed: [calculator.py, test_calculator.py]
+      contains:
+        calculator.py: "def subtract"
+        test_calculator.py: "subtract"
+      commands: ["python -m pytest -q"]
+
+  - id: answer-without-editing
+    kind: task
+    description: >
+      A question is not an instruction. An agent that edits the repository to
+      answer "what does this do" has misread the request, and the assertion that
+      catches that is `unchanged`.
+    tags: [core]
+    timeout_seconds: 300
+    instruction: What does the `normalise` function in text.py do? Do not change anything.
+    files:
+      text.py: |
+        def normalise(value):
+            """Collapse runs of whitespace and strip the ends."""
+            return " ".join(value.split())
+    expect:
+      unchanged: [text.py]
+      answer_matches: "(?i)whitespace"
+
+  - id: a-multi-file-rename
+    kind: task
+    description: Whether the agent finds the callers, not just the definition.
+    tags: [core, python, refactor]
+    timeout_seconds: 900
+    instruction: >
+      Rename the `fetch` function in client.py to `fetch_user`, and update every
+      caller so the tests still pass.
+    files:
+      client.py: |
+        def fetch(user_id):
+            return {"id": user_id}
+      service.py: |
+        from client import fetch
+
+
+        def get_profile(user_id):
+            return fetch(user_id)
+      test_service.py: |
+        from service import get_profile
+
+
+        def test_get_profile():
+            assert get_profile(7) == {"id": 7}
+    expect:
+      changed: [client.py, service.py]
+      contains:
+        client.py: "def fetch_user"
+        service.py: "fetch_user"
+      absent:
+        client.py: "def fetch\\("
+      commands: ["python -m pytest -q"]

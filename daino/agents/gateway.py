@@ -9,6 +9,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
+from daino.agents.budget import BudgetLedger, BudgetSnapshot, RunBudget
 from daino.agents.tokens import CALIBRATION, estimate_message, message_chars
 from daino.config.models import ProviderConfig, Settings
 from daino.context.profiles import CapabilityEnvelope, ModelExecutionProfile
@@ -16,10 +17,12 @@ from daino.events import AgentRoleChanged, EventBus, ModelReasoningChunk, ModelS
 from daino.exceptions import ProviderError
 from daino.model_router import ModelRole, ModelRouter, RoutingContext
 from daino.model_router.router import ModelSelection
+from daino.observability import span
 from daino.persistence import Database
 from daino.persistence.models import ModelCall
 from daino.providers import create_provider
-from daino.providers.base import ProviderUsage
+from daino.providers.base import LLMProvider, ProviderUsage
+from daino.providers.pool import POOL, ProviderPool
 from daino.schemas import LLMResponse, Message
 from daino.utils.ids import new_id
 
@@ -43,12 +46,22 @@ class ModelGateway:
         events: EventBus | None = None,
         *,
         profile_override: str = "",
+        budgets: BudgetLedger | None = None,
+        pool: ProviderPool | None = None,
     ) -> None:
         self.settings = settings
         self.database = database
         self.router = ModelRouter(settings)
         self.events = events
         self.profile_override = profile_override
+        #: Spend ceilings, keyed by mission. Shared with every gateway derived
+        #: from this one, so a team's nine members draw on one account rather
+        #: than nine — see :mod:`daino.agents.budget`.
+        self.budgets = budgets or BudgetLedger(settings.budget, events)
+        #: Warm provider adapters. Process-wide by default: a gateway is rebuilt
+        #: per pinned profile and per turn, so a per-gateway pool would be empty
+        #: on the very call it exists to speed up.
+        self.pool = pool or POOL
 
     def with_profile(self, profile_override: str) -> ModelGateway:
         """Return a gateway pinned to one model profile for every role.
@@ -64,7 +77,57 @@ class ModelGateway:
             self.database,
             self.events,
             profile_override=profile_override,
+            # Deliberately shared, not copied: a pinned session is the same run,
+            # and giving it a fresh budget would silently double the ceiling.
+            budgets=self.budgets,
+            pool=self.pool,
         )
+
+    def budget_snapshot(self, mission_id: str) -> BudgetSnapshot | None:
+        """What this mission has spent so far, or ``None`` when uncapped."""
+        return self.budgets.snapshot(mission_id)
+
+    def release_budget(self, mission_id: str) -> BudgetSnapshot | None:
+        """Close a finished mission's account and return its final state."""
+        return self.budgets.release(mission_id)
+
+    def _budget(self, mission_id: str) -> RunBudget | None:
+        """The mission's budget, checked before the call it is about to admit."""
+        budget = self.budgets.budget_for(mission_id)
+        if budget is not None:
+            budget.check()
+        return budget
+
+    @staticmethod
+    def _charge(budget: RunBudget | None, usage: ProviderUsage) -> None:
+        if budget is not None:
+            budget.record(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                cached_tokens=usage.cached_tokens,
+                cost=usage.cost,
+            )
+
+    async def _acquire(
+        self, selection: ModelSelection, mission_id: str, role: ModelRole
+    ) -> LLMProvider:
+        """Borrow a warm adapter for one call and arm its reasoning channel."""
+        provider_config = self.settings.providers.get(selection.profile.provider)
+        if provider_config is None:
+            raise RuntimeError(
+                f"Model {selection.profile_name} references missing provider "
+                f"{selection.profile.provider}"
+            )
+        provider = await self.pool.acquire(
+            selection.profile.provider,
+            _resolved_config(provider_config, selection),
+            # Resolved from this module's namespace on every call rather than
+            # captured once, so a substituted factory is honoured — and, because
+            # the pool keys on it, never served an adapter another factory built.
+            factory=create_provider,
+        )
+        self._attach_reasoning_handler(provider, mission_id, role, selection)
+        return provider
 
     def _emit_selection(
         self,
@@ -140,6 +203,24 @@ class ModelGateway:
         if tools:
             chars += len(json.dumps(tools, separators=(",", ":")))
         CALIBRATION.observe(model, chars, usage.input_tokens)
+
+    def supports_vision(
+        self,
+        role: ModelRole,
+        routing_context: RoutingContext | None = None,
+        *,
+        profile_override: str | None = None,
+    ) -> bool:
+        """Whether the model this role routes to can be shown an image."""
+        try:
+            selection = self.router.select(
+                role,
+                routing_context,
+                profile_override=profile_override or self.profile_override,
+            )
+        except Exception:  # noqa: BLE001 - an unroutable role cannot see anything
+            return False
+        return bool(getattr(selection.profile, "vision", False))
 
     def selected_model(
         self,
@@ -253,16 +334,11 @@ class ModelGateway:
                 selection.profile.provider,
                 selection.profile.model,
             )
-            provider_config = self.settings.providers.get(selection.profile.provider)
-            if provider_config is None:
-                raise RuntimeError(
-                    f"Model {selection.profile_name} references missing provider "
-                    f"{selection.profile.provider}"
-                )
-            provider = create_provider(
-                selection.profile.provider, _resolved_config(provider_config, selection)
-            )
-            self._attach_reasoning_handler(provider, mission_id, role, selection)
+            # Before the provider is borrowed, so an exhausted run costs neither
+            # a connection nor a secret lookup. Propagates out of the failover
+            # loop deliberately: a ceiling is not a provider fault to fail over.
+            budget = self._budget(mission_id)
+            provider = await self._acquire(selection, mission_id, role)
             record = ModelCall(
                 id=new_id("model-call"),
                 mission_id=mission_id,
@@ -274,22 +350,34 @@ class ModelGateway:
                 success=False,
             )
             started = monotonic()
-            try:
-                fitted = _fit_messages(messages, _input_budget(selection))
-                result = await provider.structured_complete(fitted, schema)
-                record.success = True
-            except ProviderError as exc:
-                last_failure = exc
-            finally:
-                usage = _provider_usage(provider)
-                record.input_tokens = usage.input_tokens
-                record.output_tokens = usage.output_tokens
-                record.cached_tokens = usage.cached_tokens
-                record.estimated_cost = usage.cost
-                record.latency_ms = (monotonic() - started) * 1000
-                await provider.close()
-                with self.database.session() as session:
-                    session.add(record)
+            transport_failure = False
+            with span(
+                "model.structured",
+                **_call_attributes(mission_id, role, selection),
+                **{"gen_ai.output.schema": schema.__name__},
+            ) as recording:
+                try:
+                    fitted = _fit_messages(messages, _input_budget(selection))
+                    result = await provider.structured_complete(fitted, schema)
+                    record.success = True
+                except ProviderError as exc:
+                    last_failure = exc
+                    transport_failure = True
+                finally:
+                    usage = _provider_usage(provider)
+                    record.input_tokens = usage.input_tokens
+                    record.output_tokens = usage.output_tokens
+                    record.cached_tokens = usage.cached_tokens
+                    record.estimated_cost = usage.cost
+                    record.latency_ms = (monotonic() - started) * 1000
+                    # Returned rather than closed, so the next step reuses the
+                    # connection. A transport failure discards instead: the
+                    # socket that just failed is the one a reuse would hand back.
+                    await self.pool.release(provider, discard=transport_failure)
+                    self._charge(budget, usage)
+                    _record_usage_span(recording, record)
+                    with self.database.session() as session:
+                        session.add(record)
             if record.success:
                 return result
         if last_failure is not None:
@@ -338,57 +426,69 @@ class ModelGateway:
                 selection.profile.provider,
                 selection.profile.model,
             )
-            provider_config = self.settings.providers.get(selection.profile.provider)
-            if provider_config is None:
-                raise RuntimeError(f"Missing provider {selection.profile.provider}")
-            provider = create_provider(
-                selection.profile.provider, _resolved_config(provider_config, selection)
-            )
-            self._attach_reasoning_handler(provider, mission_id, role, selection)
+            budget = self._budget(mission_id)
+            provider = await self._acquire(selection, mission_id, role)
             effective_tools = tools if provider.supports_tools() else None
+            # A text-only model answers an image part with a hard request error,
+            # not a degraded reply, so the images come off here rather than
+            # failing the turn. What replaces them is a note, because a model
+            # told nothing would answer confidently about a picture it never saw.
+            sendable = _without_unusable_images(messages, selection)
             response: LLMResponse | None = None
             fitted: list[Message] = []
-            try:
-                fitted = _fit_messages(messages, _input_budget(selection, effective_tools))
-                response = await provider.complete(
-                    fitted, tools=effective_tools, tool_choice=tool_choice
-                )
-            except ProviderError as exc:
-                last_failure = exc
-            finally:
-                usage = _provider_usage(provider)
-                # What the provider charged for the request just sent is the
-                # only honest measurement of how this model tokenizes this
-                # workload. Feeding it back is what stops every budget in the
-                # agent from being computed against a guess.
-                self._calibrate(selection.profile.model, fitted, effective_tools, usage)
-                await provider.close()
-                with self.database.session() as session:
-                    session.add(
-                        ModelCall(
-                            id=new_id("model-call"),
-                            mission_id=mission_id,
-                            role=role.value,
-                            provider=selection.profile.provider,
-                            model=selection.profile.model,
-                            selection_reason=selection.reason,
-                            included_files=included_files or [],
-                            input_tokens=(
-                                usage.input_tokens or (response.input_tokens if response else 0)
-                            ),
-                            output_tokens=(
-                                usage.output_tokens or (response.output_tokens if response else 0)
-                            ),
-                            cached_tokens=(
-                                usage.cached_tokens or (response.cached_tokens if response else 0)
-                            ),
-                            latency_ms=response.latency_ms if response else 0,
-                            # This column predates provider-side accounting. When
-                            # available it now stores the actual charged amount.
-                            estimated_cost=usage.cost,
-                            success=response is not None,
-                        )
+            transport_failure = False
+            with span(
+                "model.complete",
+                **_call_attributes(mission_id, role, selection),
+                **{"gen_ai.request.tools": len(effective_tools or ())},
+            ) as recording:
+                try:
+                    fitted = _fit_messages(sendable, _input_budget(selection, effective_tools))
+                    response = await provider.complete(
+                        fitted, tools=effective_tools, tool_choice=tool_choice
                     )
+                except ProviderError as exc:
+                    last_failure = exc
+                    transport_failure = True
+                finally:
+                    usage = _provider_usage(provider)
+                    # What the provider charged for the request just sent is the
+                    # only honest measurement of how this model tokenizes this
+                    # workload. Feeding it back is what stops every budget in the
+                    # agent from being computed against a guess.
+                    self._calibrate(selection.profile.model, fitted, effective_tools, usage)
+                    await self.pool.release(provider, discard=transport_failure)
+                    self._charge(budget, usage)
+                    record = ModelCall(
+                        id=new_id("model-call"),
+                        mission_id=mission_id,
+                        role=role.value,
+                        provider=selection.profile.provider,
+                        model=selection.profile.model,
+                        selection_reason=selection.reason,
+                        included_files=included_files or [],
+                        input_tokens=(
+                            usage.input_tokens or (response.input_tokens if response else 0)
+                        ),
+                        output_tokens=(
+                            usage.output_tokens or (response.output_tokens if response else 0)
+                        ),
+                        cached_tokens=(
+                            usage.cached_tokens or (response.cached_tokens if response else 0)
+                        ),
+                        latency_ms=response.latency_ms if response else 0,
+                        # This column predates provider-side accounting. When
+                        # available it now stores the actual charged amount.
+                        estimated_cost=usage.cost,
+                        success=response is not None,
+                    )
+                    _record_usage_span(recording, record)
+                    if response is not None:
+                        recording.set_attribute(
+                            "gen_ai.response.tool_calls", len(response.tool_calls)
+                        )
+                    with self.database.session() as session:
+                        session.add(record)
             if response is not None:
                 return response
         if last_failure is not None:
@@ -418,45 +518,49 @@ class ModelGateway:
                 selection.profile.provider,
                 selection.profile.model,
             )
-            provider_config = self.settings.providers.get(selection.profile.provider)
-            if provider_config is None:
-                raise RuntimeError(f"Missing provider {selection.profile.provider}")
-            provider = create_provider(
-                selection.profile.provider, _resolved_config(provider_config, selection)
-            )
-            self._attach_reasoning_handler(provider, mission_id, role, selection)
+            budget = self._budget(mission_id)
+            provider = await self._acquire(selection, mission_id, role)
             success = False
             emitted = False
             started = monotonic()
-            try:
-                fitted = _fit_messages(messages, _input_budget(selection))
-                async for chunk in provider.stream(fitted):
-                    emitted = True
-                    yield chunk
-                success = True
-            except ProviderError as exc:
-                last_failure = exc
-            finally:
-                usage = _provider_usage(provider)
-                await provider.close()
-                with self.database.session() as session:
-                    session.add(
-                        ModelCall(
-                            id=new_id("model-call"),
-                            mission_id=mission_id,
-                            role=role.value,
-                            provider=selection.profile.provider,
-                            model=selection.profile.model,
-                            selection_reason=selection.reason,
-                            included_files=included_files or [],
-                            input_tokens=usage.input_tokens,
-                            output_tokens=usage.output_tokens,
-                            cached_tokens=usage.cached_tokens,
-                            latency_ms=(monotonic() - started) * 1000,
-                            estimated_cost=usage.cost,
-                            success=success,
-                        )
+            transport_failure = False
+            with span("model.stream", **_call_attributes(mission_id, role, selection)) as recording:
+                try:
+                    fitted = _fit_messages(messages, _input_budget(selection))
+                    async for chunk in provider.stream(fitted):
+                        emitted = True
+                        yield chunk
+                    success = True
+                except ProviderError as exc:
+                    last_failure = exc
+                    transport_failure = True
+                finally:
+                    usage = _provider_usage(provider)
+                    # A generator abandoned mid-stream (the user cancelled) has
+                    # a half-read response body on the wire, so it is discarded
+                    # rather than returned to the pool for the next borrower.
+                    await self.pool.release(
+                        provider, discard=transport_failure or not success
                     )
+                    self._charge(budget, usage)
+                    record = ModelCall(
+                        id=new_id("model-call"),
+                        mission_id=mission_id,
+                        role=role.value,
+                        provider=selection.profile.provider,
+                        model=selection.profile.model,
+                        selection_reason=selection.reason,
+                        included_files=included_files or [],
+                        input_tokens=usage.input_tokens,
+                        output_tokens=usage.output_tokens,
+                        cached_tokens=usage.cached_tokens,
+                        latency_ms=(monotonic() - started) * 1000,
+                        estimated_cost=usage.cost,
+                        success=success,
+                    )
+                    _record_usage_span(recording, record)
+                    with self.database.session() as session:
+                        session.add(record)
             if success:
                 return
             # Once text reached the user, retrying from another model would
@@ -466,6 +570,79 @@ class ModelGateway:
         if last_failure is not None:
             raise last_failure
         raise ProviderError(f"No usable model provider is configured for {role.value}")
+
+
+def _without_unusable_images(
+    messages: list[Message], selection: ModelSelection
+) -> list[Message]:
+    """Drop image parts a model cannot read, leaving a note in their place.
+
+    Returns the original list untouched when there is nothing to strip, which is
+    almost every call — this must not copy a long transcript for nothing.
+    """
+    if getattr(selection.profile, "vision", False):
+        return messages
+    if not any(message.images for message in messages):
+        return messages
+    stripped: list[Message] = []
+    for message in messages:
+        if not message.images:
+            stripped.append(message)
+            continue
+        described = "; ".join(
+            image.description or f"an image ({image.media_type})" for image in message.images
+        )
+        note = (
+            f"[{len(message.images)} image(s) were attached here — {described} — but "
+            f"{selection.profile.model} cannot read images, so they were not sent. "
+            "Ask the user to describe them, or route this turn to a vision-capable model.]"
+        )
+        stripped.append(
+            message.model_copy(
+                update={
+                    "images": [],
+                    "content": f"{message.content}\n\n{note}" if message.content else note,
+                }
+            )
+        )
+    return stripped
+
+
+def _call_attributes(
+    mission_id: str, role: ModelRole, selection: ModelSelection
+) -> dict[str, Any]:
+    """Identity of one model call, in OpenTelemetry's GenAI attribute names.
+
+    Deliberately no prompt, no completion, no file contents. A trace collector
+    is usually the least access-controlled sink in a deployment, and a span that
+    carried the transcript would ship the user's source code to it on every
+    step. What is here is what a cost or latency question actually needs.
+    """
+    return {
+        "daino.mission_id": mission_id,
+        "daino.role": role.value,
+        "daino.profile": selection.profile_name,
+        "daino.selection_reason": selection.reason,
+        "gen_ai.system": selection.profile.provider,
+        "gen_ai.request.model": selection.profile.model,
+    }
+
+
+def _record_usage_span(recording: Any, record: ModelCall) -> None:
+    """Fold a finished call's accounting onto its span."""
+    from daino.observability.tracing import set_attributes
+
+    set_attributes(
+        recording,
+        {
+            "gen_ai.usage.input_tokens": record.input_tokens,
+            "gen_ai.usage.output_tokens": record.output_tokens,
+            "gen_ai.usage.cached_tokens": record.cached_tokens,
+            "daino.cost_usd": record.estimated_cost,
+            "daino.latency_ms": record.latency_ms,
+            "daino.success": record.success,
+        },
+    )
 
 
 def _resolved_config(provider_config: ProviderConfig, selection: ModelSelection) -> ProviderConfig:

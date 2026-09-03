@@ -6,8 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from daino.config import load_settings, save_settings, set_value
-from daino.config.models import ProviderConfig, Settings
+from daino.config.models import ProviderConfig, SecurityConfig, Settings
 from daino.security import PolicyEngine, redact, resolve_secret, store_project_secret
+from daino.security.commands import CommandGate, Verdict
 
 
 def test_config_round_trip_and_dotted_update(tmp_path: Path) -> None:
@@ -70,3 +71,41 @@ def test_install_and_network_require_approval() -> None:
     assert policy.command_decision("pip install httpx").requires_approval
     assert policy.command_decision("curl https://example.com").requires_approval
     assert policy.command_decision("pytest").allowed
+
+
+def test_bare_env_is_no_longer_unattended() -> None:
+    """A full environment dump reaches the transcript, so it has to be asked about.
+
+    ``redact`` masks the secrets Daino manages; it cannot mask an API key the
+    user exported into their own shell, and the dump is persisted, rendered in
+    two clients, and replayed to the model as context.
+    """
+    gate = CommandGate()
+    decision = gate.decide("env")
+    assert decision.verdict is Verdict.ASK
+    assert decision.signature == "env"
+
+
+def test_env_prefix_is_judged_by_the_program_it_runs() -> None:
+    """``env VAR=value pytest`` is an ordinary test run, not an environment dump."""
+    gate = CommandGate()
+    assert gate.decide("env PYTHONPATH=src pytest -q").verdict is Verdict.ALLOW
+    assert gate.decide("env -i FOO=bar python -m pytest").verdict is Verdict.ALLOW
+    # The approval memory keys on the real program, not on the wrapper.
+    assert gate.signature("env FOO=bar pip install httpx") == "pip install"
+
+
+def test_env_prefix_does_not_launder_an_unsafe_program() -> None:
+    gate = CommandGate()
+    assert gate.decide("env FOO=bar curl https://example.com").verdict is not Verdict.ALLOW
+
+
+def test_env_split_string_is_not_unwrapped() -> None:
+    """``-S`` re-parses its argument as a command line; do not try to model that."""
+    gate = CommandGate()
+    assert gate.decide("env -S 'pytest -q'").verdict is Verdict.ASK
+
+
+def test_denying_env_is_not_bypassed_by_the_prefix() -> None:
+    gate = CommandGate(SecurityConfig(denied_commands=["env"]))
+    assert gate.decide("env FOO=bar pytest").verdict is not Verdict.ALLOW

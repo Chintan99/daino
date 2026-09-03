@@ -130,6 +130,10 @@ class PromptInput(Vertical):
         self.history: list[str] = []
         self.history_index = 0
         self.references: list[str] = []
+        #: Project-defined commands, so a user's own ``/review-pr`` completes
+        #: alongside the built-ins rather than being something only they know is
+        #: there. Names as ``(name, hint)`` pairs, set by the workspace screen.
+        self.custom_commands: list[tuple[str, str]] = []
         self._paste_received = False
         #: Last rendered completion set, so an unchanged one costs nothing.
         self._suggestions: list[tuple[str, str]] = []
@@ -155,6 +159,9 @@ class PromptInput(Vertical):
 
     def set_references(self, references: list[str]) -> None:
         self.references = references
+
+    def set_custom_commands(self, commands: list[tuple[str, str]]) -> None:
+        self.custom_commands = commands
 
     def focus_prompt(self) -> None:
         self.query_one("#prompt", PromptTextArea).focus()
@@ -243,8 +250,15 @@ class PromptInput(Vertical):
                 for item in SLASH_COMMANDS
                 if item.name.startswith(token)
             ]
+            # After the built-ins, mirroring the dispatcher: a project command
+            # cannot shadow one of Daino's, so it should not appear to.
+            suggestions.extend(
+                (name, hint)
+                for name, hint in self.custom_commands
+                if name.startswith(token)
+            )
         elif token.startswith("@"):
-            builtins = ["@file:", "@symbol:", "@mission:", "@playbook:"]
+            builtins = ["@file:", "@symbol:", "@image:", "@mission:", "@playbook:"]
             values = [*builtins, *self.references]
             suggestions = [(item, "Attach reference") for item in values if item.startswith(token)][
                 :8

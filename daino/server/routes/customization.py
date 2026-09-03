@@ -7,20 +7,32 @@ way to reach any of it, so a session started in the GUI was stuck on the default
 autonomy policy with no view of the instructions or memory that were shaping its
 answers.
 
-Deliberately absent: skills, hooks, plugins, and MCP servers. D[Ai]NO implements
-none of them, and a settings card for a feature that does not exist is worse than
-its absence.
+Extensibility now has a card of its own. Hooks, MCP servers, skills, and
+user-defined slash commands are all real, all configured on disk, and all
+capable of failing quietly — a hook whose matcher does not compile, a server
+whose command is not installed, a skill with no description. ``/extensions``
+reports what loaded and what did not, because the alternative is a user
+wondering why the thing they configured is not happening.
+
+Read-only on purpose. A hook command runs through a shell and an MCP stdio server
+launches a process, so their files live in the state directory, which nothing
+running as the agent may write to. Editing them from a browser panel would
+reopen exactly the hole that placement closes.
+
+Plugins remain absent: a plugin is a bundle of the four things below, and a
+bundle format is only worth having once people are asking to share the parts.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from daino.hooks import HookEvent
 from daino.memory.instructions import (
     MAX_INSTRUCTION_BYTES,
     InstructionResolver,
@@ -262,6 +274,81 @@ def read_config(
         },
         "playbooks": _playbooks(state.root),
         "memory": _memory_counts(state),
+    }
+
+
+@router.get("/extensions")
+def read_extensions(state: Annotated[GuiState, Depends(get_state)]) -> dict[str, Any]:
+    """What the project extends the agent with, and what failed to load.
+
+    The problems list matters more than the inventory. Everything here fails
+    silently by design — a broken hook is skipped so it cannot block every edit,
+    an unreachable MCP server is dropped so it cannot stop a session — and
+    without somewhere to report that, "silently" would mean "invisibly".
+    """
+    missions = state.missions
+    extensions = missions.extensions(reload=True)
+    servers = missions.mcp_servers
+    registry = missions._mcp  # noqa: SLF001 - reporting on it, not driving it
+    connected = {status.name: status for status in (registry.statuses if registry else [])}
+    return {
+        "hooks": {
+            "sources": [str(path) for path in missions.hooks.sources],
+            "events": {
+                event.value: [
+                    {
+                        "name": item.label,
+                        "command": item.command,
+                        "matcher": item.matcher,
+                        "timeout": item.timeout,
+                        "enabled": item.enabled,
+                    }
+                    for item in missions.hooks.hooks.for_event(event)
+                ]
+                for event in HookEvent
+                if missions.hooks.hooks.for_event(event)
+            },
+            "problems": list(missions.hooks.problems),
+        },
+        "mcp": {
+            "sources": [str(path) for path in servers.sources],
+            "servers": [
+                {
+                    "name": name,
+                    "transport": config.transport,
+                    "target": config.command or config.url,
+                    "enabled": config.enabled,
+                    # Absent until the first turn connects them, which is why
+                    # this is three states rather than a boolean.
+                    "connected": (
+                        None if name not in connected else connected[name].connected
+                    ),
+                    "tool_count": connected[name].tool_count if name in connected else 0,
+                    "error": connected[name].error if name in connected else "",
+                }
+                for name, config in sorted(servers.servers.items())
+            ],
+            "problems": list(servers.problems),
+        },
+        "skills": [
+            {
+                "name": skill.name,
+                "description": skill.description,
+                "scope": "global" if skill.global_scope else "project",
+                "resources": list(skill.resources),
+            }
+            for skill in sorted(extensions.skills.values(), key=lambda item: item.name)
+        ],
+        "commands": [
+            {
+                "name": command.invocation,
+                "description": command.description,
+                "argument_hint": command.argument_hint,
+                "scope": "global" if command.global_scope else "project",
+            }
+            for command in sorted(extensions.commands.values(), key=lambda item: item.name)
+        ],
+        "problems": list(extensions.problems),
     }
 
 

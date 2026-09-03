@@ -15,6 +15,14 @@ import httpx
 
 from daino.schemas import ToolResult
 from daino.tools.commands import ApprovalCallback
+from daino.tools.search import (
+    USER_AGENT as _USER_AGENT,
+)
+from daino.tools.search import (
+    SearchBackend,
+    SearchBackendConfig,
+    build_backend,
+)
 
 DEFAULT_RESULTS = 5
 MAX_RESULTS = 10
@@ -24,10 +32,6 @@ MAX_DOWNLOAD_BYTES = 1_500_000
 MAX_REDIRECTS = 5
 REQUEST_TIMEOUT_SECONDS = 20.0
 
-_SEARCH_ENDPOINTS = (
-    "https://html.duckduckgo.com/html/",
-    "https://lite.duckduckgo.com/lite/",
-)
 _TEXT_CONTENT_TYPES = (
     "text/",
     "application/json",
@@ -36,14 +40,6 @@ _TEXT_CONTENT_TYPES = (
     "application/xhtml+xml",
 )
 _BLOCKED_HOSTNAMES = frozenset({"localhost", "localhost.localdomain"})
-_USER_AGENT = "Daino/0.4 (+local coding-agent web research)"
-#: DuckDuckGo's HTML/Lite endpoints return an empty challenge page to obvious bot
-#: User-Agents. A browser-like UA (used only for the search request) is what makes
-#: those endpoints actually return result links.
-_SEARCH_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
 
 Resolver = Callable[[str], Awaitable[list[str]]]
 
@@ -65,7 +61,17 @@ def _address_is_public(value: str) -> bool:
     return address.is_global
 
 
-async def _validated_url(url: str, resolver: Resolver) -> str:
+async def _validated_url(
+    url: str, resolver: Resolver, private_hosts: frozenset[str] = frozenset()
+) -> str:
+    """Reject anything that is not a public http(s) destination.
+
+    ``private_hosts`` is the one documented exception: a self-hosted search
+    instance the user explicitly configured. It names exact hostnames, is empty
+    for every hosted backend, and never widens to a range — a redirect away from
+    that host is validated normally, so a permitted instance cannot be used as a
+    hop into the rest of the network.
+    """
     if len(url) > 2_048:
         raise ValueError("URL is too long")
     parsed = urlparse(url)
@@ -76,6 +82,8 @@ async def _validated_url(url: str, resolver: Resolver) -> str:
     if parsed.username or parsed.password:
         raise ValueError("Credentials in URLs are not allowed")
     host = parsed.hostname.rstrip(".").casefold()
+    if host in private_hosts:
+        return url
     if host in _BLOCKED_HOSTNAMES or host.endswith((".localhost", ".local")):
         raise ValueError("Local and private network URLs are blocked")
     try:
@@ -266,11 +274,20 @@ class WebResearchTool:
         require_approval: bool = True,
         transport: httpx.AsyncBaseTransport | None = None,
         resolver: Resolver | None = None,
+        search_backend: SearchBackend | SearchBackendConfig | None = None,
     ) -> None:
         self.approve = approve
         self.require_approval = require_approval
         self.transport = transport
         self.resolver = resolver or _resolve_host
+        #: Where results come from. Defaults to the keyless DuckDuckGo scraper so
+        #: a fresh install can still look things up; an API-backed backend is a
+        #: configuration change rather than a code change.
+        self.backend = (
+            search_backend
+            if isinstance(search_backend, SearchBackend)
+            else build_backend(search_backend)
+        )
         self._approved_for_session = not require_approval
 
     async def _authorized(self, subject: str) -> str:
@@ -297,43 +314,42 @@ class WebResearchTool:
         if denied:
             return ToolResult(tool="web_search", success=False, error=denied)
         count = min(max(max_results or DEFAULT_RESULTS, 1), MAX_RESULTS)
-        last_error = (
-            "Web search returned no results — the search backend may be rate-limiting or "
-            "blocking automated queries. If you already know a source URL, use fetch_url on it "
-            "directly instead of searching."
-        )
-        for endpoint in _SEARCH_ENDPOINTS:
-            try:
-                # DuckDuckGo's HTML/Lite endpoints expect a POSTed form query from a
-                # browser-like client; a bare GET returns an empty challenge page. The
-                # query is also kept in the URL so mocked transports and logs see it.
-                _, body, _ = await self._get(
-                    endpoint,
-                    params={"q": query},
-                    method="POST",
-                    data={"q": query, "kl": "wt-wt"},
-                    extra_headers={
-                        "User-Agent": _SEARCH_USER_AGENT,
-                        "Referer": endpoint,
-                        "Accept-Language": "en-US,en;q=0.9",
-                    },
-                )
-                parser = _SearchHTML()
-                parser.feed(body)
-                results = _deduplicate(parser.results)[:count]
-                if results:
-                    return ToolResult(
-                        tool="web_search",
-                        success=True,
-                        data={"query": query, "results": results},
-                        duration_seconds=monotonic() - started,
-                    )
-            except (httpx.HTTPError, ValueError) as exc:
-                last_error = str(exc)
+        missing = self.backend.unavailable()
+        if missing:
+            return ToolResult(
+                tool="web_search",
+                success=False,
+                error=(
+                    f"The configured web search provider ({self.backend.name}) is not usable: "
+                    f"{missing}. Fix it in .daino/config.yaml under `web`, or set "
+                    "`web.provider: duckduckgo` to use the keyless default."
+                ),
+                duration_seconds=monotonic() - started,
+            )
+        try:
+            results = _deduplicate(await self.backend.search(query, count, self._get))
+        except (httpx.HTTPError, ValueError) as exc:
+            return ToolResult(
+                tool="web_search",
+                success=False,
+                error=f"{self.backend.name} search failed: {exc}",
+                duration_seconds=monotonic() - started,
+            )
+        if results:
+            return ToolResult(
+                tool="web_search",
+                success=True,
+                data={"query": query, "results": results[:count], "provider": self.backend.name},
+                duration_seconds=monotonic() - started,
+            )
         return ToolResult(
             tool="web_search",
             success=False,
-            error=last_error,
+            error=(
+                f"Web search ({self.backend.name}) returned no results — the backend may be "
+                "rate-limiting or blocking automated queries. If you already know a source URL, "
+                "use fetch_url on it directly instead of searching."
+            ),
             duration_seconds=monotonic() - started,
         )
 
@@ -379,12 +395,17 @@ class WebResearchTool:
         params: dict[str, str] | None = None,
         method: str = "GET",
         data: dict[str, str] | None = None,
+        json_body: dict[str, object] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> tuple[str, str, str]:
         current = str(httpx.URL(url, params=params))
         headers = {"User-Agent": _USER_AGENT, "Accept": "text/html,text/plain,application/json"}
         if extra_headers:
             headers.update(extra_headers)
+        # Granted only for the first hop, and only to a host the user named in
+        # their own configuration. A redirect off that host is revalidated by the
+        # ordinary rules, so a permitted instance cannot become a way in.
+        allowance = self.backend.private_hosts()
         async with httpx.AsyncClient(
             transport=self.transport,
             follow_redirects=False,
@@ -392,17 +413,20 @@ class WebResearchTool:
             trust_env=False,
             headers=headers,
         ) as client:
-            hop_method, hop_data = method.upper(), data
+            hop_method, hop_data, hop_json = method.upper(), data, json_body
             for _ in range(MAX_REDIRECTS + 1):
-                await _validated_url(current, self.resolver)
-                async with client.stream(hop_method, current, data=hop_data) as response:
+                await _validated_url(current, self.resolver, allowance)
+                async with client.stream(
+                    hop_method, current, data=hop_data, json=hop_json
+                ) as response:
                     if response.is_redirect:
                         location = response.headers.get("location")
                         if not location:
                             raise ValueError("Redirect response had no destination")
                         current = urljoin(current, location)
                         # Follow redirects as a bodyless GET, per normal HTTP behaviour.
-                        hop_method, hop_data = "GET", None
+                        hop_method, hop_data, hop_json = "GET", None, None
+                        allowance = frozenset()
                         continue
                     response.raise_for_status()
                     content_type = response.headers.get("content-type", "").casefold()
@@ -419,6 +443,17 @@ class WebResearchTool:
                     encoding = response.encoding or "utf-8"
                     return current, b"".join(chunks).decode(encoding, errors="replace"), media_type
             raise ValueError("Web page redirected too many times")
+
+
+def parse_duckduckgo_results(body: str) -> list[dict[str, str]]:
+    """Extract result rows from a DuckDuckGo HTML/Lite page.
+
+    Lives here rather than in :mod:`daino.tools.search` because it is the only
+    backend that parses markup, and the parser it uses is this module's.
+    """
+    parser = _SearchHTML()
+    parser.feed(body)
+    return parser.results
 
 
 def _deduplicate(results: list[dict[str, str]]) -> list[dict[str, str]]:

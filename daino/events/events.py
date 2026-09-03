@@ -350,3 +350,29 @@ class PreviewStarted(MissionEvent):
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PreviewStopped(MissionEvent):
     reason: str = ""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BudgetWarning(MissionEvent):
+    """A run has crossed the warning fraction of its configured ceiling.
+
+    Raised once per run. Repeating it every call would turn the last third of a
+    long mission into a wall of identical warnings, which is how a warning stops
+    being read.
+    """
+
+    fraction: float
+    message: str
+    cost_usd: float = 0.0
+    total_tokens: int = 0
+    model_calls: int = 0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BudgetExhausted(MissionEvent):
+    """A run hit a ceiling and no further model call will be made for it."""
+
+    dimension: str
+    spent: float
+    limit: float
+    message: str

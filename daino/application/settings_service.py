@@ -17,8 +17,10 @@ class SettingsApplicationService:
         self.context.settings = set_value(self.context.root, key, value)
 
     def set_runtime(self, runtime: str, *, persist: bool = False) -> None:
-        if runtime not in {"local", "docker", "ssh"}:
-            raise ValueError(f"Unknown runtime {runtime}")
+        if runtime not in {"local", "sandbox", "docker", "ssh"}:
+            raise ValueError(
+                f"Unknown runtime {runtime}. Choose local, sandbox, docker, or ssh."
+            )
         self.context.settings.runtime.default = runtime  # type: ignore[assignment]
         if persist:
             save_settings(self.context.settings, self.context.root)

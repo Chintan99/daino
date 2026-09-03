@@ -13,7 +13,12 @@ commands. The table below is a map of the complete feature set and where to lear
 | Diff and changeset review | Shows file-level changes, patch details, verification, and restore actions | [TUI](tui.md#the-closing-changeset), [GUI](gui.md#the-changeset) |
 | Verification and repair | Runs configured checks, performs bounded repair, and blocks completion while required evidence is failing | [Architecture](architecture.md#the-chat-agent) |
 | Independent review | Routes the resulting diff to a reviewer model before a mission is accepted | [CLI reference](cli-reference.md#verification-and-review) |
-| Public web research | Searches and fetches bounded public pages through the active network-approval policy | [Security](security.md) |
+| Public web research | Searches and fetches bounded public pages through the active network-approval policy; DuckDuckGo by default, or an API-backed engine | [Security](security.md), [Configuration](configuration.md#web-search) |
+| Compiler feedback on edits | Every edit reports the language server's errors and warnings for the file, unasked, so a broken caller surfaces immediately rather than at the next test run | [Repository intelligence](repository-intelligence.md) |
+| Definition and reference lookup | The agent resolves symbols through the same language servers the IDE uses, by name rather than by line and column | [Repository intelligence](repository-intelligence.md) |
+| Mid-turn delegation | The model can split independent work across scoped subagents itself, with non-overlapping write scopes checked before any of them start | [TUI: teams](tui.md#teams-of-sub-agents) |
+| Parallel tool calls | Independent lookups in one turn are awaited together, so four reads cost one read's latency | [Architecture](architecture.md#the-chat-agent) |
+| Image input | Screenshots, mockups and exported diagrams reach a vision-capable model, by `@image:` reference or by the agent reading one | [TUI](tui.md) |
 
 ## Interfaces
 
@@ -63,6 +68,16 @@ commands. The table below is a map of the complete feature set and where to lear
 | Hierarchical instructions | Applies global, repository, and directory-scoped `DAINO.md` guidance according to file scope | [Memory](memory.md#dainomd-hierarchy) |
 | Durable memory | Recovers unfinished work and retrieves verified facts, decisions, episodes, and preferences without an external vector database | [Memory](memory.md) |
 
+## Extensibility
+
+| Feature | What it does | Learn more |
+|---|---|---|
+| Slash commands | Reusable prompts invoked by name, with argument substitution and namespacing | [Extending](extending.md#slash-commands) |
+| Agent skills | Written-down practice the model loads when the task matches its description, so a dozen skills cost a dozen lines of prompt | [Extending](extending.md#skills) |
+| Lifecycle hooks | Commands run before and after each tool, on prompt submit, and at stop; can block an action or feed the model what changed | [Extending](extending.md#hooks) |
+| MCP servers | External tool servers over stdio or HTTP, discovered and namespaced, reaching the model as ordinary tools | [Extending](extending.md#mcp-servers) |
+| Extension diagnostics | One endpoint reporting what loaded, what did not, and why — because everything here fails quietly by design | [Extending](extending.md#seeing-what-loaded) |
+
 ## Safety and operations
 
 | Feature | What it does | Learn more |
@@ -70,10 +85,14 @@ commands. The table below is a map of the complete feature set and where to lear
 | Four autonomy modes | Moves between read-only planning, per-command approval, session approval, and full mission execution | [Security](security.md) |
 | Policy-gated commands | Allows routine work, prompts for sensitive categories, and refuses destructive patterns | [Security](security.md) |
 | Secret references | Resolves `env://`, `keyring://`, and `file://` values only at the provider or SSH boundary | [Configuration](configuration.md) |
-| Runtime isolation | Uses local or ephemeral Docker coding runtimes, plus verified SSH for deployment operations | [Runtimes](runtimes.md) |
+| Runtime isolation | Local, sandboxed-local, or ephemeral Docker coding runtimes, plus verified SSH for deployment operations | [Runtimes](runtimes.md) |
+| Sandboxed local mode | The host toolchain with credentials scrubbed from the environment and, where the platform provides it, writes confined to the project and the network denied | [Runtimes](runtimes.md#sandboxed-local-mode) |
+| Spend ceilings | Per-mission cost, token, and call limits that stop a productive but useless run, enforced rather than only recorded | [Configuration](configuration.md#budget) |
 | Compose deployment | Inspects, plans, deploys, verifies, promotes, and rolls back versioned remote releases | [Deployment](deployment.md) |
 | Terraform/OpenTofu | Validates and plans infrastructure, with explicit gates for apply and destroy | [Infrastructure as code](infrastructure.md) |
 | Audit and usage data | Records redacted events, token/cost usage, model decisions, checks, approvals, and rollback points | [CLI reference: observability](cli-reference.md#observability) |
+| Distributed tracing | OpenTelemetry spans around every model call, loop step, tool execution and delegation, carrying identity and cost but never prompts or file contents | [Configuration](configuration.md) |
+| Eval harness | Measures end-to-end task success per model, and pins the retrieval ranking and context sizing constants with model-free cases that run in CI | [Evals](evals.md) |
 | Notifications and wake lock | Signals completion and optionally prevents the machine from sleeping during active work | [TUI](tui.md#notifications-and-staying-awake), [GUI](gui.md#notifications-and-staying-awake) |
 
 ## Current boundaries

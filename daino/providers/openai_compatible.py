@@ -42,6 +42,17 @@ def _extract_json(text: str) -> Any:
 def _wire_message(message: Message) -> dict[str, Any]:
     """Translate an internal message into the OpenAI chat-completions wire format."""
     wire: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.images and message.role == "user":
+        # The multi-part content form. Only used when there is actually an image:
+        # a plain string is what every backend accepts, including the local ones
+        # whose OpenAI compatibility stops at the simple shape.
+        wire["content"] = [
+            *([{"type": "text", "text": message.content}] if message.content else []),
+            *(
+                {"type": "image_url", "image_url": {"url": image.data_url}}
+                for image in message.images
+            ),
+        ]
     if message.role == "assistant" and message.tool_calls:
         wire["tool_calls"] = [
             {
@@ -709,6 +720,9 @@ class OpenAICompatibleProvider(LLMProvider):
     def last_usage(self) -> ProviderUsage:
         """Return token counts and provider-reported cost for this call."""
         return self._last_usage
+
+    def reset_usage(self) -> None:
+        self._last_usage = ProviderUsage()
 
     def _capture_usage(self, data: dict[str, Any]) -> ProviderUsage:
         """Accumulate usage from a response or final streaming chunk."""

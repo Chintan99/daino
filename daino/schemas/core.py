@@ -62,6 +62,26 @@ class ToolCall(StrictModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
 
 
+class ImagePart(StrictModel):
+    """One image travelling with a message.
+
+    Base64 rather than a path, because by the time a message reaches a provider
+    the file may be gone and the provider certainly cannot read the disk. The
+    media type is carried separately rather than sniffed at the wire, since the
+    only party that knows it for certain is whoever read the bytes.
+    """
+
+    media_type: str
+    #: Standard base64, without the ``data:`` prefix.
+    data: str
+    #: What this image is, for the transcript and for a model that cannot see it.
+    description: str = ""
+
+    @property
+    def data_url(self) -> str:
+        return f"data:{self.media_type};base64,{self.data}"
+
+
 class Message(StrictModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
@@ -69,6 +89,12 @@ class Message(StrictModel):
     tool_calls: list[ToolCall] = Field(default_factory=list)
     #: Identifies which tool call a ``tool`` message answers.
     tool_call_id: str = ""
+    #: Images the model should see alongside ``content``. Only ever attached to
+    #: a ``user`` message: the chat-completions wire format accepts image parts
+    #: there and not on a ``tool`` result, so an observation that produced an
+    #: image is followed by a user message carrying it rather than trying to
+    #: smuggle it into the tool reply.
+    images: list[ImagePart] = Field(default_factory=list)
 
 
 class LLMResponse(StrictModel):
@@ -262,6 +288,13 @@ class AgentAction(StrictModel):
         "workspace_link",
         "workspace_code",
         "workspace_deliverable",
+        "call_tool",
+        "skill",
+        "delegate",
+        "find_definition",
+        "find_references",
+        "diagnostics",
+        "read_image",
         "respond",
         "finish",
     ]
@@ -288,6 +321,24 @@ class AgentAction(StrictModel):
     #: For ``read_file``: read a window of a large file instead of the head.
     offset: int = 0
     limit: int = 0
+    #: For ``call_tool``: the namespaced name of an external tool, as
+    #: ``mcp__<server>__<tool>``. A model with native tool calling never fills
+    #: this in — it calls the tool directly and the loop converts the call —
+    #: but a schema-constrained model has only this one action to reach an MCP
+    #: server through, so the field has to exist on the flat action.
+    tool_name: str = ""
+    #: For ``call_tool``: whatever the external tool's own schema asks for.
+    #: Deliberately untyped: it belongs to a server Daino has never seen.
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    #: For ``skill``: which set of project instructions to load into the turn.
+    skill_name: str = ""
+    #: For ``delegate``: the subagents to run concurrently for this step.
+    delegates: list[DelegateSpec] = Field(default_factory=list)
+    #: For ``find_definition`` / ``find_references``: the identifier to resolve.
+    #: A name rather than a line and column, because deriving LSP's zero-based
+    #: coordinates from a file it read as text is arithmetic a model gets wrong
+    #: often enough to make the tool a net negative.
+    symbol: str = ""
     #: For ``multi_edit``: several replacements applied to one file in order.
     edits: list[EditSpec] = Field(default_factory=list)
     #: For ``todo``: the current plan, replaced in full each time.
@@ -406,7 +457,13 @@ class AgentAction(StrictModel):
 
 
 class QAAgentAction(AgentAction):
-    """Read-only structured-output contract for QA-capable local models."""
+    """Read-only structured-output contract for QA-capable local models.
+
+    Kept in step with ``QA_TOOL_SPECS`` by hand rather than derived, because the
+    guarantee runs the other way: the narrow list is the contract, and a new
+    action appearing in it should be a deliberate edit here rather than
+    something a base class quietly inherited.
+    """
 
     action: Literal[
         "read_file",
@@ -414,6 +471,10 @@ class QAAgentAction(AgentAction):
         "list_directory",
         "glob",
         "grep",
+        "find_definition",
+        "find_references",
+        "diagnostics",
+        "read_image",
         "finish",
     ]
 
@@ -479,6 +540,26 @@ TeamMemberRole = Literal[
     "summarizer",
     "researcher",
 ]
+
+
+class DelegateSpec(StrictModel):
+    """One subagent the *model* asked for, mid-turn.
+
+    Deliberately smaller than :class:`TeamMember`. A team lead plans a roster and
+    reasons about dependency waves; an agent that has just realised it needs
+    three subsystems investigated should not have to invent member ids and a
+    dependency graph to say so. Everything else is derived: ids are generated,
+    and delegates always run as one concurrent wave, because a model that wanted
+    them sequenced would simply not have asked for them at once.
+    """
+
+    objective: str
+    #: Repository-relative paths or globs this subagent may modify. Required for
+    #: a writer, and checked against its siblings before any of them start.
+    scope: list[str] = Field(default_factory=list)
+    #: Defaults to read-only, which is both the safe answer and the common one:
+    #: the reason to delegate is usually to look at several things at once.
+    read_only: bool = True
 
 
 class TeamMember(StrictModel):

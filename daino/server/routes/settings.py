@@ -37,7 +37,7 @@ class SettingsPatch(BaseModel):
     routing: dict[str, str] | None = None
     #: point every agent role at this provider's model profile
     default_provider: str | None = None
-    runtime: Literal["local", "docker", "ssh"] | None = None
+    runtime: Literal["local", "sandbox", "docker", "ssh"] | None = None
     network_access: Literal["restricted", "allowed"] | None = None
     log_level: LogLevel | None = None
     require_approval_for_install: bool | None = None

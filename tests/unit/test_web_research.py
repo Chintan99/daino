@@ -7,6 +7,11 @@ from daino.agents.loop import _detail
 from daino.agents.tool_schemas import CHAT_TOOL_SPECS, tool_call_to_action
 from daino.schemas import AgentAction, ToolCall
 from daino.tools import ActionExecutor, EditTools, WebResearchTool
+from daino.tools.search import (
+    SearchBackendConfig,
+    SearchConfigurationError,
+    build_backend,
+)
 
 
 async def public_dns(_: str) -> list[str]:
@@ -282,3 +287,142 @@ async def test_fetch_rejects_binary_and_oversized_responses() -> None:
 
     assert not huge_result.success
     assert "download limit" in (huge_result.error or "")
+
+
+async def private_dns(_: str) -> list[str]:
+    return ["127.0.0.1"]
+
+
+def json_handler(
+    expected: str, payload: dict[str, object], seen: list[httpx.Request]
+) -> object:
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        assert str(request.url).startswith(expected)
+        return httpx.Response(200, json=payload)
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_brave_backend_reads_the_documented_json_shape() -> None:
+    seen: list[httpx.Request] = []
+    payload = {
+        "web": {
+            "results": [
+                {
+                    "title": "Python 3.13 release notes",
+                    "url": "https://docs.python.org/3/whatsnew/3.13.html",
+                    "description": "What is new in 3.13.",
+                }
+            ]
+        }
+    }
+    web = WebResearchTool(
+        require_approval=False,
+        transport=httpx.MockTransport(
+            json_handler("https://api.search.brave.com", payload, seen)  # type: ignore[arg-type]
+        ),
+        resolver=public_dns,
+        search_backend=SearchBackendConfig(provider="brave", api_key="token-123"),
+    )
+
+    result = await web.search("python 3.13")
+
+    assert result.success
+    assert result.data["provider"] == "brave"
+    assert result.data["results"][0]["url"].endswith("3.13.html")
+    assert seen[0].headers["X-Subscription-Token"] == "token-123"
+
+
+@pytest.mark.asyncio
+async def test_tavily_backend_posts_a_json_body() -> None:
+    seen: list[httpx.Request] = []
+    payload = {
+        "results": [
+            {"title": "Agent patterns", "url": "https://example.com/a", "content": "Snippet."}
+        ]
+    }
+    web = WebResearchTool(
+        require_approval=False,
+        transport=httpx.MockTransport(
+            json_handler("https://api.tavily.com", payload, seen)  # type: ignore[arg-type]
+        ),
+        resolver=public_dns,
+        search_backend=SearchBackendConfig(provider="tavily", api_key="tvly-1"),
+    )
+
+    result = await web.search("agent patterns")
+
+    assert result.success
+    assert result.data["results"][0]["snippet"] == "Snippet."
+    assert seen[0].method == "POST"
+    assert b"tvly-1" in seen[0].content
+
+
+@pytest.mark.asyncio
+async def test_a_backend_missing_its_key_says_what_to_set() -> None:
+    web = WebResearchTool(
+        require_approval=False,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})),
+        resolver=public_dns,
+        search_backend=SearchBackendConfig(provider="brave"),
+    )
+
+    result = await web.search("anything")
+
+    assert not result.success
+    assert "web.api_key" in (result.error or "")
+    assert "web.provider: duckduckgo" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_searxng_may_reach_the_instance_the_user_configured() -> None:
+    """The private-address block would otherwise make a self-hosted instance useless."""
+    seen: list[httpx.Request] = []
+    payload = {"results": [{"title": "Local hit", "url": "https://example.com/x", "content": "s"}]}
+    web = WebResearchTool(
+        require_approval=False,
+        transport=httpx.MockTransport(
+            json_handler("http://127.0.0.1:8888", payload, seen)  # type: ignore[arg-type]
+        ),
+        resolver=private_dns,
+        search_backend=SearchBackendConfig(
+            provider="searxng", base_url="http://127.0.0.1:8888"
+        ),
+    )
+
+    result = await web.search("local query")
+
+    assert result.success
+    assert result.data["results"][0]["title"] == "Local hit"
+
+
+@pytest.mark.asyncio
+async def test_the_searxng_allowance_does_not_extend_to_fetching() -> None:
+    """Only the configured search endpoint is exempt — not the whole private network."""
+    web = WebResearchTool(
+        require_approval=False,
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, text="secret")),
+        resolver=private_dns,
+        search_backend=SearchBackendConfig(
+            provider="searxng", base_url="http://127.0.0.1:8888"
+        ),
+    )
+
+    result = await web.fetch("http://192.168.1.1/admin")
+
+    assert not result.success
+    assert "private network" in (result.error or "").casefold()
+
+
+def test_an_unknown_provider_is_rejected_at_construction() -> None:
+    with pytest.raises(SearchConfigurationError) as raised:
+        build_backend(SearchBackendConfig(provider="askjeeves"))
+    assert "duckduckgo" in str(raised.value)
+
+
+def test_duckduckgo_remains_the_keyless_default() -> None:
+    backend = build_backend(None)
+    assert backend.name == "duckduckgo"
+    assert backend.unavailable() == ""

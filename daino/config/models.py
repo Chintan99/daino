@@ -26,8 +26,17 @@ class RuntimeConfig(BaseModel):
     #: the daemon and records ``local`` instead when it cannot be reached: a
     #: container runtime the user cannot talk to fails every command, which
     #: looks like a broken agent rather than a missing sandbox.
-    default: Literal["local", "docker", "ssh"] = "docker"
+    #: ``sandbox`` is the middle tier: the host toolchain, but with a scrubbed
+    #: environment and — where the platform provides one — OS-level confinement
+    #: to the project directory. It exists because ``docker`` needs an image
+    #: carrying the project's whole toolchain, which is why people who could not
+    #: build one ended up on ``local`` with no isolation at all.
+    default: Literal["local", "sandbox", "docker", "ssh"] = "docker"
     network_access: Literal["restricted", "allowed"] = "restricted"
+    #: Extra environment variables the sandbox passes through to commands. Names
+    #: that look like credentials are still filtered, so widening this cannot
+    #: re-admit a token by accident.
+    sandbox_passthrough_env: list[str] = Field(default_factory=list)
     command_timeout_seconds: int = 600
     #: The non-slim image is deliberate: it ships Git, and ``git diff --check``
     #: is the fallback verification command, so the slim image failed every
@@ -54,6 +63,57 @@ class GitConfig(BaseModel):
     use_worktrees: bool = True
     auto_commit_verified_tasks: bool = True
     auto_push: bool = False
+
+
+class WebSearchConfig(BaseModel):
+    """Which backend answers ``web_search``.
+
+    ``duckduckgo`` is the default because it needs no account, which is what a
+    local-first tool should do out of the box. It is also a scrape of an endpoint
+    that actively discourages scraping, so it is the option most likely to break
+    — the others are documented contracts, and this setting is how a project
+    moves onto one.
+    """
+
+    provider: Literal["duckduckgo", "brave", "tavily", "searxng", "google-pse"] = "duckduckgo"
+    #: Secret reference, resolved the same way a provider API key is.
+    api_key: str = ""
+    #: Required for ``searxng`` (the instance root). Optional elsewhere, where it
+    #: overrides the backend's endpoint for an API-compatible proxy.
+    base_url: str = ""
+    #: Google Programmable Search engine id (``cx``).
+    engine_id: str = ""
+
+    @field_validator("api_key")
+    @classmethod
+    def search_secret_must_be_reference(cls, value: str) -> str:
+        if value and not value.startswith(("env://", "keyring://", "file://")):
+            raise ValueError(
+                "web.api_key must be a secret reference (env://, keyring://, file://)"
+            )
+        return value
+
+
+class BudgetConfig(BaseModel):
+    """Ceilings on what one mission may spend before it is stopped.
+
+    Every limit defaults to ``0``, meaning unlimited, so an existing project
+    behaves exactly as it did. That default is deliberate rather than timid: a
+    ceiling picked by Daino would be wrong for both a one-line fix and an
+    overnight migration, and a run killed by a number the user never chose is
+    worse than no ceiling at all. What was missing was the *ability* to set one.
+
+    ``max_cost_usd`` binds only where the provider reports a charge. A local
+    Ollama or a self-hosted vLLM reports none and has none, so use
+    ``max_total_tokens`` there.
+    """
+
+    max_cost_usd: float = Field(default=0.0, ge=0)
+    max_total_tokens: int = Field(default=0, ge=0)
+    max_model_calls: int = Field(default=0, ge=0)
+    #: Fraction of the tightest ceiling at which the run warns once. ``0``
+    #: disables the warning without disabling the ceiling.
+    warn_at_fraction: float = Field(default=0.8, ge=0, le=1)
 
 
 class SecurityConfig(BaseModel):
@@ -142,6 +202,12 @@ class ModelProfileConfig(BaseModel):
     #: models. ``auto`` enables it for constrained windows or modest coding /
     #: tool reliability scores while leaving strong cloud profiles unchanged.
     execution_mode: Literal["auto", "compact", "standard"] = "auto"
+    #: Whether this model can see images. Off by default and per *profile*
+    #: rather than per provider, because it is a property of the model: one
+    #: OpenRouter key routes to both a vision model and a text-only one, and
+    #: sending an image to the second is a hard request failure, not a
+    #: degradation. A model that cannot see gets a description instead.
+    vision: bool = False
     #: Optional hard ceiling for the first task packet. Zero lets Daino derive
     #: a safe value from the model window and project context budget.
     initial_context_tokens: int = Field(default=0, ge=0)
@@ -279,6 +345,8 @@ class Settings(BaseSettings):
     verification: VerificationConfig = Field(default_factory=VerificationConfig)
     git: GitConfig = Field(default_factory=GitConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    budget: BudgetConfig = Field(default_factory=BudgetConfig)
+    web: WebSearchConfig = Field(default_factory=WebSearchConfig)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     models: dict[str, ModelProfileConfig] = Field(default_factory=dict)
     routing: dict[str, str] = Field(default_factory=dict)

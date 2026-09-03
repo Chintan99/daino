@@ -17,7 +17,7 @@ from daino.config.models import Settings
 from daino.events import EventBus, MissionEvent, ModelReasoningChunk, ModelStreamChunk
 from daino.git import GitClient
 from daino.memory import MemoryManager
-from daino.observability import AuditLog
+from daino.observability import AuditLog, configure_tracing, resolve_endpoint
 from daino.persistence import Database
 from daino.persistence.models import MissionEventRecord
 from daino.repository import RepositoryIndexer
@@ -124,6 +124,13 @@ def open_project(path: Path | None = None) -> ProjectContext:
         _ensure_git_baseline(root)
     database = Database(settings, root)
     database.initialize()
+    # Armed before the first agent runs, so the spans the gateway and the tool
+    # loop emit have somewhere to go. A missing SDK or an unreachable collector
+    # leaves every span a no-op rather than failing the open.
+    configure_tracing(
+        resolve_endpoint(settings.observability.otel_endpoint),
+        service_name=settings.project.name or "daino",
+    )
     events = EventBus()
     project_id = database.project().id
     audit = AuditLog(root)

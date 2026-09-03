@@ -157,7 +157,14 @@ async def test_successful_turn_clears_a_previous_failure_status(
         workspace._chat_previous_status = None
         workspace.query_one("#context-strip").set_mission("mission-old", "Failed")
 
-        async def fake_chat(instruction, session_id, *, profile_override="", approve=None):
+        async def fake_chat(
+            instruction,
+            session_id,
+            *,
+            profile_override="",
+            approve=None,
+            attachments=None,
+        ):
             return ChatOutcome(
                 mission_id="mission-new",
                 summary="done",

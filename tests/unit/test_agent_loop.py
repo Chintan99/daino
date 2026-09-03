@@ -1734,3 +1734,137 @@ def test_the_thrashing_threshold_is_shared_not_copied() -> None:
     from daino.agents.loop import _THRASHING_COMPACTIONS
 
     assert THRASHING_COMPACTIONS == _THRASHING_COMPACTIONS
+
+
+class SlowReadExecutor(ActionExecutor):
+    """Records overlap so a test can tell concurrent reads from sequential ones."""
+
+    def __init__(self, editor: EditTools, delay: float = 0.05) -> None:
+        super().__init__(editor)
+        self.delay = delay
+        self.in_flight = 0
+        self.peak_in_flight = 0
+        self.order: list[str] = []
+
+    async def execute(self, action: AgentAction) -> tuple[ToolResult, list[str]]:
+        self.in_flight += 1
+        self.peak_in_flight = max(self.peak_in_flight, self.in_flight)
+        try:
+            import asyncio
+
+            await asyncio.sleep(self.delay)
+            self.order.append(action.path or action.action)
+            return await super().execute(action)
+        finally:
+            self.in_flight -= 1
+
+
+def read_call(identifier: str, path: str) -> ToolCall:
+    return ToolCall(
+        id=identifier,
+        name="read_file",
+        arguments={"thought": "Look at it.", "path": path},
+    )
+
+
+@pytest.mark.asyncio
+async def test_independent_reads_run_concurrently(tmp_path: Path) -> None:
+    """Four reads in one turn should cost one read's latency, not four."""
+    for name in ("a.py", "b.py", "c.py", "d.py"):
+        (tmp_path / name).write_text(f"# {name}\n", encoding="utf-8")
+    executor = SlowReadExecutor(EditTools(tmp_path, require_read_before_write=False))
+    gateway = NativeGateway(
+        [
+            [
+                read_call("call_1", "a.py"),
+                read_call("call_2", "b.py"),
+                read_call("call_3", "c.py"),
+                read_call("call_4", "d.py"),
+            ],
+            [
+                ToolCall(
+                    id="call_5",
+                    name="finish",
+                    arguments={"thought": "Done.", "summary": "Read them"},
+                )
+            ],
+        ]
+    )
+    loop = ToolLoop(gateway, ModelRole.BUILDER, executor)  # type: ignore[arg-type]
+    await loop.run("mission-1", context())
+
+    assert executor.peak_in_flight == 4
+    # Observations still arrive in the order the model asked for them, so the
+    # transcript reads the way the model expects regardless of who finished first.
+    answered = [
+        message.tool_call_id
+        for message in gateway.seen_messages
+        if message.role == "tool"
+    ]
+    assert answered == ["call_1", "call_2", "call_3", "call_4"]
+
+
+@pytest.mark.asyncio
+async def test_a_write_is_never_batched_with_the_reads_around_it(tmp_path: Path) -> None:
+    """An edit may depend on the read before it, and the read after may depend on it."""
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("y = 2\n", encoding="utf-8")
+    executor = SlowReadExecutor(EditTools(tmp_path, require_read_before_write=False))
+    gateway = NativeGateway(
+        [
+            [
+                read_call("call_1", "a.py"),
+                ToolCall(
+                    id="call_2",
+                    name="write",
+                    arguments={
+                        "thought": "Change it.",
+                        "path": "a.py",
+                        "content": "x = 2\n",
+                    },
+                ),
+                read_call("call_3", "b.py"),
+            ],
+            [
+                ToolCall(
+                    id="call_4",
+                    name="finish",
+                    arguments={"thought": "Done.", "summary": "Edited"},
+                )
+            ],
+        ]
+    )
+    loop = ToolLoop(gateway, ModelRole.BUILDER, executor)  # type: ignore[arg-type]
+    await loop.run("mission-1", context())
+
+    assert executor.peak_in_flight == 1
+    assert executor.order == ["a.py", "a.py", "b.py"]
+
+
+@pytest.mark.asyncio
+async def test_an_action_gate_disables_batching(tmp_path: Path) -> None:
+    """Concurrent approval prompts are worse than a slightly slower read."""
+    for name in ("a.py", "b.py"):
+        (tmp_path / name).write_text("x = 1\n", encoding="utf-8")
+    executor = SlowReadExecutor(EditTools(tmp_path, require_read_before_write=False))
+
+    async def approve(_name: str, _arguments: dict[str, Any]) -> bool:
+        return True
+
+    executor.approve_action = approve
+    gateway = NativeGateway(
+        [
+            [read_call("call_1", "a.py"), read_call("call_2", "b.py")],
+            [
+                ToolCall(
+                    id="call_3",
+                    name="finish",
+                    arguments={"thought": "Done.", "summary": "Read"},
+                )
+            ],
+        ]
+    )
+    loop = ToolLoop(gateway, ModelRole.BUILDER, executor)  # type: ignore[arg-type]
+    await loop.run("mission-1", context())
+
+    assert executor.peak_in_flight == 1

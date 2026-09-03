@@ -39,6 +39,12 @@ def test_qa_tool_surface_is_read_only() -> None:
         "glob",
         "grep",
         "list_directory",
+        # Language-server lookups. Read-only in the strictest sense — they ask a
+        # compiler what it already knows — and they are what lets a QA
+        # specialist say "this is dead code" rather than "this name is rare".
+        "find_definition",
+        "find_references",
+        "diagnostics",
         "finish",
     }
     with pytest.raises(ValidationError):

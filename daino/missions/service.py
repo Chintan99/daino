@@ -60,7 +60,7 @@ from daino.planning.planner import outline_of
 from daino.planning.sizing import measure_scope, split_task
 from daino.repository import RepositoryIndexer
 from daino.requirements import RequirementsCompiler
-from daino.runtimes import DockerRuntime, LocalRuntime, Runtime
+from daino.runtimes import DockerRuntime, LocalRuntime, Runtime, SandboxedLocalRuntime
 from daino.schemas import (
     AgentAction,
     ContextBundle,
@@ -319,6 +319,14 @@ class MissionService:
                 memory_limit=self.settings.runtime.memory_limit,
                 network_access=self.settings.runtime.network_access == "allowed",
                 timeout=self.settings.runtime.command_timeout_seconds,
+            )
+        if self.settings.runtime.default == "sandbox":
+            return SandboxedLocalRuntime(
+                workspace,
+                policy=policy,
+                timeout=self.settings.runtime.command_timeout_seconds,
+                network_access=self.settings.runtime.network_access == "allowed",
+                passthrough_env=frozenset(self.settings.runtime.sandbox_passthrough_env),
             )
         if self.settings.runtime.default == "local":
             return LocalRuntime(

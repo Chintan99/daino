@@ -51,7 +51,7 @@ SLASH_COMMANDS = (
     SlashCommand("/verbose", "Show or hide detailed live progress", "[on|off]"),
     SlashCommand("/provider", "Open providers or test a connection", "[name]"),
     SlashCommand("/globalprovider", "Configure providers shared by every project"),
-    SlashCommand("/runtime", "Switch the session runtime", "[local|docker|ssh]"),
+    SlashCommand("/runtime", "Switch the session runtime", "[local|sandbox|docker|ssh]"),
     SlashCommand("/index", "Rebuild repository intelligence"),
     SlashCommand("/playbooks", "Browse engineering playbooks"),
     SlashCommand("/deploy", "Run a deployment operation", "<action> <target>"),

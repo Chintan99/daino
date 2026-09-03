@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import shlex
 from collections import Counter
@@ -14,12 +15,21 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from daino.agents import ReviewerAgent, TeamLead, TeamRunner, validate_team_plan
+from daino.agents import (
+    DelegationRunner,
+    ReviewerAgent,
+    TeamLead,
+    TeamRunner,
+    validate_team_plan,
+)
 from daino.agents.loop import IncompleteRun, ToolLoop, describe_incomplete_outcome
 from daino.agents.tool_schemas import (
     AGENT_TOOL_SPECS,
     CHAT_TOOL_SPECS,
+    DELEGATE,
     PLANNING_TOOL_SPECS,
+    READ_IMAGE,
+    SKILL,
     WORKSPACE_TOOL_SPECS,
 )
 from daino.application.attention import TurnAttention
@@ -43,6 +53,8 @@ from daino.events import (
     ToolStarted,
 )
 from daino.exceptions import ConfigurationError
+from daino.hooks import HookEvent, HookRunner, load_hooks
+from daino.mcp import MCPRegistry, load_servers
 from daino.memory import MemoryManager, MemoryScope, MemoryType, PersistentTaskStatus
 from daino.missions import MissionService
 from daino.model_router import ModelRole
@@ -60,6 +72,7 @@ from daino.persistence.models import (
     VerificationRun,
 )
 from daino.prompts import CHAT_AGENT_SYSTEM, WORKSPACE_AGENT_SYSTEM
+from daino.repository.code_intel import CodeIntelligence
 from daino.runtimes.base import Runtime
 from daino.runtimes.detect import docker_status
 from daino.schemas import (
@@ -67,6 +80,7 @@ from daino.schemas import (
     ChatOutcome,
     ContextBundle,
     FileDiff,
+    ImagePart,
     InteractionMode,
     Message,
     MissionStatus,
@@ -82,6 +96,7 @@ from daino.schemas import (
     ToolResult,
 )
 from daino.security.commands import CommandGate
+from daino.skills import LoadedExtensions, SlashCommand, load_extensions
 from daino.tools import (
     ActionApprovalCallback,
     EditTools,
@@ -91,6 +106,8 @@ from daino.tools import (
 )
 from daino.tools.commands import ApprovalCallback, CommandRunner
 from daino.tools.diffing import render as render_diff
+from daino.tools.images import load_image
+from daino.tools.search import resolved_search_config
 from daino.utils.ids import new_id
 from daino.verification import missing_executable
 from daino.workbench.models import Workspace, WorkspaceTemplate
@@ -176,6 +193,9 @@ def _workspace_step_scale(envelope: CapabilityEnvelope | None) -> str:
     return "\n".join(lines)
 
 
+LOGGER = logging.getLogger(__name__)
+
+
 class MissionApplicationService:
     """Facade used by the TUI and suitable for thin CLI handlers."""
 
@@ -199,6 +219,92 @@ class MissionApplicationService:
         self.attention = TurnAttention(context.settings)
         #: Command approval memory per conversation session.
         self._command_gates: dict[str, CommandGate] = {}
+        #: Hooks are read once, here, and not re-read per action. That is a
+        #: safety property rather than a caching one: hook commands run through a
+        #: shell, and re-reading them mid-turn would let an agent that wrote a
+        #: hooks file have it executed on its very next action. ``EditTools``
+        #: already refuses writes into the state directory; this is the second
+        #: lock on the same door.
+        self.hooks = load_hooks(context.root)
+        for problem in self.hooks.problems:
+            LOGGER.warning("hook configuration problem: %s", problem)
+        #: Read for the same reason and with the same timing as the hooks: a
+        #: stdio MCP server is a process launched with the user's environment,
+        #: so the file that defines one must not be re-read after an agent has
+        #: had a chance to write it.
+        self.mcp_servers = load_servers(context.root)
+        for problem in self.mcp_servers.problems:
+            LOGGER.warning("MCP configuration problem: %s", problem)
+        #: Connected lazily on the first turn that needs them, and kept for the
+        #: life of the service. Starting a stdio server costs a process launch
+        #: and a handshake; paying that per turn would make every turn slower
+        #: for a capability most turns do not use.
+        self._mcp: MCPRegistry | None = None
+        #: Slash commands and skills. Re-read per turn rather than snapshotted,
+        #: because unlike hooks and MCP servers these are only prompt text: an
+        #: agent that writes a skill has written itself a note, and having that
+        #: note take effect immediately is the useful behaviour.
+        self._extensions: LoadedExtensions | None = None
+        #: Shared across turns so a language server started for the first edit
+        #: stays warm for the rest of the session — starting one costs seconds,
+        #: and paying that per edit would make the feedback not worth having.
+        self.code_intel = CodeIntelligence(context.root)
+
+    async def mcp_registry(self) -> MCPRegistry | None:
+        """Connect the configured MCP servers once, and reuse them afterwards."""
+        if not self.mcp_servers.servers:
+            return None
+        if self._mcp is None:
+            registry = MCPRegistry(servers=dict(self.mcp_servers.servers))
+            for status in await registry.start():
+                if status.connected:
+                    LOGGER.info(
+                        "MCP server %s connected with %d tools", status.name, status.tool_count
+                    )
+                else:
+                    LOGGER.warning("MCP server %s unavailable: %s", status.name, status.error)
+            self._mcp = registry
+        return self._mcp
+
+    async def close_mcp(self) -> None:
+        """Shut down every connected server. Called when the application exits."""
+        if self._mcp is not None:
+            await self._mcp.aclose()
+            self._mcp = None
+
+    async def close_code_intel(self) -> None:
+        """Stop any language servers this session started."""
+        await self.code_intel.aclose()
+
+    def extensions(self, *, reload: bool = False) -> LoadedExtensions:
+        """The project's slash commands and skills, reloaded on demand."""
+        if self._extensions is None or reload:
+            self._extensions = load_extensions(self.context.root)
+            for problem in self._extensions.problems:
+                LOGGER.warning("extension problem: %s", problem)
+        return self._extensions
+
+    def slash_commands(self) -> dict[str, SlashCommand]:
+        """User-defined commands, freshly read so a just-written one works now."""
+        return self.extensions(reload=True).commands
+
+    def expand_command(self, name: str, arguments: str) -> str | None:
+        """Turn ``/name args`` into the prompt it stands for, or ``None``.
+
+        ``None`` rather than an exception: the caller is a command dispatcher
+        whose next step is "report an unknown command", and it should not have
+        to catch something to find that out.
+        """
+        command = self.slash_commands().get(name.lstrip("/"))
+        return command.expand(arguments) if command is not None else None
+
+    def hook_runner(self, session_id: str) -> HookRunner:
+        """A runner bound to one conversation, sharing the session-start snapshot."""
+        return HookRunner(
+            root=self.context.root,
+            hooks=self.hooks.hooks,
+            session_id=session_id,
+        )
 
     def create_session(
         self,
@@ -933,7 +1039,8 @@ class MissionApplicationService:
                 unavailable=(
                     f"Commands cannot run: the {runtime_name} runtime is unavailable. {reason} "
                     "Do not retry commands this turn. Finish the work you can do without them, "
-                    "and tell the user to run /runtime local or fix the runtime."
+                    "and tell the user to run /runtime sandbox (host toolchain, scrubbed "
+                    "environment) or fix the runtime."
                 ),
             )
         return runtime, CommandRunner(
@@ -964,6 +1071,7 @@ class MissionApplicationService:
         approve: ApprovalCallback | None = None,
         approve_action: ActionApprovalCallback | None = None,
         read_only: bool = False,
+        attachments: list[str] | None = None,
     ) -> ChatOutcome:
         """Run the agent on one chat turn: it answers, or it edits and reports the diff.
 
@@ -982,6 +1090,17 @@ class MissionApplicationService:
             raise ConfigurationError(
                 "No model is connected yet. Open Providers (Ctrl+P → Switch provider, "
                 "or /provider), fill in the form, and press Validate + save."
+            )
+        hooks = self.hook_runner(session_id)
+        submitted = await hooks.run(
+            HookEvent.USER_PROMPT_SUBMIT, payload={"prompt": instruction}
+        )
+        if submitted.blocked:
+            # A refusal here costs nothing: no mission has been opened, no
+            # checkpoint taken, no model call made.
+            raise ConfigurationError(
+                "A project hook refused this request: "
+                + (submitted.reason or "no reason given")
             )
         # Read before this turn is persisted, or the instruction would appear
         # twice: once as history and again as the task.
@@ -1004,12 +1123,36 @@ class MissionApplicationService:
         )
         workspace = self._session_workspace(session_id, workbench)
         tools = PLANNING_TOOL_SPECS if read_only else self._chat_tool_specs(workspace)
+        # External tools join the surface before it is budgeted, because their
+        # schemas are part of what the provider charges for on every turn.
+        # A planning turn gets none of them: an MCP call can have any side
+        # effect at all, which is exactly what a read-only turn must not.
+        mcp = None if read_only else await self.mcp_registry()
+        if mcp is not None:
+            tools = [*tools, *mcp.tool_specs()]
+        # Reloaded per turn: a skill the agent wrote last turn should be usable
+        # this turn, and unlike a hook a skill is only text.
+        skills = self.extensions(reload=True).skills
+        if skills:
+            tools = [*tools, SKILL]
+        # Withheld from a planning turn and from a workspace turn. Planning must
+        # not change anything, even through a proxy; a workspace turn is
+        # knowledge work whose parallelism is the workspace run's own concern.
+        can_delegate = not read_only and workspace is None
+        if can_delegate:
+            tools = [*tools, DELEGATE]
         # Resolved once, here, because the budget and the execution profile must
         # describe the model that will actually run the turn. A workspace turn
         # may route to `researcher`, and sizing it against the builder's window
         # is the same class of mistake as the compaction thrash: the context is
         # packed for one model and handed to another.
         turn_role = self.workspace_role(profile_override) if workspace else ModelRole.BUILDER
+        # Resolved against the model that will actually run the turn: one
+        # OpenRouter key routes to both a vision model and a text-only one, and
+        # only the profile knows which this is.
+        sees_images = gateway.supports_vision(turn_role, profile_override=profile_override or None)
+        if sees_images:
+            tools = [*tools, READ_IMAGE]
         model_budget, execution_profile, turn_envelope = self._turn_sizing(
             gateway, turn_role, tools
         )
@@ -1027,6 +1170,63 @@ class MissionApplicationService:
             execution_profile,
         )
 
+        if skills:
+            # Names and descriptions only. The bodies arrive through the skill
+            # tool, when the model decides one of them is relevant — which is
+            # what keeps a dozen skills from costing a dozen documents of window
+            # on a task that needs none of them.
+            base_context = base_context.model_copy(
+                update={
+                    "effective_instructions": "\n\n".join(
+                        item
+                        for item in (
+                            base_context.effective_instructions,
+                            "Project skills — load one with the skill tool when the task "
+                            "matches its description:\n"
+                            + "\n".join(
+                                skill.summary_line() for skill in sorted(
+                                    skills.values(), key=lambda item: item.name
+                                )
+                            ),
+                        )
+                        if item
+                    )
+                }
+            )
+        catalogue = mcp.describe() if mcp is not None else ""
+        if catalogue:
+            # For the schema-constrained dialect, which never receives a tool
+            # schema and can only reach an external tool through ``call_tool``.
+            # A model with native tool calling has the real definitions already
+            # and simply reads this as confirmation of what it can see.
+            base_context = base_context.model_copy(
+                update={
+                    "effective_instructions": "\n\n".join(
+                        item
+                        for item in (base_context.effective_instructions, catalogue)
+                        if item
+                    )
+                }
+            )
+        images, image_problems = self._resolve_attachments(attachments or [], sees_images)
+        for problem in image_problems:
+            self.add_message(
+                session_id, kind="status", role="", content=problem, mission_id=mission.id
+            )
+        if submitted.context:
+            # A hook asked for something to be in front of the model this turn —
+            # a ticket body, a deploy freeze, the current on-call. It joins the
+            # effective instructions rather than the task, so it reads as policy
+            # rather than as part of what the user asked for.
+            base_context = base_context.model_copy(
+                update={
+                    "effective_instructions": "\n\n".join(
+                        item
+                        for item in (base_context.effective_instructions, submitted.context)
+                        if item
+                    )
+                }
+            )
         editor = EditTools(
             self.context.root,
             require_read_before_write=True,
@@ -1062,10 +1262,28 @@ class MissionApplicationService:
                     f"Commands cannot run this turn — the "
                     f"{self.context.settings.runtime.default} runtime is unavailable. "
                     "The agent will edit files but cannot verify them. "
-                    "Run /runtime local to execute checks on this machine."
+                    "Run /runtime sandbox to execute checks on this machine with a "
+                    "scrubbed environment, or /runtime local for no isolation."
                 ),
                 mission_id=mission.id,
             )
+        delegation = (
+            DelegationRunner(
+                gateway,
+                self.context.root,
+                mission_id=mission.id,
+                context=base_context,
+                memory=self.memory,
+                memory_task_id=persistent.task_id if persistent else None,
+                memory_session_id=session_id,
+                on_action=self._record_team_action(mission.id),
+                on_action_start=self._record_team_action_started(mission.id),
+                on_member=self._record_team_member(mission.id),
+                on_member_start=self._announce_team_member(mission.id),
+            )
+            if can_delegate
+            else None
+        )
         executor = RecordingActionExecutor(
             editor,
             # The third lock on a planning turn: with no runner attached,
@@ -1076,6 +1294,7 @@ class MissionApplicationService:
                 WebResearchTool(
                     approve=approve,
                     require_approval=(self.context.settings.security.require_approval_for_network),
+                    search_backend=resolved_search_config(self.context.settings.web),
                 ),
                 workbench=workbench,
                 workspace_id=workspace.id if workspace else "",
@@ -1089,6 +1308,11 @@ class MissionApplicationService:
             # Set only when a workspace run is driving the turn: an unattended
             # plan needs a gate on each action, a watched chat does not.
             approve_action=approve_action,
+            hooks=hooks,
+            mcp=mcp,
+            skills=skills,
+            delegate=delegation,
+            code_intel=self.code_intel,
         )
         loop = ToolLoop(
             gateway,
@@ -1116,6 +1340,7 @@ class MissionApplicationService:
                 base_context,
                 on_action=self._record_chat_action(mission.id, session_id, executor, diffs),
                 history=history,
+                images=images,
             )
             if not result.completed:
                 # Carries the outcome so a workspace run can tell "this step was
@@ -1147,6 +1372,23 @@ class MissionApplicationService:
             if runtime is not None:
                 # A container started for this turn must not outlive it.
                 await runtime.cleanup()
+            # The turn's spend account is closed here rather than left to age
+            # out: a long-lived TUI opens a mission per turn, and a ledger that
+            # only ever grew would hold one entry per turn for the whole session.
+            spend = gateway.release_budget(mission.id)
+            if spend is not None and spend.exhausted:
+                self.add_message(
+                    session_id,
+                    kind="status",
+                    role="",
+                    content=(
+                        "This turn stopped at the configured budget ceiling "
+                        f"({spend.model_calls} model calls, {spend.total_tokens:,} tokens"
+                        + (f", ${spend.cost_usd:.4f}" if spend.cost_usd else "")
+                        + "). Adjust `budget` in .daino/config.yaml to allow more."
+                    ),
+                    mission_id=mission.id,
+                )
 
         # A verified finish means the planned work is done, but weaker models
         # routinely forget to re-emit the todo list with completed statuses,
@@ -1257,7 +1499,72 @@ class MissionApplicationService:
                     summary=outcome.answer or outcome.summary or "Chat task finished",
                     outcome=status,
                 )
+        await self._announce_stop(hooks, session_id, mission.id, outcome)
         return outcome
+
+    async def _announce_stop(
+        self,
+        hooks: HookRunner,
+        session_id: str,
+        mission_id: str,
+        outcome: ChatOutcome,
+    ) -> None:
+        """Tell the stop hooks the turn is over, and show anything they say.
+
+        Nothing here can change the outcome — the work is finished and reported.
+        This is the notification point: post to a channel, kick a CI job, ring a
+        bell. A hook that fails is surfaced in the transcript rather than
+        swallowed, because a silently broken notification is indistinguishable
+        from no notification.
+        """
+        if not hooks.configured_for(HookEvent.STOP):
+            return
+        result = await hooks.run(
+            HookEvent.STOP,
+            payload={
+                "mission_id": mission_id,
+                "changed": list(outcome.changed),
+                "verified": outcome.verified,
+                "steps": outcome.steps,
+            },
+        )
+        notes = [item for item in (result.reason, result.context) if item]
+        notes.extend(f"hook failed: {item}" for item in result.failures)
+        if notes:
+            self.add_message(
+                session_id,
+                kind="status",
+                role="",
+                content="\n".join(notes),
+                mission_id=mission_id,
+            )
+
+    def _resolve_attachments(
+        self, attachments: list[str], sees_images: bool
+    ) -> tuple[list[ImagePart], list[str]]:
+        """Turn attached paths into image parts, reporting whatever could not be.
+
+        Problems are returned rather than raised. A user who dragged in four
+        screenshots and one PDF should get the four, plus a line saying what
+        happened to the fifth — not a failed turn.
+        """
+        if not attachments:
+            return [], []
+        if not sees_images:
+            return [], [
+                f"{len(attachments)} attachment(s) were ignored: the model this session uses "
+                "cannot read images. Set `vision: true` on a vision-capable model profile and "
+                "select it with /model."
+            ]
+        parts: list[ImagePart] = []
+        problems: list[str] = []
+        for item in attachments:
+            result = load_image(self.context.root, item)
+            if result.success:
+                parts.append(ImagePart.model_validate(result.data["image"]))
+            else:
+                problems.append(result.error or f"{item} could not be attached.")
+        return parts, problems
 
     def _record_changeset(self, session_id: str, mission_id: str, outcome: ChatOutcome) -> None:
         """Persist one summary of everything the turn edited.

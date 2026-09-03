@@ -43,6 +43,28 @@ class LocalRuntime(Runtime):
         if not self.root.exists():
             raise FileNotFoundError(self.root)
 
+    def environment(self) -> dict[str, str]:
+        """The environment agent commands run with: the user's, plus ``src`` on the path.
+
+        A hook rather than an inline block because
+        :class:`~daino.runtimes.sandbox.SandboxedLocalRuntime` overrides it to
+        scrub credentials out. Inheriting the whole environment is what makes
+        this runtime the unsandboxed tier, and that is the honest default here —
+        the sandboxed one is a separate choice with a separate name.
+        """
+        environment = os.environ.copy()
+        source_root = self.root / "src"
+        if source_root.is_dir():
+            existing_pythonpath = environment.get("PYTHONPATH", "")
+            environment["PYTHONPATH"] = os.pathsep.join(
+                item for item in (str(source_root), existing_pythonpath) if item
+            )
+        return environment
+
+    def wrap(self, arguments: list[str]) -> list[str]:
+        """The argv to actually exec. Overridden to prefix an OS sandbox."""
+        return arguments
+
     async def execute(
         self, command: str, *, timeout: int | None = None, approved: bool = False
     ) -> CommandResult:
@@ -56,18 +78,11 @@ class LocalRuntime(Runtime):
         if not arguments:
             raise PolicyDenied("Empty command")
         started = time.monotonic()
-        environment = os.environ.copy()
-        source_root = self.root / "src"
-        if source_root.is_dir():
-            existing_pythonpath = environment.get("PYTHONPATH", "")
-            environment["PYTHONPATH"] = os.pathsep.join(
-                item for item in (str(source_root), existing_pythonpath) if item
-            )
         try:
             process = await asyncio.create_subprocess_exec(
-                *arguments,
+                *self.wrap(arguments),
                 cwd=self.root,
-                env=environment,
+                env=self.environment(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

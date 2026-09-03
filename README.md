@@ -234,12 +234,44 @@ daemon is actually reachable; otherwise the local subprocess runtime is used, so
 of the box rather than failing on a container that was never available.
 
 ```bash
-daino config set runtime.default local   # or docker
-daino doctor                             # what works here, and why not
+daino config set runtime.default local     # host toolchain, no isolation
+daino config set runtime.default sandbox   # host toolchain, scrubbed environment
+daino config set runtime.default docker    # isolated container
+daino doctor                               # what works here, and why not
 ```
+
+`sandbox` is the middle tier, for the common case where Docker would need an image containing your
+project's whole toolchain. Commands keep the host tools but see an environment allowlist instead of
+every credential you have exported, and — on macOS through `sandbox-exec`, on Linux through
+`bubblewrap` — writes are confined to the project and the network is denied. Where neither is
+installed the environment scrub still applies and `daino doctor` says which level is actually in
+force, rather than implying an isolation it is not providing.
 
 Local commands are still checked by the policy engine and run without a shell. See
 [runtimes](docs/runtimes.md).
+
+## Extending it
+
+Four ways to change what the agent does without changing D[Ai]NO:
+
+```text
+.daino/commands/review-pr.md          ->  /review-pr 481
+.daino/skills/api-conventions/SKILL.md ->  loaded when the model judges it relevant
+.daino/hooks.yaml                      ->  run a formatter after every edit, or refuse one
+.daino/mcp.json                        ->  external tool servers, stdio or HTTP
+```
+
+A slash command is a markdown file with `$ARGUMENTS` in it. A skill is a markdown file whose
+one-line description sits in the prompt while its body is loaded only when the model picks it — so
+a dozen skills cost a dozen lines rather than a dozen documents. A hook is a shell command run
+around what the agent does, using the same JSON-on-stdin protocol Claude Code uses, so scripts
+written for that work here. MCP servers use the standard `mcpServers` file, so a configuration
+copied from another client works unchanged.
+
+Hooks and MCP servers run processes, so their files live inside `.daino/`, which the agent is
+refused write access to. Commands and skills are only prompt text, so the agent may write those.
+
+See [extending](docs/extending.md).
 
 ## Repository intelligence
 
@@ -318,8 +350,10 @@ docker compose run --rm daino daino --help
 - Restore is per checkpoint; interactive hunk-level restore is not exposed.
 - Sessions are repository-local. Multi-user identity and cross-machine sync belong to a future
   Mission Control service.
-- Repository parsing is deepest for Python and common JavaScript/TypeScript; an LSP adapter
-  boundary is reserved but no language server is bundled.
+- Repository parsing is deepest for Python and common JavaScript/TypeScript. No language server is
+  bundled; when one is installed, the agent uses it — every edit reports that file's errors and
+  warnings, and `find_definition` / `find_references` resolve through it. Where none is installed,
+  the agent falls back to grep and says so.
 - Compose deployment assumes an existing Linux host with Docker, Compose, directory permissions,
   and externally managed environment files, TLS, and reverse proxy.
 - Kubernetes and cloud architecture generation are outside this release.
@@ -348,6 +382,8 @@ Existing projects and sessions are detected automatically from legacy locations 
 - [Installation](docs/installation.md)
 - [Getting started](docs/getting-started.md)
 - [Feature overview](docs/features.md)
+- [Extending the agent](docs/extending.md)
+- [Evals](docs/evals.md)
 - [CLI reference](docs/cli-reference.md)
 - [Architecture](docs/architecture.md)
 - [Interactive TUI](docs/tui.md)

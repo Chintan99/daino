@@ -59,6 +59,72 @@ _MEMORY_SEARCH = _tool(
     ["query"],
 )
 
+#: Reading a picture. Separate from ``read_file`` rather than folded into it,
+#: because the two fail differently: ``read_file`` on a PNG should keep saying
+#: "this is not text", and ``read_image`` on a source file should say so too.
+#: Offered only when the routed model can actually see, since a tool whose
+#: result is "the model could not look at it" is worse than no tool.
+READ_IMAGE = _tool(
+    "read_image",
+    "Look at an image in the repository — a screenshot, a mockup, an exported "
+    "diagram. Use it when the task refers to something visual that a file's text "
+    "cannot answer.",
+    {
+        "path": _PATH,
+        "query": {
+            "type": "string",
+            "description": "Optional: what you are trying to find out from it.",
+        },
+    },
+    ["path"],
+)
+
+#: What a compiler already knew and nobody asked it. Definitions and references
+#: come from the same language servers the IDE uses, so an answer here agrees
+#: with what the user sees in their editor.
+#:
+#: Both take a symbol name rather than a position. LSP is zero-based in line and
+#: character; a model deriving those from text it read gets them wrong often
+#: enough that the tool would cost more than it returned.
+_CODE_INTEL_TOOLS: list[dict[str, Any]] = [
+    _tool(
+        "find_definition",
+        "Resolve where a symbol is defined, using the project's language server. "
+        "More reliable than grep for a name that appears in many files, and it "
+        "returns the server's own summary of the symbol alongside the location.",
+        {
+            "path": _PATH,
+            "symbol": {
+                "type": "string",
+                "description": "Identifier as it appears in this file.",
+            },
+        },
+        ["path", "symbol"],
+    ),
+    _tool(
+        "find_references",
+        "List every place a symbol is used. Run this before renaming or changing "
+        "a signature: it is what tells you how much else has to change.",
+        {
+            "path": _PATH,
+            "symbol": {
+                "type": "string",
+                "description": "Identifier as it appears in this file.",
+            },
+        },
+        ["path", "symbol"],
+    ),
+    _tool(
+        "diagnostics",
+        "Ask the language server for current errors and warnings in one file. "
+        "Edits report these automatically, so use this to re-check a file after "
+        "changing something else, or to inspect a file you have not edited.",
+        {"path": _PATH},
+        ["path"],
+    ),
+]
+
+
 AGENT_TOOL_SPECS: list[dict[str, Any]] = [
     _tool(
         "read_file",
@@ -245,6 +311,10 @@ AGENT_TOOL_SPECS: list[dict[str, Any]] = [
         },
         ["summary"],
     ),
+    # Looking up a definition changes nothing, so these belong to every
+    # surface derived from this list — including the read-only ones, where an
+    # explorer that can only grep is exactly what this improves on.
+    *_CODE_INTEL_TOOLS,
 ]
 
 _RESPOND = _tool(
@@ -640,7 +710,20 @@ WORKSPACE_TOOL_SPECS: list[dict[str, Any]] = [
 #: and report. No edit tools at all — the synthesis step writes the document, so
 #: several researchers can run at once without a scope conflict to arbitrate.
 _RESEARCH_ACTIONS = frozenset(
-    {"read_file", "search_text", "glob", "grep", "list_directory", "finish"}
+    {
+        "read_file",
+        "search_text",
+        "glob",
+        "grep",
+        "list_directory",
+        # Reading what the compiler knows is evidence gathering, and it is what
+        # separates "this name appears in nine files" from "this is where it is
+        # defined and these nine are its callers".
+        "find_definition",
+        "find_references",
+        "diagnostics",
+        "finish",
+    }
 )
 RESEARCH_TOOL_SPECS: list[dict[str, Any]] = [
     *(spec for spec in AGENT_TOOL_SPECS if spec["function"]["name"] in _RESEARCH_ACTIONS),
@@ -651,7 +734,19 @@ RESEARCH_TOOL_SPECS: list[dict[str, Any]] = [
 #: Read-only evidence-gathering surface used by QA specialists. Omitting edit,
 #: command, todo, and respond tools makes the no-write guarantee visible to the
 #: model as well as enforced by ``EditTools``.
-_QA_ACTIONS = frozenset({"read_file", "search_text", "glob", "grep", "list_directory", "finish"})
+_QA_ACTIONS = frozenset(
+    {
+        "read_file",
+        "search_text",
+        "glob",
+        "grep",
+        "list_directory",
+        "find_definition",
+        "find_references",
+        "diagnostics",
+        "finish",
+    }
+)
 QA_TOOL_SPECS: list[dict[str, Any]] = [
     spec for spec in AGENT_TOOL_SPECS if spec["function"]["name"] in _QA_ACTIONS
 ]
@@ -659,8 +754,24 @@ QA_TOOL_SPECS: list[dict[str, Any]] = [
 #: Every action that can change the working tree or run a process. Named as one
 #: set so a read-only surface is defined by subtraction — adding a new write
 #: tool cannot silently leak into a surface that is meant to have none.
+#:
+#: ``call_tool`` is in here because an external tool can do anything: an MCP
+#: server that files a ticket, deploys a service, or writes to a database is a
+#: side effect Daino cannot inspect. A read-only surface must therefore exclude
+#: it, which is exactly what subtracting this set achieves.
 MUTATING_ACTIONS: frozenset[str] = frozenset(
-    {"write", "replace", "multi_edit", "delete", "run_command", "resolve_command_failure"}
+    {
+        "write",
+        "replace",
+        "multi_edit",
+        "delete",
+        "run_command",
+        "resolve_command_failure",
+        "call_tool",
+        # A delegate can edit and run commands. A read-only surface that offered
+        # this would let a planning turn make changes through a proxy.
+        "delegate",
+    }
 )
 
 #: Reading and answering, and nothing else. Used by the design planner, which
@@ -678,9 +789,127 @@ PLANNING_TOOL_SPECS: list[dict[str, Any]] = [
 ]
 
 
+#: Every name ``AgentAction`` itself understands. Computed from the schema rather
+#: than listed again, so a new built-in action cannot be mistaken for an external
+#: one by a stale copy of the list.
+BUILTIN_ACTIONS: frozenset[str] = frozenset(
+    AgentAction.model_fields["action"].annotation.__args__  # type: ignore[union-attr]
+)
+
+
+#: The fallback route to an external tool, for a backend with no native tool
+#: calling. A model that *does* have native tool calling never sees this: it is
+#: offered each MCP tool's real schema and calls it by name, which is both easier
+#: for the model and self-documenting. This exists so a schema-constrained local
+#: model is not locked out of the ecosystem entirely.
+CALL_TOOL = _tool(
+    "call_tool",
+    "Invoke an external tool provided by a connected MCP server. Use the exact "
+    "namespaced name from the external tool catalogue in your instructions, and "
+    "pass that tool's own arguments as an object.",
+    {
+        "tool_name": {
+            "type": "string",
+            "description": "Namespaced tool name, for example mcp__github__create_issue.",
+        },
+        "arguments": {
+            "type": "object",
+            "description": "Arguments as the external tool's own schema defines them.",
+            "additionalProperties": True,
+        },
+    },
+    ["tool_name", "arguments"],
+)
+
+
+#: How a model reaches a project's own written-down practice. Offered only when
+#: the project actually has skills; a tool that always answers "there are none"
+#: is a tool that teaches the model to stop trying.
+#:
+#: The two-step shape — names and descriptions in the prompt, bodies on request —
+#: is what makes a dozen skills affordable. Inlining a dozen full documents would
+#: spend the context window on instructions that are irrelevant to this task.
+SKILL = _tool(
+    "skill",
+    "Load a project skill: written-down practice for a particular kind of task. "
+    "Use it when the task matches one of the skills listed in your instructions, "
+    "before starting the work rather than after.",
+    {
+        "skill_name": {
+            "type": "string",
+            "description": "Exact skill name from the list in your instructions.",
+        }
+    },
+    ["skill_name"],
+)
+
+
+#: Ceiling on one delegation. ``MAX_TEAM_MEMBERS`` is ten because a team lead
+#: plans deliberately; a mid-turn delegation is a reflex, and a model that asks
+#: for ten subagents on impulse has almost certainly mis-decomposed the problem.
+MAX_DELEGATES = 5
+
+DELEGATE = _tool(
+    "delegate",
+    "Run several scoped subagents concurrently and get their reports back in "
+    "this turn. Use it when the work splits into parts that do not depend on "
+    "each other — investigating three subsystems, or changing an API and its "
+    "tests. Each subagent starts fresh with no view of this conversation, so "
+    "state each objective completely. Subagents cannot delegate further.",
+    {
+        "delegates": {
+            "type": "array",
+            "maxItems": MAX_DELEGATES,
+            "description": "One entry per subagent. They all run at the same time.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "objective": {
+                        "type": "string",
+                        "description": (
+                            "Self-contained instruction. The subagent sees this and the "
+                            "repository, nothing else."
+                        ),
+                    },
+                    "scope": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Paths or globs this subagent may edit. Required when "
+                            "read_only is false, and must not overlap another "
+                            "delegate's scope."
+                        ),
+                    },
+                    "read_only": {
+                        "type": "boolean",
+                        "description": "True to investigate and report without editing.",
+                    },
+                },
+                "required": ["objective"],
+            },
+        }
+    },
+    ["delegates"],
+)
+
+
 def tool_call_to_action(call: ToolCall) -> AgentAction:
-    """Convert one native tool call into the validated loop action."""
+    """Convert one native tool call into the validated loop action.
+
+    A name the flat action space does not know is an external tool — an MCP
+    server's, advertised alongside the built-ins — and becomes a ``call_tool``
+    carrying the name and the server's own arguments verbatim. Funnelling it
+    through the same ``AgentAction`` is what keeps one executor, one observation
+    format, and one approval gate for internal and external tools alike.
+    """
     arguments = {key: value for key, value in call.arguments.items() if key != "action"}
+    if call.name not in BUILTIN_ACTIONS:
+        return AgentAction(
+            thought=str(arguments.pop("thought", "") or ""),
+            action="call_tool",
+            tool_name=call.name,
+            arguments=arguments,
+        )
     return AgentAction.model_validate({"action": call.name, **arguments})
 
 
