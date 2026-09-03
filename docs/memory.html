@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="DAiNO memory is local-first and selective. It does not make the model remember every prior message; ContextBuilder decides which instructions, task state, memories, source files, a" />
+    <meta name="theme-color" content="#07110d" />
+    <title>Memory architecture — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html" class="current" aria-current="page">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="missions.html">Working with it</a> <span>/</span> Memory architecture</div>
+<h1 id="memory-architecture">Memory architecture</h1>
+<p>D[Ai]NO memory is local-first and selective. It does not make the model remember every prior
+message; <code>ContextBuilder</code> decides which instructions, task state, memories, source files, and recent
+conversation are useful for the current call. The agent still works when embeddings are disabled.</p>
+<h2 id="layers-and-storage">Layers and storage</h2>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Lifetime</th>
+<th>Storage</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Working</td>
+<td>Current process/task</td>
+<td><code>WorkingMemory</code>, checkpointed incrementally</td>
+<td>Goal, plan, current/completed/pending steps, inspected/changed files, commands, important output, tests, errors, questions and hypotheses</td>
+</tr>
+<tr>
+<td>Persistent task</td>
+<td>Restarts and disconnects</td>
+<td>Project SQLite <code>persistent_task_states</code></td>
+<td>Crash-safe copy of working state, repository, branch, mission/session IDs and timestamps</td>
+</tr>
+<tr>
+<td>Procedural</td>
+<td>Until the user edits it</td>
+<td><code>~/.daino/DAINO.md</code> and repository <code>DAINO.md</code> files</td>
+<td>Explicit human instructions scoped by directory</td>
+</tr>
+<tr>
+<td>Project semantic</td>
+<td>Across sessions in one repository</td>
+<td>Project SQLite <code>memory_records</code></td>
+<td>Small atomic facts with source, confidence, importance and staleness metadata</td>
+</tr>
+<tr>
+<td>Decision</td>
+<td>Across sessions in one repository</td>
+<td>Typed <code>memory_records</code></td>
+<td>The decision, reason, alternatives, source and active/superseded state</td>
+</tr>
+<tr>
+<td>Failure/solution</td>
+<td>Across relevant future errors</td>
+<td>Typed <code>memory_records</code></td>
+<td>Normalized error/fingerprint, cause, successful fix and useful failed attempts</td>
+</tr>
+<tr>
+<td>Episodic</td>
+<td>Task/milestone boundaries</td>
+<td><code>memory_episodes</code> plus a retrievable episode summary</td>
+<td>Goal, major work, discoveries, decisions, changes, commands, tests, outcome and unresolved work</td>
+</tr>
+<tr>
+<td>User</td>
+<td>Across repositories</td>
+<td>Private <code>~/.daino/memory.db</code></td>
+<td>Conservative, explicit cross-project preferences</td>
+</tr>
+</tbody>
+</table>
+<p><code>DAINO_HOME</code> overrides <code>~/.daino</code>. A configured <code>DAINO_CONFIG_HOME</code> is also honored so portable
+and test installations keep all user state together. User-memory directories and databases are
+created with private permissions. Project operational state remains under <code>&lt;repo&gt;/.daino/</code> and is
+ignored by Git.</p>
+<p>Project IDs use a normalized <code>origin</code> remote when one exists and a resolved path otherwise. They
+are hashes, so repositories with the same folder name do not share memory; remote-backed checkouts
+retain identity when moved. Git branch/revision and source-file digests are recorded where useful,
+but Git is not required.</p>
+<h2 id="sqlite-schema-and-migration">SQLite schema and migration</h2>
+<p>Alembic revision <code>0005_memory_system</code> adds:</p>
+<ul>
+<li><code>memory_records</code>: type, scope, project/task/session IDs, atomic content and summary, importance,
+confidence, source/source type, tags, lifecycle status, access/verification timestamps and count,
+repository revision, source digest, replacement ID, rationale, and legacy compatibility fields;</li>
+<li><code>memory_embeddings</code>: provider/model/dimensions/vector, keyed by memory ID and kept separate so an
+embedding implementation or storage format can change independently;</li>
+<li><code>persistent_task_states</code>: the complete incrementally written task/working-state envelope and its
+latest compacted context;</li>
+<li><code>memory_episodes</code>: structured session/task outcomes rather than transcripts.</li>
+</ul>
+<p>Run normal Alembic upgrades with <code>alembic upgrade head</code>. Startup also performs an idempotent,
+additive bridge for older SQLite <code>memory_records</code> tables. This matters after an abrupt update:
+<code>create_all()</code> alone cannot add columns, and restart recovery must not depend on a separate manual
+step. New tables are still versioned by Alembic.</p>
+<p>All access goes through <code>MemoryManager</code>; agents never receive a database path or SQL tool. The
+legacy <code>MemoryStore</code> remains compatible for existing architecture-decision callers.</p>
+<h2 id="dainomd-hierarchy">DAINO.md hierarchy</h2>
+<p>D[Ai]NO resolves:</p>
+<ol>
+<li><code>~/.daino/DAINO.md</code> (global),</li>
+<li><code>&lt;repository&gt;/DAINO.md</code> (repository),</li>
+<li>every <code>DAINO.md</code> from the repository root down to the directory containing each target file.</li>
+</ol>
+<p>For <code>backend/auth/service.py</code>, <code>backend/DAINO.md</code> applies; <code>frontend/DAINO.md</code> does not. Parent
+layers are rendered before closer layers and every block is labeled with its scope. An explicit
+<code>key: value</code> or <code>key = value</code> directive in a closer file replaces the broader value rather than
+putting both conflicting values in the prompt. Other prose remains in its labeled layer, with the
+closest applicable file authoritative on conflict. Files outside the repository are never read as
+project instructions, and oversized or undecodable instruction files are ignored safely.</p>
+<p>Current explicit user instructions have higher procedural priority than every DAINO.md. They are
+placed in a final, labeled layer so the resolution is inspectable.</p>
+<h2 id="authority-and-conflict-handling">Authority and conflict handling</h2>
+<p>The effective authority order is:</p>
+<pre><code class="language-text">current repository/source code
+&gt; current explicit user instruction
+&gt; closest scoped DAINO.md
+&gt; repository DAINO.md
+&gt; global DAINO.md
+&gt; active explicit project decisions
+&gt; verified project semantic memory
+&gt; episodic/session memory
+&gt; global automatically learned memory
+</code></pre>
+<p>Repository facts are not overridden by memory. A fact derived from a file records that file's
+SHA-256 digest. Retrieval checks the current file cheaply; if it changed or disappeared, the
+memory becomes <code>stale</code>, is omitted by default, and remains inspectable for historical reasoning.
+Verification refreshes its digest. A corrected fact can supersede the old one, preserving the old
+record as <code>superseded</code> and linking it to the replacement. Archived and superseded records do not
+enter normal context. An agent must surface an active conflicting user decision instead of silently
+replacing it.</p>
+<h2 id="retrieval-algorithm">Retrieval algorithm</h2>
+<p>Retrieval is two-stage and bounded. SQLite first filters at most a small candidate set by project,
+scope, type, task/session association and lifecycle status. Ranking then combines:</p>
+<ul>
+<li>lexical term coverage and exact-phrase match;</li>
+<li>optional cosine similarity from the configured embedding adapter;</li>
+<li>project and current-task affinity;</li>
+<li>a decision boost, or a failure/fingerprint boost when current output resembles an error;</li>
+<li>importance, confidence, recency/decay, access history and source reliability;</li>
+<li>a strong stale penalty and an unrelated-memory penalty.</li>
+</ul>
+<p>Metadata quality orders relevant candidates but cannot make an unrelated high-importance memory
+relevant by itself. Project memories normally outrank global ones. Only the configured top N that
+fit <code>memory.max_context_tokens</code> reach <code>ContextBuilder</code>. Debug retrieval records the score
+components and emits a redacted <code>memory_retrieved</code> audit event explaining selection.</p>
+<p><code>EmbeddingProvider</code> is a small protocol. The built-in disabled provider returns no vectors;
+<code>CallableEmbeddingProvider</code> adapts a local model or OpenAI-compatible client. Lexical and metadata
+ranking remain fully operational without either.</p>
+<h2 id="compaction-promotion-and-extraction">Compaction, promotion, and extraction</h2>
+<p>When loop context reaches <code>memory.compaction_threshold</code> of the selected model input budget, old
+tool exchanges become one structured state block while the original task and complete recent tool
+groups remain. The block preserves goal and requirements, plan/progress, files, decisions,
+instructions, tests, errors, unresolved work, hypotheses and next action. A <code>ContextCompacted</code>
+event is persisted. Persistent task compaction stores the same contract for restart recovery.</p>
+<p>For models using a compact execution profile, <code>ContextBuilder</code> also produces a <code>TaskPacket</code>. It is
+a model-independent handoff, not another memory store: objective, acceptance checks, explicit
+constraints, active decisions, relevant files, completed/pending steps, current errors,
+verification commands, and one next action. Initial retrieval is deliberately shallow. The model
+can request omitted source with <code>read_file</code>/<code>grep</code> and omitted durable context with
+<code>memory_search</code>; those validated tools never expose the database itself. This lets a small model
+resume the same persisted task as a larger model without inheriting an oversized transcript.</p>
+<p>Memory lifecycle is <code>scratch -&gt; session -&gt; project -&gt; global</code>. <code>promote()</code> and <code>demote()</code> move a
+record through the service and emit audit events. Automatic extraction is deliberately
+conservative: explicit durable cross-project preferences and clear project architecture decisions
+are candidates; transient values, speculation, raw tool output and ordinary conversation are not.
+Episodes are created at meaningful task completion boundaries. Failure memories are created only
+when a cause and successful fix are known.</p>
+<p>Before every write, likely API keys, passwords, tokens, authorization headers, JWTs, private keys,
+AWS access keys and credentialed database URLs are redacted. <code>.env</code> source content is omitted.
+Stored command output is short, sanitized and structured rather than copied wholesale.</p>
+<h2 id="configuration">Configuration</h2>
+<pre><code class="language-yaml">memory:
+  enabled: true
+  auto_save: true
+  auto_extract: true
+  auto_resume: false
+  max_retrieved_items: 8
+  max_context_tokens: 2000
+  compaction_threshold: 0.80
+  embedding_provider: disabled # disabled, local, openai-compatible
+  embedding_model: &quot;&quot;
+  embedding_base_url: &quot;&quot;
+  embedding_api_key: &quot;&quot; # env://, keyring://, or file:// reference
+  decay_enabled: true
+  decay_half_life_days: 180
+  user_memory_enabled: true
+  failure_memory_enabled: true
+</code></pre>
+<h2 id="user-and-agent-controls">User and agent controls</h2>
+<p>TUI commands:</p>
+<pre><code class="language-text">/memory
+/memory search websocket disconnect
+/memory project
+/memory decisions
+/memory failures
+/memory user
+/memory forget memory-...
+/memory verify memory-...
+/memory clear-session
+/memory clear-project
+/tasks
+/resume mission-...
+</code></pre>
+<p>Headless equivalents include <code>daino memory list</code>, <code>search</code>, <code>forget</code>, <code>verify</code>, and
+<code>clear-project</code>. Listings show type, scope, lifecycle status, source and confidence, so users can
+understand what is remembered and why. The validated agent surface provides <code>memory_search</code>,
+<code>memory_save</code>, <code>memory_update</code>, <code>memory_forget</code>, <code>memory_list</code>, and <code>memory_verify</code>; global saves are
+rejected unless their text is an explicit cross-project preference.</p>
+<h2 id="multi-session-example">Multi-session example</h2>
+<pre><code class="language-text">Session 1
+  Learns: &quot;The backend framework is Flask.&quot;
+  Source: backend.toml (digest A)
+  Starts mission-migration and persists its first inspected file.
+
+Restart / Session 2
+  Startup offers &quot;Migrate Flask to FastAPI&quot; as resumable.
+  Retrieval finds the Flask fact for a backend-framework question.
+
+Repository changes
+  backend.toml now says framework = &quot;fastapi&quot; (digest B).
+
+Session 3
+  Retrieval notices B != A, marks the Flask fact stale, and excludes it.
+  Repository content wins. A verified FastAPI fact supersedes the old record.
+</code></pre>
+<p>This scenario is executable in <code>tests/integration/test_memory_multisession.py</code>.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="missions.html"><span>Previous</span><strong>Missions</strong></a>
+            <a class="doc-pager-next" href="repository-intelligence.html"><span>Next</span><strong>Repository intelligence</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#layers-and-storage">Layers and storage</a>
+            <a href="#sqlite-schema-and-migration">SQLite schema and migration</a>
+            <a href="#dainomd-hierarchy">DAINO.md hierarchy</a>
+            <a href="#authority-and-conflict-handling">Authority and conflict handling</a>
+            <a href="#retrieval-algorithm">Retrieval algorithm</a>
+            <a href="#compaction-promotion-and-extraction">Compaction, promotion, and extraction</a>
+            <a href="#configuration">Configuration</a>
+            <a href="#user-and-agent-controls">User and agent controls</a>
+            <a href="#multi-session-example">Multi-session example</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="This walkthrough takes a fresh DAiNO installation through its first verified coding task. You need Python 3.12 or newer(https://www.python.org/downloads/), Git, and either a hosted" />
+    <meta name="theme-color" content="#07110d" />
+    <title>Getting started — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html" class="current" aria-current="page">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="installation.html">Start here</a> <span>/</span> Getting started</div>
+<h1 id="getting-started">Getting started</h1>
+<p>This walkthrough takes a fresh D[Ai]NO installation through its first verified coding task. You
+need <a href="https://www.python.org/downloads/" target="_blank" rel="noreferrer">Python 3.12 or newer</a>, Git, and either a hosted model API
+key or a running local model server.</p>
+<p>!!! tip &quot;Not installed yet?&quot;</p>
+<pre><code>Follow [Installation](installation.md) first. The recommended installer creates an isolated
+application environment, so you never need to activate a virtual environment to run D[Ai]NO.
+</code></pre>
+<h2 id="1-open-and-initialize-a-project">1. Open and initialize a project</h2>
+<p>Move into an existing repository and initialize D[Ai]NO:</p>
+<pre><code class="language-bash">cd /path/to/your/project
+daino init
+</code></pre>
+<p>Initialization creates <code>.daino/config.yaml</code>, a local SQLite database, and an incremental repository
+index. It also selects a usable local or Docker runtime. Existing Git history is preserved. In an
+empty directory, D[Ai]NO initializes Git and creates a baseline commit so checkpoints and missions
+have a safe starting revision.</p>
+<h2 id="2-connect-a-model">2. Connect a model</h2>
+<p>Choose one route. Provider configuration is saved globally so the model becomes available to
+other projects, while project-specific overrides remain possible.</p>
+<p>=== &quot;OpenRouter&quot;</p>
+<pre><code>Export the secret in your shell; D[Ai]NO stores only the `env://` reference:
+
+```bash
+export OPENROUTER_API_KEY=&quot;your-key&quot;
+
+daino providers add openrouter \
+  --type openrouter \
+  --base-url https://openrouter.ai/api/v1 \
+  --model openai/gpt-5.6 \
+  --api-key-ref env://OPENROUTER_API_KEY
+```
+</code></pre>
+<p>=== &quot;Ollama (local)&quot;</p>
+<pre><code>Start Ollama and make sure the model has been pulled, then add its OpenAI-compatible endpoint:
+
+```bash
+ollama pull qwen2.5-coder:7b
+
+daino providers add local-ollama \
+  --type ollama \
+  --base-url http://127.0.0.1:11434/v1 \
+  --model qwen2.5-coder:7b \
+  --local
+```
+</code></pre>
+<p>=== &quot;vLLM (local)&quot;</p>
+<pre><code>With a vLLM OpenAI-compatible server already running:
+
+```bash
+daino providers add local-vllm \
+  --type vllm \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model Qwen/Qwen2.5-Coder-7B-Instruct \
+  --local
+```
+</code></pre>
+<p>Other OpenAI-compatible services use <code>--type openai-compatible</code>. See <a href="providers.html">Providers</a> for
+capabilities, tool calling, structured output, and local-server concurrency.</p>
+<h2 id="3-verify-the-setup">3. Verify the setup</h2>
+<p>Replace the provider/profile name if you chose a local option:</p>
+<pre><code class="language-bash">daino providers test openrouter
+daino models test openrouter
+daino doctor
+</code></pre>
+<p><code>providers test</code> checks endpoint health, <code>models test</code> makes a minimal completion request, and
+<code>doctor</code> validates the project configuration, database, Git, and runtime prerequisites.</p>
+<h2 id="4-launch-a-workspace">4. Launch a workspace</h2>
+<p>Choose either interface:</p>
+<pre><code class="language-bash">daino . --tui    # terminal interface
+daino . --gui    # browser IDE
+</code></pre>
+<p>The GUI runs as a background process by default. Use <code>daino ps</code> to list local GUI sessions and
+<code>daino kill .</code> to stop the one for the current project. Add <code>--foreground</code> when you want its logs
+attached to the terminal.</p>
+<h2 id="5-complete-a-first-task">5. Complete a first task</h2>
+<p>Start with a small, verifiable request:</p>
+<pre><code class="language-text">Explain how this project starts and which file is the entry point.
+</code></pre>
+<p>Questions are answered without editing. Then request a change:</p>
+<pre><code class="language-text">Add input validation to the user creation endpoint and cover the invalid-email case with a test.
+</code></pre>
+<p>D[Ai]NO reads relevant files, maintains a visible checklist, asks before sensitive commands,
+applies scoped edits, and runs the proposed verification. In the TUI, these commands are useful
+after the turn:</p>
+<pre><code class="language-text">/diff          # inspect the complete change
+/test          # run configured verification
+/review        # request an independent model review
+/checkpoint    # create another manual recovery point
+</code></pre>
+<p>Use <code>@</code> in the composer to attach a file or symbol explicitly. Prefix a command with <code>!</code> to run it
+yourself and add its output to the conversation, for example <code>!pytest -q</code>.</p>
+<h2 id="6-pick-the-right-workflow">6. Pick the right workflow</h2>
+<table>
+<thead>
+<tr>
+<th>Work</th>
+<th>Recommended entry point</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Ask about the repository</td>
+<td>Plain prompt or <code>/ask</code></td>
+</tr>
+<tr>
+<td>Make a focused change</td>
+<td>Plain prompt in the TUI or GUI</td>
+</tr>
+<tr>
+<td>Preview a plan without edits</td>
+<td>Plan mode or <code>/plan</code></td>
+</tr>
+<tr>
+<td>Split independent work</td>
+<td><code>/team &lt;instruction&gt;</code></td>
+</tr>
+<tr>
+<td>Run a durable, isolated workflow</td>
+<td><code>daino run &quot;&lt;request&gt;&quot;</code> or <code>/run</code></td>
+</tr>
+<tr>
+<td>Audit the whole project</td>
+<td>QA workspace in the TUI or GUI</td>
+</tr>
+<tr>
+<td>Automate checks</td>
+<td><code>daino test --json</code></td>
+</tr>
+</tbody>
+</table>
+<p>The four autonomy modes—Plan, Ask, Session, and Full—control whether D[Ai]NO can edit or approve
+sensitive command categories. They never bypass hard-denied destructive commands or repository
+boundaries. Read <a href="security.html">Security</a> before using Full mode or remote operations.</p>
+<h2 id="where-daino-stores-data">Where D[Ai]NO stores data</h2>
+<table>
+<thead>
+<tr>
+<th>Location</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.daino/config.yaml</code></td>
+<td>Project runtime, verification, and security settings</td>
+</tr>
+<tr>
+<td><code>.daino/daino.db</code></td>
+<td>Sessions, missions, events, memory, checkpoints, and evidence metadata</td>
+</tr>
+<tr>
+<td><code>.daino/</code></td>
+<td>Project-local designs, QA reports, logs, workspaces, and generated state</td>
+</tr>
+<tr>
+<td><code>~/.config/daino/</code></td>
+<td>Global providers, model profiles, routing, preferences, and private secret files</td>
+</tr>
+<tr>
+<td><code>~/.daino/</code></td>
+<td>Cross-project user memory and global <code>DAINO.md</code> instructions</td>
+</tr>
+</tbody>
+</table>
+<p>Next, browse the <a href="features.html">Feature overview</a>, learn the <a href="tui.html">Terminal UI</a>, or explore the
+<a href="gui.html">Browser IDE</a>.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="installation.html"><span>Previous</span><strong>Installation</strong></a>
+            <a class="doc-pager-next" href="features.html"><span>Next</span><strong>Features</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#1-open-and-initialize-a-project">1. Open and initialize a project</a>
+            <a href="#2-connect-a-model">2. Connect a model</a>
+            <a href="#3-verify-the-setup">3. Verify the setup</a>
+            <a href="#4-launch-a-workspace">4. Launch a workspace</a>
+            <a href="#5-complete-a-first-task">5. Complete a first task</a>
+            <a href="#6-pick-the-right-workflow">6. Pick the right workflow</a>
+            <a href="#where-daino-stores-data">Where D[Ai]NO stores data</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

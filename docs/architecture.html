@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="DAiNO has two front-ends — the terminal UI (daino/tui) and the browser IDE (daino/server + daino/gui) — over one agent runtime. Both depend only on daino/application facades and ty" />
+    <meta name="theme-color" content="#07110d" />
+    <title>Architecture — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html" class="current" aria-current="page">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="cli-reference.html">Reference</a> <span>/</span> Architecture</div>
+<h1 id="architecture">Architecture</h1>
+<h2 id="interactive-presentation-boundary">Interactive presentation boundary</h2>
+<p>D[Ai]NO has two front-ends — the terminal UI (<code>daino/tui</code>) and the browser IDE (<code>daino/server</code> +
+<code>daino/gui</code>) — over <strong>one</strong> agent runtime. Both depend only on <code>daino/application</code> facades and typed
+events; neither applies patches, chooses provider credentials, creates worktrees, executes test
+commands, or deploys services directly. There is a single agent implementation; the GUI is a
+transport and a frontend, not a second agent.</p>
+<p><code>ProjectContext</code> assembles validated settings, the database, and an <code>EventBus</code>. Application services
+provide mission, repository, verification, provider, settings, checkpoint, and deployment use
+cases. The existing <code>MissionService</code>, model gateway, repository indexer, runtime, verification
+engine, workspace manager, and deployment manager remain the authoritative implementations.</p>
+<p>Core lifecycle events are serializable dataclasses in <code>daino/events/events.py</code>. They are persisted
+to <code>mission_events</code>, mirrored to the redacted audit log, and consumed live by both the Textual
+workers and the browser IDE over WebSockets — the same stream, two consumers.</p>
+<p>D[Ai]NO separates orchestration from every environment-specific boundary:</p>
+<pre><code class="language-text">Typer CLI
+  -&gt; MissionService
+     -&gt; RequirementsCompiler / Planner / specialist agents
+     -&gt; ModelGateway -&gt; ModelRouter -&gt; LLMProvider
+     -&gt; RepositoryIndexer -&gt; ContextCompiler
+     -&gt; EditTools / VerificationEngine -&gt; Runtime
+     -&gt; WorkspaceManager -&gt; controlled Git client
+     -&gt; SQLAlchemy persistence / evidence / audit log
+DeploymentManager -&gt; LocalRuntime or RemoteSSHRuntime
+</code></pre>
+<p>Strict Pydantic contracts are the protocol between model calls, agents, tools, verification, and
+deployment. Malformed model output is repaired a bounded number of times and is never executed.
+SQLAlchemy records durable state independently of terminal history. The browser IDE already uses
+this to call the same services; a worker queue, IDE extension, or remote Mission Control could do
+the same without moving orchestration logic.</p>
+<h2 id="browser-ide-server">Browser IDE server</h2>
+<pre><code class="language-text">D[Ai]NO CORE (agent · LLM · tools · fs · shell · git · memory · sessions)
+   -&gt; EventBus (structured, serializable events)
+      -&gt; D[Ai]NO TUI  (Textual)
+      -&gt; Local API    (FastAPI, 127.0.0.1)  -&gt; WebSocket -&gt; React GUI (daino/gui)
+</code></pre>
+<p><code>daino/server</code> is a thin FastAPI + WebSocket transport built by <code>create_app(context)</code> from a
+<code>ProjectContext</code>. <code>GuiState</code> holds the shared <code>MissionApplicationService</code>, <code>DesignService</code>,
+<code>TerminalManager</code>, <code>PreviewManager</code>, <code>GitClient</code>, and <code>FileTools</code>, so every request and socket uses
+the same runtime, session store, and event bus as the TUI.</p>
+<ul>
+<li><code>/ws/session/{id}</code> drains <code>EventBus.open_stream()</code> to the browser and supplies a socket-backed
+<code>ApprovalCallback</code>, so a GUI turn is the <em>same</em> <code>MissionApplicationService.chat</code> turn the TUI runs
+— streamed events in, command approvals round-tripped, identical <code>CommandGate</code>/<code>PolicyEngine</code>.</li>
+<li>REST routes cover file browsing/editing (optimistic-concurrency conflict checks via content hash),
+Git status/diff, sessions/messages/context, design CRUD and granular node/edge mutations, preview
+process detection/lifecycle, and PTY terminals (<code>daino/services/terminal.py</code>).</li>
+<li><code>daino/server/launch.py</code> resolves the project (initializing like <code>daino init</code> on first run),
+serves the built <code>daino/gui/dist</code>, picks a free port, binds <code>127.0.0.1</code>, and opens a browser.</li>
+</ul>
+<h2 id="design-workspace">Design workspace</h2>
+<p><code>daino/design</code> is a structured, versioned artifact store (<code>DesignService</code>) under
+<code>.daino/designs/&lt;id&gt;/design.json</code> for architecture, flowchart, database, API-flow, UI, and prototype
+diagrams. The GUI canvas and the agent edit the <strong>same</strong> artifact: eight granular agent tools
+(<code>create_design</code>, <code>read_design</code>, <code>update_design</code>, <code>add/update/delete_design_node</code>,
+<code>connect/disconnect_design_nodes</code>) are wired through the normal <code>AgentAction</code> schema →
+<code>ActionExecutor</code> → tool-spec path, so no full-JSON rewrite is needed for a small change, and every
+mutation publishes <code>DesignCreated</code>/<code>DesignUpdated</code> on the bus. Design never writes production code
+directly; &quot;Implement Design&quot; asks the agent to inspect the repository and propose a plan first.</p>
+<p>Mission task execution is sequential by design. Task dependencies are validated and topologically
+ordered, and one builder loop runs at a time inside the mission worktree.</p>
+<h2 id="the-chat-agent">The chat agent</h2>
+<p>A bare prompt does not go to a question-answering path. It runs <code>ToolLoop</code> — the same loop the
+mission builder uses — with the builder's grounded tools plus <code>respond</code>, and the model chooses
+which the request called for. There is no separate classifier: a request to change something is
+carried out rather than described, and a question is answered without touching the repository.</p>
+<p>The loop speaks both dialects a backend may offer. Where the provider advertises native tool
+calling the action space is sent as OpenAI-format tools; where it does not, or where the backend
+rejects the tools parameter once, the same action is expressed as schema-constrained JSON, which
+Ollama decodes with <code>format</code> and vLLM with <code>guided_json</code>. Either way the executor sees one
+validated <code>AgentAction</code> at a time, so scope checks, observations, and the audit ledger do not vary
+by backend.</p>
+<p>Command execution is layered so that no single component both decides and acts: <code>CommandGate</code>
+decides (allow, ask, refuse) from policy plus session memory, <code>CommandRunner</code> asks the interface
+when the gate says to, and the configured <code>Runtime</code> executes. The interface supplies the approval
+callback, so a headless caller with no approver gets a refusal rather than silently inheriting
+permissions the TUI would have prompted for. Mission builders use the same runner for unattended
+safe commands, which lets them inspect tests and builds before the outer verification/repair gate.
+For interactive edits, <code>finish</code> is refused until every proposed verification command has most
+recently succeeded in the same tool loop. A failed agent command also remains an unresolved gate:
+the exact command must later pass, or a rejected <code>a &amp;&amp; b</code> chain must be rerun as two successful
+standalone commands. An environment-specific failure can be cleared by an explicitly linked,
+already-successful equivalent command (for example a Docker build replacing unavailable host
+<code>npm</code>); D[Ai]NO rejects the link unless that evidence really passed. This prevents an unrelated
+green check from silently hiding earlier red evidence. The independent verifier then repeats the
+declared checks; a failure records a failed mission and the UI says the changes are incomplete
+instead of rendering the builder's optimistic summary as success.</p>
+<p>The model gateway has two independent recovery layers. Request-shape incompatibilities fall back
+from native tools or grammar constraints to structured prompt JSON on the same provider. Provider
+failures move to the role's configured model fallback. Before either request is sent, repository
+context and prior tool exchanges are fitted to the selected profile's actual context window while
+preserving the current task and complete recent tool-call groups.</p>
+<p>Planner and agent contracts repair a common small-model ambiguity where one command is returned as
+an argv-shaped string list. The approved task's verification commands remain authoritative over a
+builder's ad-hoc finishing suggestions. After all task checks pass, an independent rejection is
+turned into a scoped corrective task and re-reviewed, with two repair attempts at most; the mission
+blocks if review still fails.</p>
+<h3 id="editing-anchors">Editing anchors</h3>
+<p><code>replace</code> locates its target by exact text, which is correct and is also the one
+thing a weaker local model reliably fails: it reproduces the right lines and
+drifts on indentation or internal spacing, then retries the same edit until the
+no-progress guard stops the whole turn. Observed with a 27B local model on an
+18 KB HTML file: six reads, four <code>replace</code> calls, no edits, turn abandoned.</p>
+<p>So an exact match is tried first and, only if it finds nothing, the same lines
+are looked for again ignoring horizontal whitespace:</p>
+<ul>
+<li>the match must still agree line for line, so a relaxed anchor cannot land on a
+different part of the file;</li>
+<li>more than one relaxed match is refused, not guessed;</li>
+<li>the replacement is shifted onto the indentation the file actually uses, keeping
+whatever relative indentation it came with;</li>
+<li>the result records <code>matched: whitespace-insensitive</code>, so a relaxed edit is
+auditable rather than silent;</li>
+<li>the Python syntax guard and its rollback still apply.</li>
+</ul>
+<p>When nothing matches at all, the error names the line the anchor's first line
+<em>does</em> match, because &quot;read the file again&quot; is advice a weak model follows by
+reading the same file and producing the same near-miss.</p>
+<h2 id="teams-of-sub-agents">Teams of sub-agents</h2>
+<p><code>daino/agents/team.py</code> is the concurrent path, reached from <code>/team</code>. A team lead turns one
+instruction into a <code>TeamPlan</code>, and <code>validate_team_plan</code> topologically orders the roster into waves
+of members that may run at the same time. Each member is an ordinary <code>ToolLoop</code> bound to its own
+<code>ModelRole</code> and its own scoped <code>EditTools</code>, so routing, tool calling, structured fallback, the
+observation format, and the audit ledger are all unchanged.</p>
+<p>Concurrency is made safe by construction rather than by locking. Members share one worktree, so the
+isolation boundary is the file scope: <code>validate_team_plan</code> rejects a roster whose same-wave writers
+have overlapping scopes before any model call happens, and <code>EditTools</code> then enforces each member's
+scope at the point of mutation. Read-only members are constructed to refuse every mutation, because
+an empty scope means &quot;unrestricted&quot; rather than &quot;nothing&quot;.</p>
+<p>This is the concurrency the sequential mission scheduler leaves open, obtained through disjoint
+scopes in one worktree instead of disjoint worktrees. Task contracts are untouched.</p>
+<p>The QA workspace reuses <code>TeamRunner</code> with a stricter surface. Its fixed roster is entirely
+read-only and receives <code>QA_TOOL_SPECS</code>, which omits every mutation and command action. Independent
+architecture, security, code-quality, frontend/backend, and UI specialists form the first wave; a
+summarizer depending on all applicable specialists forms the second. Deterministic checks run
+through the configured runtime and command policy before the model wave, and their bounded output
+is supplied as untrusted evidence. Each resulting <code>QAReport</code> carries its project root, is stored in
+that repository's <code>.daino/qa/</code> directory, and is rendered live by <code>QAView</code>. The application service
+also validates, sorts, and reloads the repository-local report history for the QA tab.</p>
+<p>The current repository adapter uses Python AST and lightweight syntax extraction. <code>Runtime</code> and
+<code>LLMProvider</code> are abstract interfaces. A future LSP adapter, Kubernetes runtime, or provider can be
+added without changing mission orchestration.</p>
+<h2 id="multi-layer-memory">Multi-layer memory</h2>
+<p><code>MemoryManager</code> is the service boundary over project SQLite and the private user memory database.
+<code>ContextBuilder</code> centralizes hierarchical <code>DAINO.md</code>, persistent working state, relevant project
+facts/decisions/episodes/failures, source context, compaction, authority rules, and token budgets.
+Mission and chat actions checkpoint working state immediately, so provider failure or process exit
+does not erase the active plan. Source-derived facts carry digests and become stale when the
+repository changes. See <a href="memory.html">memory architecture</a> for the schema, precedence, retrieval
+ranking, commands, migration, security model, and multi-session demonstration.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="cli-reference.html"><span>Previous</span><strong>CLI reference</strong></a>
+            <a class="doc-pager-next" href="contributing.html"><span>Next</span><strong>Contributing</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#interactive-presentation-boundary">Interactive presentation boundary</a>
+            <a href="#browser-ide-server">Browser IDE server</a>
+            <a href="#design-workspace">Design workspace</a>
+            <a href="#the-chat-agent">The chat agent</a>
+            <a href="#teams-of-sub-agents">Teams of sub-agents</a>
+            <a href="#multi-layer-memory">Multi-layer memory</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

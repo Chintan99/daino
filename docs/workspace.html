@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="The WORKSPACE tab is for the work that is not code: documents, research, planning, analysis. It sits beside CODE (software), DESIGN (UI and diagrams), and INSPECTOR (pre-push QA)." />
+    <meta name="theme-color" content="#07110d" />
+    <title>Workspace — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html" class="current" aria-current="page">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="tui.html">Interfaces</a> <span>/</span> Workspace</div>
+<h1 id="workspace">Workspace</h1>
+<p>The WORKSPACE tab is for the work that is not code: documents, research, planning, analysis. It
+sits beside CODE (software), DESIGN (UI and diagrams), and INSPECTOR (pre-push QA).</p>
+<p>A <strong>workspace</strong> is a named body of work — a goal, the files it needs, the documents it produces, a
+plan, and the sources behind it — that continues across as many conversations as it takes. Until
+now Daino had no such container: a project is a directory, a mission is one request bound to a git
+worktree, and a session is one chat.</p>
+<h2 id="the-one-thing-to-understand-first">The one thing to understand first</h2>
+<p><strong>A workspace is a real folder on disk, inside <code>.daino/</code>.</strong></p>
+<pre><code>your-repo/
+├─ src/
+├─ docs/
+└─ .daino/                                        ← Daino's state directory
+   └─ workspaces/
+      └─ q3-pricing-research/
+         ├─ uploads/
+         │  ├─ competitor-pricing.pdf
+         │  └─ .extracted/competitor-pricing.md   ← what the agent actually reads
+         ├─ .sources/&lt;digest&gt;.md                  ← cached research pages
+         ├─ .history/                             ← previous versions
+         ├─ findings.md                           ← a document
+         ├─ recommendation.md                     ← a document
+         └─ workspace.json                        ← manifest, so the folder is self-describing
+</code></pre>
+<p>Everything follows from that. The documents are ordinary files, so the agent needs no special tools
+to write them — <code>read_file</code>, <code>write</code>, <code>replace</code>, <code>glob</code>, and <code>grep</code> already work, and Daino exempts
+the workspaces subtree from the filter that otherwise hides <code>.daino</code> from every search. Open one in
+CODE with <strong>↗</strong> like any other file. And the database row is only an index: delete it and the work
+survives.</p>
+<p>They sit inside the state directory rather than at the top of your repository because a documents
+folder in the working tree turns up in every <code>git status</code>, every file tree, and every package build.
+<code>.daino/</code> is already in <code>.gitignore</code> (<code>daino init</code> puts it there), so workspace documents are not
+committed by default and never appear in the diff you are about to review.</p>
+<p>If you <em>do</em> want this work versioned with the project, un-ignore just that subtree:</p>
+<pre><code class="language-gitignore">.daino/
+!.daino/workspaces/
+</code></pre>
+<p>A workspace remembers its own folder, so anything created before this default moved keeps working
+where it is, and passing an explicit <code>folder</code> when creating one still puts it wherever you say —
+including in the working tree, if that is what you want.</p>
+<h2 id="starting-one">Starting one</h2>
+<p><strong>New</strong>, then a name, a goal, and a work type:</p>
+<table>
+<thead>
+<tr>
+<th>Template</th>
+<th>What it seeds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>General</strong></td>
+<td>Nothing assumed — three generic steps</td>
+</tr>
+<tr>
+<td><strong>Research</strong></td>
+<td>A <code>findings.md</code> outline, and an agent told to cite every claim and separate evidence from inference</td>
+</tr>
+<tr>
+<td><strong>Product requirements</strong></td>
+<td>A <code>requirements.md</code> outline, and an agent told to write outcomes rather than implementations</td>
+</tr>
+<tr>
+<td><strong>Data analysis</strong></td>
+<td>An <code>analysis.md</code> outline, and an agent told to report the shape of the data before its conclusions</td>
+</tr>
+<tr>
+<td><strong>Meeting notes</strong></td>
+<td>A <code>notes.md</code> outline, and an agent told to separate decisions from discussion</td>
+</tr>
+<tr>
+<td><strong>Incident review</strong></td>
+<td>A <code>review.md</code> outline, and an agent told to write causes as system conditions, never as people's mistakes</td>
+</tr>
+</tbody>
+</table>
+<p>A template contributes three honest things: starter tasks, starter documents, and a preamble
+appended to the agent's system prompt. Projects add their own or override a built-in by name from
+<code>.daino/workbench-templates/*.yaml</code>, the same two-directory pattern playbooks use.</p>
+<h2 id="uploads">Uploads</h2>
+<p>Drop files into UPLOADS. Anything that is not already text is extracted to markdown beside the
+original, and it is the extraction the agent reads — Daino's file tools are UTF-8 only, so a PDF
+would otherwise arrive as a decode error.</p>
+<p>Extraction needs the optional parsers:</p>
+<pre><code class="language-bash">pip install 'daino[documents]'
+</code></pre>
+<p>That adds <code>pypdf</code>, <code>python-docx</code>, <code>openpyxl</code>, and <code>python-pptx</code>. Without it, markdown, text, CSV,
+JSON, YAML, HTML and source code still work; other formats are stored and listed with an explicit
+note saying which extra to install.</p>
+<p>Extraction is cached by the file's content hash, so re-uploading or reopening never re-parses a
+200-page report. A PDF with no text layer is a scan, and there is no OCR here — the upload says so
+rather than handing the agent an empty document to summarise confidently.</p>
+<h2 id="documents">Documents</h2>
+<p>Every file in the workspace folder that is not <code>uploads/</code>, <code>.sources/</code>, <code>.history/</code>, or
+<code>workspace.json</code> is a document. Open one to read it rendered, EDIT to change it in Monaco, or <strong>↗</strong>
+to open it in CODE like any other file.</p>
+<p><strong>Ask</strong> hands the open document to the agent with a request to revise it.</p>
+<h3 id="history">History</h3>
+<p>Every save is recorded as a version, with who saved it, and any kept version can be restored — the
+current text becomes a new version, so a restore is undoable too.</p>
+<p>History is a safety net rather than an archive: the newest 50 versions of a document are kept, and
+older ones are trimmed. Versions a change set still points at are exempt from that trim, so
+reviewing or rejecting an old run's work never finds its &quot;before&quot; missing.</p>
+<p>Saving is checked against the version you opened. If the agent (or another window) has rewritten the
+document since, the save is refused and the editor offers <strong>Reload from disk</strong> or <strong>Keep mine</strong> —
+your draft is never silently replaced, and neither is theirs.</p>
+<p>Versions are recorded from the file-change event rather than from the save button, which means an
+edit you make by hand in CODE and an edit the agent makes are captured identically. That is the pair
+that matters: the reason this exists is an agent rewriting a document you had been working on.</p>
+<h2 id="the-plan">The plan</h2>
+<p>A workspace task list, editable by you and by the agent. Click a step to walk it round
+pending → in progress → done, double-click to reword it, and reorder or delete freely.</p>
+<p>Unlike the agent's per-turn checklist, these persist across sessions, have stable identities (so two
+steps may share their text), keep an explicit order, and are never terminal — a completed step can
+be reopened. The agent keeps them current as it works, and restates the whole plan when the shape of
+the work changes; statuses survive that by matching text.</p>
+<p>A step may declare that it depends on other steps. Ordinary plan order covers almost everything, so
+this is for the plans where order alone is not the truth; there is no workflow engine behind it, and
+the executor simply will not start a step whose predecessors are unfinished.</p>
+<h2 id="running-the-plan">Running the plan</h2>
+<p><strong>Run Plan</strong> makes the plan execute. Daino works through the pending steps in order, and for each
+one it runs a single ordinary agent turn — the same tools, the same prompt, the same approvals, the
+same revision history as if you had asked for that step yourself.</p>
+<pre><code>Run #12   Running   3 / 7 steps        [Pause] [Stop]
+
+✓ Analyse the uploaded requirements
+✓ Extract the technical constraints
+◉ Research architecture options
+○ Create the comparison
+○ Draft the proposal
+</code></pre>
+<p>One task, one turn, is the whole design. The alternative — a single prompt asking a model to carry
+out seven steps — produces a plausible narrative of work rather than the work, and gives you no
+point at which to intervene. Because a step is an ordinary turn, everything the rest of Daino
+already does keeps working during a run: sources are recorded, revisions are captured, changes are
+grouped, and commands still ask.</p>
+<h3 id="pause-resume-stop">Pause, Resume, Stop</h3>
+<p><strong>Pause</strong> stops after the current step rather than in the middle of one — a half-written document
+and a step marked &quot;in progress&quot; that nobody owns is not a state worth being able to reach. <strong>Resume</strong>
+picks up from wherever the plan is. <strong>Stop</strong> cancels the run and keeps everything: the plan, the
+finished steps, and every document produced. Nothing is unwound, and you never restart from the
+beginning.</p>
+<p>A run survives a restart. If Daino stops while a run is going, the run comes back as <strong>Paused</strong> with
+&quot;Interrupted&quot; as its reason — because a row that says &quot;running&quot; with no process behind it is a lie
+the UI would render as live work.</p>
+<h3 id="steering-it-while-it-works">Steering it while it works</h3>
+<p>Type into the chat while a run is going and it becomes direction for that run rather than a second
+turn:</p>
+<blockquote>
+<p>Also compare their enterprise pricing and deployment options.</p>
+</blockquote>
+<p>Daino folds this into the plan at the next step boundary — adding, rewording or reordering what is
+still ahead — and tells you it did. Completed steps are never rescheduled and finished work is never
+discarded. The current step finishes first: interrupting a turn mid-way to re-plan would abandon
+whatever it was writing.</p>
+<h3 id="when-a-step-fails">When a step fails</h3>
+<p>The run holds at <strong>Needs you</strong> with the reason attached, and offers <strong>Retry</strong> and <strong>Skip</strong>. It does
+not carry on. Skipping a failed research step and writing the recommendation anyway is exactly the
+confident-but-baseless output Daino refuses everywhere else — and a skipped step is recorded as not
+done, so the progress count keeps telling the truth. Three failures in a row end the run rather than
+asking a fourth time.</p>
+<h3 id="approvals">Approvals</h3>
+<p>A run is unattended, so &quot;the user is right there and will notice&quot; stops being true. Actions are
+classified rather than counted:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Examples</th>
+<th>While a run is executing</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Read</td>
+<td>Reading files, searching, fetching a page</td>
+<td>Allowed</td>
+</tr>
+<tr>
+<td>Workspace write</td>
+<td>Creating and editing documents in the workspace folder</td>
+<td>Allowed</td>
+</tr>
+<tr>
+<td>Local execution</td>
+<td>Running a command on your machine</td>
+<td>Asks</td>
+</tr>
+<tr>
+<td>External action</td>
+<td>Writing outside the workspace folder</td>
+<td>Asks</td>
+</tr>
+<tr>
+<td>Destructive</td>
+<td>Deleting or moving a file</td>
+<td>Asks</td>
+</tr>
+</tbody>
+</table>
+<p>When something needs you, the run parks at <strong>Needs approval</strong> and waits — no timeout, no default
+yes. Approving a run's command never remembers the answer: a remembered yes inside an unattended
+loop is how one approval becomes twenty. The command gate that governs shell commands everywhere
+else still applies on top of this and still has the final word.</p>
+<p>Asking about everything would be worse than asking about nothing. Someone who has clicked Allow
+eleven times for a file write clicks the twelfth without reading it, which is precisely when the
+destructive one arrives.</p>
+<h3 id="what-a-run-leaves-behind">What a run leaves behind</h3>
+<p>An <strong>Activity</strong> timeline, written as the run goes and kept afterwards, so it reads the same tomorrow
+as it does now — sentences about what happened, not raw tool calls. And a completion summary naming
+what was created and how many sources were recorded. The deliverables themselves stay in the
+workspace; the chat does not fill up with the documents' contents.</p>
+<h2 id="skills">Skills</h2>
+<p>A template shapes a <em>new workspace</em>. A skill shapes <em>one piece of work</em>: how a competent person
+approaches a competitive analysis, what a PRD has to contain, which checks an incident review is not
+finished without.</p>
+<p>Daino ships seven — Competitive Research, PRD Writer, Data Analysis, Technical Proposal, Incident
+Review, Architecture Review, Executive Presentation — and picks one from the goal when you start a
+run, showing which it chose. Pick a different one, or none, from the run header. Projects add their
+own or override a built-in by name from <code>.daino/workbench-skills/*.yaml</code>, the same two-directory
+pattern templates and playbooks use.</p>
+<p>A skill is instructions, preferred tools, what finished work looks like, and a checklist to hold
+against it. Nothing about the tool surface changes; a skill changes how the work is approached, not
+what is possible.</p>
+<h2 id="reviewing-what-changed">Reviewing what changed</h2>
+<p>The history is per file. <strong>Change sets</strong> are per act: everything one step of the work touched,
+grouped, so a task that rewrote the proposal, extended the comparison and added four sources is one
+thing to review rather than seven.</p>
+<pre><code>Daino changed 3 documents
+
+proposal.md      changed   [✓] [↺]
+comparison.md    changed   [✓] [↺]
+research.md      new       [✓] [↺]
+
+[Accept all] [Reject all]
+</code></pre>
+<p>Open one to see the before and after, line by line. Accept keeps it. Reject restores the version the
+document had before that change — through the same history the Documents tab has always shown, and
+itself recorded as a new version, so rejecting is as undoable as the change it undid. A document the
+change <em>created</em> is removed on reject, and its history survives even then.</p>
+<p>The change set is an index and nothing more. Delete every change-set row and no version is lost.</p>
+<h2 id="working-with-code-and-design">Working with CODE and DESIGN</h2>
+<p>Workspace understands the goal; CODE builds software; DESIGN is where visual work is edited. A
+workspace can start work in the other two without duplicating either.</p>
+<p><strong>Diagrams.</strong> When the shape of something matters more than the prose describing it, the agent
+creates a real diagram on the same canvas the DESIGN tab edits. It appears in the workspace as a
+linked item — <em>Architecture diagram · Created in DESIGN</em> — with a button to open it there.</p>
+<p><strong>Code.</strong> Ask for a prototype and the agent prepares a brief in the workspace: what to build, and
+which documents define it, by reference rather than by pasting their contents. <strong>Start in CODE</strong>
+opens it as a coding session with that brief. It is deliberately a handoff rather than an
+immediately running agent — two agents editing one working tree is not a feature, and a person
+seeing what was asked for before it is built is worth the extra click.</p>
+<h2 id="provenance-and-stale-documents">Provenance and stale documents</h2>
+<p>When the agent writes one document from another, it records the relationship. Later, if the source
+changes, the derived document is flagged:</p>
+<blockquote>
+<p><code>proposal.md</code> may be outdated because <code>architecture.md</code> changed.  [Review] [Update] [Ignore]</p>
+</blockquote>
+<p><strong>Review</strong> opens it. <strong>Update</strong> asks Daino to bring it in line with its source. <strong>Ignore</strong> dismisses
+the warning durably — a warning that returns after being dismissed teaches people to ignore
+warnings.</p>
+<p>Nothing is rewritten automatically. An agent silently regenerating a document you have been editing
+is a worse failure than a stale one, and only you know which.</p>
+<h2 id="finished-files">Finished files</h2>
+<p>Markdown is the source of truth; <strong>Word</strong>, <strong>Sheet</strong>, <strong>Deck</strong> and <strong>PDF</strong> render it into something
+to send. Structure survives the crossing: a heading becomes a heading, a table becomes a table with
+typed numbers and a frozen header row, a section becomes a slide with the bullets nested as written.</p>
+<p>DOCX, XLSX and PPTX need the same optional parsers the uploads use (<code>pip install 'daino[documents]'</code>);
+PDF is written by Daino directly and always works. A rendering is regenerated from the document
+rather than edited, and each regeneration keeps the previous one in history.</p>
+<h2 id="research-and-sources">Research and sources</h2>
+<p>Ask the agent to research something and it uses the same hardened web tools as everywhere else:
+DuckDuckGo search plus an SSRF-resistant fetch that revalidates every redirect and rejects
+non-text responses.</p>
+<p>Every page it fetches is filed in SOURCES automatically — the agent is not asked to remember, because
+a bibliography that depends on that is a bibliography with holes in it. The fetched text is cached
+on disk, so a claim stays checkable after the page changes or disappears. The agent is instructed to
+cite with markdown footnotes pointing at those sources.</p>
+<p>For a question with several distinct angles, Daino can fan out: a team of read-only researchers
+investigates the sub-questions concurrently, each blind to the others' findings, and a synthesis
+step reconciles them. Nothing in that team can edit anything, which is what makes running them at
+once safe — there are no overlapping scopes to arbitrate.</p>
+<h2 id="the-conversation">The conversation</h2>
+<p>Selecting a workspace re-points the agent panel at that workspace's own conversation, so you keep
+the whole composer — slash commands, model picker, autonomy, approvals, attachments — and the
+workspace decides which thread it is talking to. Leaving the tab restores whatever CODE was on.</p>
+<p>A workspace turn differs from a repository turn in three ways:</p>
+<ul>
+<li><strong>A different system prompt.</strong> Every other prompt in Daino says &quot;you are a coding agent working in
+the user's repository&quot;. This one is about documents, uploads, citation, and keeping the plan
+current.</li>
+<li><strong>Six extra tools</strong> — <code>workspace_read</code>, <code>workspace_plan</code>, <code>workspace_task</code>, <code>workspace_link</code>,
+<code>workspace_deliverable</code>, <code>workspace_code</code>. Still none of them a file tool: documents are real
+files and <code>write</code>/<code>replace</code> already write them. Each covers something a file cannot say — what the
+workspace holds, where the work is up to, where a document came from, what a rendering of it
+should be, and what should be built elsewhere. The design tools are here too, so an architecture
+section can be a diagram instead of three paragraphs describing one.</li>
+<li><strong>No verification demanded.</strong> A chat turn normally has to finish with runnable checks. A written
+report has no test suite, and inventing one is worse than admitting there is nothing to run.</li>
+</ul>
+<p><code>workspace_read</code> summarises: document titles with short previews, never their bodies. The full text
+is one <code>read_file</code> away, and the path it gives is exactly the one that tool accepts.</p>
+<h3 id="routing-it-to-a-different-model">Routing it to a different model</h3>
+<p>Optional. Reading documents suits a long-context, inexpensive profile, which is rarely the same one
+you want writing code:</p>
+<pre><code class="language-yaml">routing:
+  researcher: my-long-context-profile
+</code></pre>
+<p>Leave it out and workspace turns use the builder profile, exactly as before. Nothing breaks by
+omission.</p>
+<h2 id="security">Security</h2>
+<p>The same boundaries as everywhere else in Daino.</p>
+<p>Every workspace path — from the browser and from the agent — is resolved and checked for containment
+before anything touches the disk; a traversing path is refused. An absolute path is normalised into
+the workspace rather than rejected, matching how <code>EditTools</code> treats agent-supplied paths, and the
+guarantee is containment: a write never lands outside the folder.</p>
+<p>Uploads are capped at 8 MB and their names sanitised, reusing the attachment path's hardening.
+Extraction never executes anything in a document. Deleting a workspace removes the entry and leaves
+your files alone unless you ask for both.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="gui.html"><span>Previous</span><strong>Browser IDE (GUI)</strong></a>
+            <a class="doc-pager-next" href="providers.html"><span>Next</span><strong>Providers</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#the-one-thing-to-understand-first">The one thing to understand first</a>
+            <a href="#starting-one">Starting one</a>
+            <a href="#uploads">Uploads</a>
+            <a href="#documents">Documents</a>
+            <a href="#the-plan">The plan</a>
+            <a href="#running-the-plan">Running the plan</a>
+            <a href="#skills">Skills</a>
+            <a href="#reviewing-what-changed">Reviewing what changed</a>
+            <a href="#working-with-code-and-design">Working with CODE and DESIGN</a>
+            <a href="#provenance-and-stale-documents">Provenance and stale documents</a>
+            <a href="#finished-files">Finished files</a>
+            <a href="#research-and-sources">Research and sources</a>
+            <a href="#the-conversation">The conversation</a>
+            <a href="#security">Security</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

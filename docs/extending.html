@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Four ways to change what DAiNO does without changing DAiNO. They are listed in rough order of weight — a slash command is one file and two minutes, an MCP server is a process with " />
+    <meta name="theme-color" content="#07110d" />
+    <title>Extending the agent — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html" class="current" aria-current="page">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="missions.html">Working with it</a> <span>/</span> Extending the agent</div>
+<h1 id="extending-the-agent">Extending the agent</h1>
+<p>Four ways to change what D[Ai]NO does without changing D[Ai]NO. They are listed
+in rough order of weight — a slash command is one file and two minutes, an MCP
+server is a process with its own dependencies.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>What it is</th>
+<th>Where it lives</th>
+<th>Who invokes it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="#slash-commands">Slash commands</a></td>
+<td>A prompt you reuse</td>
+<td><code>.daino/commands/*.md</code></td>
+<td>You, by typing <code>/name</code></td>
+</tr>
+<tr>
+<td><a href="#skills">Skills</a></td>
+<td>Practice the agent loads when it applies</td>
+<td><code>.daino/skills/&lt;name&gt;/SKILL.md</code></td>
+<td>The model, when the task matches</td>
+</tr>
+<tr>
+<td><a href="#hooks">Hooks</a></td>
+<td>A command run around what the agent does</td>
+<td><code>.daino/hooks.yaml</code></td>
+<td>The agent lifecycle</td>
+</tr>
+<tr>
+<td><a href="#mcp-servers">MCP servers</a></td>
+<td>External tools</td>
+<td><code>.daino/mcp.json</code></td>
+<td>The model, as ordinary tools</td>
+</tr>
+</tbody>
+</table>
+<p>Two of these are protected from the agent and two are not, and the difference is
+deliberate. Hooks and MCP servers run shell commands and launch processes, so
+their files live in <code>.daino/</code> — which D[Ai]NO refuses to let the agent write to.
+Commands and skills are only ever prompt text, so the agent may write those; an
+agent that writes itself a skill has written itself a note, which is useful.</p>
+<hr />
+<h2 id="slash-commands">Slash commands</h2>
+<p>A markdown file becomes a command. <code>.daino/commands/review-pr.md</code>:</p>
+<pre><code class="language-markdown">---
+description: Review a pull request the way this team reviews them
+argument-hint: &lt;pr-number&gt;
+---
+Review PR $ARGUMENTS against our checklist:
+
+- Does every new endpoint have an integration test?
+- Are database migrations reversible?
+- Is anything logged that should not be?
+
+Read the diff first, then answer point by point.
+</code></pre>
+<p>Then type <code>/review-pr 481</code>. The frontmatter is optional — a file containing
+nothing but instructions is a perfectly good command.</p>
+<p><strong>Substitution.</strong> <code>$ARGUMENTS</code> becomes everything after the command name;
+<code>$1</code>…<code>$9</code> are positional. A template that references neither gets the arguments
+appended, because silently dropping what you typed is the worse failure.</p>
+<p><strong>Namespacing.</strong> A file in a subdirectory takes a prefixed name:
+<code>.daino/commands/db/migrate.md</code> is <code>/db:migrate</code>.</p>
+<p><strong>Scope.</strong> <code>~/.daino/commands/</code> applies to every project. A project file of the
+same name wins. Neither can shadow a built-in command like <code>/diff</code> — those are
+matched first, so a project cannot quietly change what <code>/model</code> does.</p>
+<p>Commands are re-read on every turn, so a command you just wrote works now.</p>
+<hr />
+<h2 id="skills">Skills</h2>
+<p>A skill is practice the <em>model</em> decides to load. Its name and one-line
+description sit in the system prompt; the body arrives only when the model picks
+it. That two-step shape is what makes a dozen skills affordable — a dozen full
+documents in context would not be.</p>
+<p><code>.daino/skills/api-conventions/SKILL.md</code>:</p>
+<pre><code class="language-markdown">---
+name: api-conventions
+description: Use when adding or changing an HTTP endpoint
+---
+Endpoints live in `routes/`, one router per resource.
+
+- Request and response models go in `schemas/`, never inline.
+- Every endpoint gets an integration test in `tests/api/`.
+- Errors raise `AppError`; never return a bare dict with a `error` key.
+</code></pre>
+<p>The <code>description</code> is required, and it is the only thing the model has to choose
+by — write it as <em>when to use this</em>, not as what it contains. A skill without one
+is reported as a problem rather than loaded silently.</p>
+<p>Files sitting beside <code>SKILL.md</code> are listed to the agent by path rather than
+inlined, so a skill can ship a long checklist or a reference table without that
+text costing anything until it is wanted.</p>
+<blockquote>
+<p>Not to be confused with <a href="workspace.html#skills">workspace skills</a>, which are
+templates for knowledge work — a different feature with an unfortunately
+similar name.</p>
+</blockquote>
+<hr />
+<h2 id="hooks">Hooks</h2>
+<p>A hook is a command D[Ai]NO runs at a point in the session. Auto-format after
+every edit, refuse edits to a generated directory, post to Slack when a long
+mission finishes, enforce a rule your team has that D[Ai]NO has never heard of.</p>
+<p><code>.daino/hooks.yaml</code>:</p>
+<pre><code class="language-yaml">post_tool_use:
+  - name: formatter
+    matcher: &quot;write|replace|multi_edit&quot;
+    command: ruff format . &amp;&amp; echo &quot;formatted&quot;
+
+pre_tool_use:
+  - name: protect-generated
+    matcher: &quot;write|replace|delete|multi_edit&quot;
+    command: ./scripts/refuse-generated.sh
+    timeout: 5
+
+stop:
+  - name: notify
+    command: ./scripts/notify-slack.sh
+</code></pre>
+<p><strong>Events.</strong> <code>session_start</code>, <code>user_prompt_submit</code>, <code>pre_tool_use</code>,
+<code>post_tool_use</code>, <code>notification</code>, <code>stop</code>, <code>session_end</code>.</p>
+<p><strong>Matcher.</strong> A fully-anchored regular expression against the tool name. Empty
+matches every tool. A matcher that does not compile is reported at load time
+rather than silently never firing.</p>
+<p><strong>The protocol</strong> is the one Claude Code uses, so scripts written for that work
+here. Your hook receives a JSON object on stdin:</p>
+<pre><code class="language-json">{
+  &quot;hook_event_name&quot;: &quot;pre_tool_use&quot;,
+  &quot;session_id&quot;: &quot;session-abc&quot;,
+  &quot;cwd&quot;: &quot;/path/to/project&quot;,
+  &quot;tool_name&quot;: &quot;write&quot;,
+  &quot;tool_input&quot;: {&quot;path&quot;: &quot;generated/schema.py&quot;}
+}
+</code></pre>
+<p>and answers with an exit code, optionally plus JSON on stdout:</p>
+<table>
+<thead>
+<tr>
+<th>Exit</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>Allow. Plain stdout becomes feedback the agent sees.</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>Block. stderr becomes the reason, and reaches the model.</td>
+</tr>
+<tr>
+<td>other</td>
+<td>The hook broke. Reported, then ignored.</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-json">{&quot;permissionDecision&quot;: &quot;deny&quot;, &quot;permissionDecisionReason&quot;: &quot;generated/ is regenerated by `make schema`&quot;}
+</code></pre>
+<p><strong>What can actually stop something.</strong> Only <code>pre_tool_use</code> and
+<code>user_prompt_submit</code>. Everywhere else the work has already happened, so a
+&quot;deny&quot; is downgraded to feedback — the reason still reaches the model, because
+pretending it was enforced would tell the agent something untrue.</p>
+<p><strong>Failure is not fatal.</strong> A hook that crashes, times out, or prints nonsense is
+reported and ignored. A broken formatter hook that blocked every edit in the
+repository would be worse than an unformatted file. Only an explicit block — exit
+2, or a JSON deny — stops anything.</p>
+<p><strong>Ordering.</strong> Hooks for one event run concurrently, and their answers are
+combined with deny winning over ask winning over allow. Two hooks disagreeing
+about whether an edit may happen resolves to &quot;no&quot;.</p>
+<p><code>~/.daino/hooks.yaml</code> applies to every project, and both layers run: a project
+cannot drop a hook your organisation configured globally.</p>
+<hr />
+<h2 id="mcp-servers">MCP servers</h2>
+<p><a href="https://modelcontextprotocol.io" target="_blank" rel="noreferrer">Model Context Protocol</a> servers give the agent
+tools D[Ai]NO does not implement — your database, your issue tracker, your
+internal API. The file is the one every MCP client uses, so a configuration
+copied from another tool works unchanged.</p>
+<p><code>.daino/mcp.json</code>:</p>
+<pre><code class="language-json">{
+  &quot;mcpServers&quot;: {
+    &quot;postgres&quot;: {
+      &quot;command&quot;: &quot;uvx&quot;,
+      &quot;args&quot;: [&quot;mcp-server-postgres&quot;, &quot;postgresql://localhost/app&quot;]
+    },
+    &quot;sentry&quot;: {
+      &quot;type&quot;: &quot;http&quot;,
+      &quot;url&quot;: &quot;https://mcp.sentry.dev/mcp&quot;,
+      &quot;headers&quot;: {&quot;Authorization&quot;: &quot;Bearer ...&quot;}
+    },
+    &quot;internal&quot;: {
+      &quot;command&quot;: &quot;node&quot;,
+      &quot;args&quot;: [&quot;./tools/mcp-server.js&quot;],
+      &quot;env&quot;: {&quot;API_TOKEN&quot;: &quot;env://INTERNAL_API_TOKEN&quot;}
+    }
+  }
+}
+</code></pre>
+<p><strong>Transports.</strong> <code>stdio</code> launches a local process; <code>http</code> posts JSON-RPC to a URL
+(<code>sse</code> and <code>streamable-http</code> are accepted as spellings of the same thing).
+Omitting <code>transport</code> infers it from whether you gave a <code>command</code> or a <code>url</code>.</p>
+<p><strong>Secrets.</strong> An <code>env</code> value may be an <code>env://</code>, <code>keyring://</code> or <code>file://</code>
+reference, resolved the same way a provider key is, so a token never has to be
+written into a file in the checkout.</p>
+<p><strong>Naming.</strong> A server's tools reach the model as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code>, so two
+servers can both offer <code>search</code> without colliding.</p>
+<p><strong>Narrowing.</strong> <code>allowed_tools</code> and <code>denied_tools</code> limit what a server exposes. A
+server with sixty tools otherwise spends a large part of the model's context
+describing tools this project will never call.</p>
+<p><strong>Failure is per-server.</strong> A server that will not start is reported once and its
+tools are absent; the session works without them. A tool result is labelled
+untrusted before it reaches the model, for the same reason a fetched web page is:
+it is text a third party wrote, and &quot;ignore your previous instructions&quot; is a
+realistic thing to receive from one.</p>
+<p>Servers connect on the first turn that needs them and stay connected for the
+session. <code>GET /api/agent/extensions</code> reports which connected, which did not, and
+why.</p>
+<hr />
+<h2 id="seeing-what-loaded">Seeing what loaded</h2>
+<p>Everything here fails quietly by design — a broken hook is skipped so it cannot
+block every edit, an unreachable server is dropped so it cannot stop a session.
+So there is one place that says what actually happened:</p>
+<pre><code class="language-bash">curl localhost:PORT/api/agent/extensions
+</code></pre>
+<p>which lists the hooks, servers, skills and commands that loaded, and a <code>problems</code>
+array for everything that did not.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="repository-intelligence.html"><span>Previous</span><strong>Repository intelligence</strong></a>
+            <a class="doc-pager-next" href="playbooks.html"><span>Next</span><strong>Playbooks</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#slash-commands">Slash commands</a>
+            <a href="#skills">Skills</a>
+            <a href="#hooks">Hooks</a>
+            <a href="#mcp-servers">MCP servers</a>
+            <a href="#seeing-what-loaded">Seeing what loaded</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

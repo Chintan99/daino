@@ -1,0 +1,823 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="DAiNO ships a local, VS Code-style browser IDE driven by the same agent runtime, sessions, and event bus as the terminal UI(tui.md). There is no cloud component — the API server bi" />
+    <meta name="theme-color" content="#07110d" />
+    <title>Browser IDE (GUI) — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html" class="current" aria-current="page">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="tui.html">Interfaces</a> <span>/</span> Browser IDE (GUI)</div>
+<h1 id="browser-ide-gui">Browser IDE (GUI)</h1>
+<p>D[Ai]NO ships a local, VS Code-style browser IDE driven by the <strong>same</strong> agent runtime, sessions, and
+event bus as the <a href="tui.html">terminal UI</a>. There is no cloud component — the API server binds to
+<code>127.0.0.1</code> only.</p>
+<pre><code class="language-bash">daino . --gui                # browser IDE at http://127.0.0.1:4173 (background)
+daino . --gui --port 5000    # choose a port (--port 0 picks a free one)
+daino . --gui --no-browser   # start the server without opening a browser
+daino . --gui --foreground   # keep server logs in this terminal
+</code></pre>
+<p><code>--gui</code> resolves the project (initializing it on first run), starts a background FastAPI + WebSocket
+server, and opens your browser. Manage background servers with <code>daino ps</code> (session id, project dir,
+start time) and <code>daino kill .</code> (stop the current project's server); logs live in the project's
+<code>.daino/</code> directory. With <code>--foreground</code>, <code>Ctrl+C</code> stops it and terminates child terminals and
+preview servers.</p>
+<p>The first <code>--gui</code> run builds the React bundle automatically when Node.js 18+ (<code>npm</code>) is available —
+a one-time step of about a minute; later launches are instant. Without Node, the API still starts and
+<code>/</code> explains how to <code>npm install &amp;&amp; npm run build</code> in <code>daino/gui</code> by hand.</p>
+<h2 id="layout">Layout</h2>
+<p>The window is two chrome rows — an application menu over the workspace tabs — with the D[Ai]NO agent
+panel on the right in every workspace. It uses the same near-black palette and single jade accent as
+the terminal client, so the two read as one product.</p>
+<table>
+<thead>
+<tr>
+<th>Menu</th>
+<th>Holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>File</strong></td>
+<td>New file/folder, open by path, save, save all, revert, close editors, copy path, re-read config, new conversation</td>
+</tr>
+<tr>
+<td><strong>Edit</strong></td>
+<td>Undo/redo, find, replace, find in files, toggle comment, format, fold/unfold, select all</td>
+</tr>
+<tr>
+<td><strong>Go</strong></td>
+<td>Go to file/line/symbol, next/previous editor, Explorer, Search, Source Control, execution map, workspaces, inspection report</td>
+</tr>
+<tr>
+<td><strong>View</strong></td>
+<td>Switch workspace, toggle sidebar/panel/agent, choose panel view, interface zoom</td>
+</tr>
+<tr>
+<td><strong>Run</strong></td>
+<td>Start/stop the app, run/cancel an inspection, index the repository, stop the running agent turn</td>
+</tr>
+<tr>
+<td><strong>Terminal</strong></td>
+<td>New terminal, clear, switch shell, kill one or all, show panel</td>
+</tr>
+<tr>
+<td><strong>Settings</strong></td>
+<td>Preferences and project/agent configuration (below)</td>
+</tr>
+<tr>
+<td><strong>Help</strong></td>
+<td>Documentation, API reference, keyboard shortcuts, about</td>
+</tr>
+</tbody>
+</table>
+<p>Items grey out when they cannot act rather than failing after the click.</p>
+<h3 id="workspaces-top-tabs">Workspaces (top tabs)</h3>
+<ul>
+<li>
+<p><strong>Code</strong> — file explorer with Git indicators, a Monaco editor (tabs, dirty state,
+multi-language), an integrated PTY terminal (xterm.js), and a bottom panel with terminal, output,
+problems, tests, and debug.</p>
+<p><strong>Problems</strong> shows diagnostics from the language servers this machine has — pyright or pylsp for
+Python, typescript-language-server, gopls, rust-analyzer — plus Monaco's own syntax checks. It is
+careful about the difference between &quot;clean&quot; and &quot;nothing looked&quot;: an open file no analyser
+reached is listed as a coverage gap, with the command that would close it. F12, ⇧F12 and F2 give
+go-to-definition, find-references and rename; a rename shows every file it would touch before
+writing any of them.</p>
+<p><strong>Tests</strong> discovers and runs the project's own tests (pytest, Vitest, Jest, <code>go test</code>,
+<code>cargo test</code>), reports each one's outcome, and links a failure to the line it failed on — which is
+usually not the line the test is defined on. Re-run only the failures, or collect coverage.</p>
+<p><strong>Debug</strong> drives the Debug Adapter Protocol. Click a line number to set a breakpoint; the marker
+shows where the debugger will <em>actually</em> stop, since the adapter may move it to the nearest
+runnable line or refuse it. F5 continues or starts, F10/F11 step, and the panel shows the call
+stack, each frame's variables, and an expression box scoped to the selected frame. Python works
+through debugpy; a language with no adapter installed says which one to install.</p>
+<p><strong>Source control</strong> goes beyond review: stage or unstage individual hunks, commit exactly what is
+staged (never more), amend, switch and create branches, fetch, pull, push, merge, and resolve
+conflicts with both sides shown side by side. Nothing here runs without an explicit click, and
+Git's own refusals — deleting an unmerged branch, committing a half-resolved merge — are passed
+through rather than worked around.</p>
+<p><strong>Search</strong> takes regex, case and whole-word toggles, and include/exclude globs. Replace across
+the repository is previewed first, every line and every file, with per-file checkboxes. ⌘T jumps
+to any symbol in the project; ⇧⌘P runs any command the project declares in <code>package.json</code>, a
+Makefile, a justfile, <code>compose.yaml</code>, or <code>.daino/tasks.json</code>.</p>
+</li>
+<li>
+<p><strong>Design</strong> — a canvas. Drop an <code>.html</code>, <code>.svg</code>, image, note, or exported design and the file lives
+there; architecture diagrams (nodes and edges) and UI frames share the same sheet. Turning a
+design into code is gated: <strong>Propose a plan</strong> runs one read-only turn that studies the repository
+and writes a plan, you read and approve it, and only then can <strong>Implement</strong> write anything. A
+plan written for an older version of the canvas is refused rather than applied to a design that
+has since changed. A <strong>left panel lists canvases
+and the folder's files</strong>. Manual and agent edits mutate the same document under
+<code>.daino/designs/&lt;id&gt;/design.json</code>. See <a href="#the-visual-html-editor">the visual editor</a>.</p>
+</li>
+<li>
+<p><strong>Workspace</strong> — the work that is not code: documents, research, planning, and analysis. A
+workspace is a goal plus a real folder in your project (<code>.daino/workspaces/&lt;name&gt;/</code>), so its
+documents are ordinary files — greppable by the agent and openable in CODE — while staying out of
+your source tree and your diffs. <strong>Run Plan</strong> executes the plan a step at a time, steerable from
+the chat and pausable mid-plan; <strong>CHANGES</strong> reviews what it wrote. See <a href="workspace.html">Workspace</a>.</p>
+</li>
+<li>
+<p><strong>Inspector</strong> — the pre-production check, in three views. <strong>Scan</strong> runs end-to-end QA and a
+vulnerability assessment and answers one question: can this be pushed? <strong>Review</strong> reads one change
+— working tree, staged, or this branch against its base — and answers whether it can be merged.
+<strong>Live app</strong> runs your project's dev server — detected from <code>package.json</code> / <code>pyproject.toml</code> /
+<code>compose.yaml</code>, chosen by you from that list, and refused if the security policy classifies it as
+never-approvable — embeds the running app, and becomes the scan's live target. See
+<a href="#the-inspector">the Inspector</a>.</p>
+</li>
+<li>
+<p><strong>Insights</strong> — the browser counterpart of the TUI's views behind one segmented control: per-prompt
+<strong>execution map</strong> (models, tools, tests, timing, tokens, cost), live and recorded <strong>logs</strong>,
+<strong>missions</strong> and evidence, <strong>checkpoints</strong>, <strong>approvals</strong>, and <strong>repository</strong> intelligence.</p>
+</li>
+</ul>
+<h2 id="the-agent-panel">The agent panel</h2>
+<p>The right panel shows streamed responses, tool executions, file edits, test runs, errors, approval
+cards, and completion — never raw event JSON. It collapses to a rail (<code>⌘I</code> / <code>Ctrl+I</code>) when the
+canvas or editor needs the width. Under its header:</p>
+<ul>
+<li>A <strong>runner</strong> — a dinosaur mirroring the terminal client's, driven by the same activity states:
+running with <code>THINKING</code>/<code>PLANNING</code>/<code>INSPECTING</code>/<code>BUILDING</code>/<code>VERIFYING</code> in flight, green
+<code>TASK COMPLETED</code> when done, red <code>ERROR</code> with the reason on failure, <code>READY</code> when idle. It stops
+entirely when idle and honours <code>prefers-reduced-motion</code>.</li>
+<li>The <strong>model picker</strong> and a <strong>gear</strong> for <a href="#choosing-a-model">provider setup</a>.</li>
+</ul>
+<h3 id="the-composer">The composer</h3>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Key</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Autonomy</td>
+<td><code>⇧⇥</code></td>
+<td>Plan → Ask → Session → Full, coloured per mode (<code>full</code> outlined in red)</td>
+</tr>
+<tr>
+<td>Model</td>
+<td><code>⌘M</code></td>
+<td>Steps to the next configured profile, pinning it on the session</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Slash commands</strong> — type <code>/</code> to open a menu of the <a href="#slash-commands">full command catalog</a>; pick
+with the arrows and Enter. Commands the browser can carry out itself (opening a view, clearing the
+chat, stopping a turn) act immediately; the rest are sent to the agent. <code>/effort</code> opens an inline
+picker to choose the reasoning level.</p>
+<p><strong>Attachments</strong> — drop files on the composer, paste them (a pasted screenshot is attached, not
+pasted as text), or use the paperclip. Each is stored under <code>.daino/attachments/</code> and attached as a
+<em>path</em>, so the agent opens it with its own tools and it never shows up as an untracked file in your
+diff. Cap: 8 MB and 10 files per message. (The provider layer sends text, so no model reads images
+yet — the path is still useful for &quot;optimise the screenshot at …&quot;.)</p>
+<p><strong>Context bar</strong> — attach precise context instead of dumping whole files: the active file, a code
+selection (line range), a selected design node, the open page, terminal output, or a Git diff. With
+a selection attached, &quot;Explain this&quot; knows exactly which lines you mean.</p>
+<h3 id="stop-tasks-and-live-changes">Stop, tasks, and live changes</h3>
+<p>The <strong>Stop</strong> button cancels the running turn immediately — its status shows <em>Stopping…</em> and then
+stopped, and only an explicit Stop cancels a turn (see <a href="#reloading-during-a-turn">reloading</a>). While
+a turn runs, three things track it: the runner's label names the current step and file; a
+collapsible <strong>Tasks</strong> panel holds the agent's checklist with a <code>done/total</code> count (shown only while
+running, since a leftover plan reads as unfinished work); and a live <strong>Editing N files</strong> card
+accumulates every file touched with running <code>+</code>/<code>-</code> counts. Each finished checklist item adds one
+line to the transcript (<code>✓ …</code>); a failed item is red.</p>
+<h3 id="the-changeset">The changeset</h3>
+<p>A turn that edited anything closes with one changeset card:</p>
+<pre><code>Edited 6 files  +49 -81
+  README.md                          +15 -15
+  docs/assets/relevance-heatmap.svg   +2 -2
+</code></pre>
+<p>The filename opens the file, <strong>diff</strong> opens that file's diff beside the code, <strong>Review</strong> opens all of
+them, and files past the first three collapse behind <em>Show N more</em>. A file edited twice is one row
+with totals summed; a turn whose verification failed is marked <code>unverified</code>. This is the same summary
+the TUI prints, so the clients never disagree.</p>
+<h2 id="the-inspector">The Inspector</h2>
+<p>The Inspector answers the question you ask before a production push: <em>is this safe to ship?</em> It runs
+without a model configured — the offline audit, the project's own commands, and the live probe are
+all deterministic — and uses one when you have one, for the reviewer specialists.</p>
+<h3 id="scan">Scan</h3>
+<p>Pick a profile, optionally give it a live target, and press <strong>Run inspection</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Profile</th>
+<th>What it runs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Full</strong></td>
+<td>Everything below</td>
+</tr>
+<tr>
+<td><strong>Quality</strong></td>
+<td>Lint, types, tests, Playwright, and the architecture / code-quality / frontend / backend reviewers</td>
+</tr>
+<tr>
+<td><strong>Security</strong></td>
+<td>The vulnerability assessment only: built-in audit, SAST, dependency and secret scanners, live probe, and the security / threat-model / supply-chain reviewers</td>
+</tr>
+</tbody>
+</table>
+<p>Evidence comes from four places, and each appears in the report as its own check:</p>
+<ul>
+<li><strong>Built-in security audit</strong> — no tools required. Reads the working tree once and applies a fixed
+rule table: credential shapes (with placeholders and environment lookups discarded), insecure code
+patterns per language (shell injection, unsafe deserialization, disabled TLS verification, dynamic
+evaluation, string-built SQL, DOM injection), and weak configuration (container privilege, root
+images, open ingress CIDRs, public buckets, CI workflows that mix untrusted input with secrets).</li>
+<li><strong>The project's own commands</strong> — lint, types, tests, build, Playwright.</li>
+<li><strong>Installed scanners</strong> — <code>bandit</code>, <code>gitleaks</code>, <code>semgrep</code>, <code>osv-scanner</code>, <code>trivy</code>, <code>pip-audit</code>,
+<code>npm audit</code>, <code>cargo-audit</code>, <code>govulncheck</code>. None is a dependency of Daino: whichever are on the
+host are run, and the rest are listed as skipped so the report never implies coverage it lacks.</li>
+<li><strong>The live probe</strong> — <code>GET</code>/<code>HEAD</code>/<code>OPTIONS</code> against a running app. Security headers, cookie flags,
+exposed paths (<code>/.env</code>, <code>/.git/config</code>, <code>/actuator/env</code>, …), error pages that leak stack traces,
+reflected-origin CORS, and advertised HTTP methods. It never sends a payload and never mutates
+state.</li>
+</ul>
+<p>Everything they produce is normalised into one <strong>findings</strong> list — severity, CWE, location,
+remediation, and the source that reported it. One weakness seen by two sources is merged into one
+row that credits both.</p>
+<h3 id="the-verdict">The verdict</h3>
+<p>The report leads with a release gate, and states every reason behind it:</p>
+<table>
+<thead>
+<tr>
+<th>Verdict</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Safe to push</strong></td>
+<td>No confirmed critical or high finding, and no failing test or quality check</td>
+</tr>
+<tr>
+<td><strong>Review before push</strong></td>
+<td>High or medium findings to triage, failing quality checks, or security evidence that could not be collected</td>
+</tr>
+<tr>
+<td><strong>Do not push</strong></td>
+<td>A confirmed critical finding, a failing test, or a cluster of high findings</td>
+</tr>
+</tbody>
+</table>
+<p>The gate is deterministic — it reads findings and checks, never a model's opinion — so the same
+evidence always produces the same answer. Low-confidence findings (a credential shape inside a test
+fixture, for instance) stay in the report but can never be what blocks a release.</p>
+<p>When the scan lands, your desktop gets a notification carrying the verdict, the browser tab is
+marked if you are looking elsewhere, and the <strong>INSPECTOR</strong> tab keeps a coloured dot showing whether
+this checkout is currently cleared to push.</p>
+<h3 id="review">Review</h3>
+<p>The other half of the Inspector. A scan asks whether the repository is sound; a review asks whether
+the <strong>change in front of you</strong> is sound before it lands.</p>
+<p>Pick what to review:</p>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Working</strong></td>
+<td>Everything uncommitted — including files you have just created, which <code>git diff</code> never mentions</td>
+</tr>
+<tr>
+<td><strong>Staged</strong></td>
+<td>Only what is staged, read from the index rather than from a file that may have moved on</td>
+</tr>
+<tr>
+<td><strong>Branch</strong></td>
+<td>This branch against its base, using the merge base — the pull request you would open</td>
+</tr>
+</tbody>
+</table>
+<p>Two layers run, in this order:</p>
+<p><strong>Mechanical, and deterministic.</strong> It reads only the lines the change <em>introduced</em>, so a file you
+merely touched is never blamed for what was already in it:</p>
+<ul>
+<li><strong>Syntax</strong> — every changed file is re-parsed. Python and JSON/YAML/TOML through their own parsers,
+and JavaScript, TypeScript, Go, Rust, Java, Kotlin, Ruby, PHP, C and C++ through their grammars. A
+language with no bundled grammar gets <em>no opinion</em> rather than a false all-clear.</li>
+<li><strong>Left behind</strong> — merge conflict markers, <code>console.log</code>, <code>debugger</code>, <code>pdb.set_trace</code>, <code>dbg!</code>,
+focused or skipped tests, new TODO/FIXME markers.</li>
+<li><strong>Deceptive characters</strong> — bidirectional overrides and zero-width characters, the trick that makes
+source read one way to you and compile another.</li>
+<li><strong>Introduced risk</strong> — the repository audit's own credential and insecure-code rules, applied to the
+added lines and reported at the line they landed on.</li>
+<li><strong>Gaps</strong> — source changed with no test touched, a test that removes more assertions than it adds, a
+manifest changed without its lockfile, a schema changed without a migration, a removed public
+definition.</li>
+<li><strong>Shape</strong> — change size, files touched across many areas, very long lines, binaries added.</li>
+</ul>
+<p><strong>Reviewers.</strong> Four read-only agents then read the diff <em>and the code around it</em> — correctness,
+gaps, impact and compatibility, security — and a synthesis step writes the review: what the change
+does and why, blockers, findings by severity, what is missing, and what it could not determine. They
+are told to triage the mechanical findings rather than repeat them.</p>
+<p>The review ends in a merge verdict — <strong>ready to merge</strong>, <strong>needs a look</strong>, or <strong>do not merge</strong> —
+decided the same deterministic way as the scan's. A change that stops a file parsing, leaves a
+conflict marker, or adds a credential is blocked outright: unlike a pre-existing problem, it was
+introduced here, by someone who is still looking at it.</p>
+<p>Click a file to read its patch inline, or open it in CODE.</p>
+<p>Two things worth knowing about what it deliberately does not do. It does not re-run your lint, type
+or test commands — SCAN does that across the whole repository, and duplicating it per change would
+only tell you the same thing more slowly. And a finding in a test or fixture path is kept but
+demoted and marked low confidence, because a security test has to contain the very pattern it
+asserts is caught.</p>
+<h3 id="live-app">Live app</h3>
+<p>Detects runnable commands from <code>package.json</code>, <code>pyproject.toml</code>, and <code>compose.yaml</code>, starts one, and
+embeds it. While it runs, its URL prefills the scan's live target, so &quot;see it working&quot; and &quot;check
+what it exposes&quot; are the same two clicks.</p>
+<p>Choosing the command <em>is</em> the approval here: you pick it from a detected, visible list, and the
+security policy is applied to your choice rather than to a request from the agent. A command the
+policy classifies as never-approvable is refused outright — there is no prompt to say yes to, because
+there is no answer that would make it safe. This is deliberately not the agent's approval round trip:
+nothing is proposing the command, so there is nothing to grant.</p>
+<p>Probing is limited to loopback and private-network addresses. Anything else has to be confirmed as
+yours before the button will run, and the confirmation is audited.</p>
+<h2 id="the-visual-html-editor">The visual HTML editor</h2>
+<p>Opening a page — importing it, double-clicking its canvas card, or pressing ⛶ — gives it the whole
+workspace. A mode switch offers <strong>Preview / Edit / Split / Code</strong> (rendered page, visual editor,
+stacked preview-over-source, source alone), a <strong>viewport menu</strong> (Responsive, Desktop 1440, Laptop
+1280, Tablet 834, Mobile 390), and a <strong>zoom bar</strong> (slider, − / +, click the % for <strong>Fit</strong>, <strong>1:1</strong>
+for actual size; <code>⌘</code>/<code>Ctrl</code>+scroll zooms). <strong>↗</strong> opens the page in a real tab, <strong>⟳</strong> reloads the
+frame, <code>Esc</code> returns to the canvas, and the blocks rail collapses (<code>‹</code>) when the page needs width.</p>
+<h3 id="editing-by-hand">Editing by hand</h3>
+<p><strong>Edit</strong> mode turns the preview into the editing surface:</p>
+<ul>
+<li><strong>Click</strong> anything to select it; a breadcrumb walks up to its ancestors, and the cursor changes on
+hover and selection.</li>
+<li><strong>Drag</strong> an element to move it freely — dropping it anywhere changes its position, not its style.</li>
+<li><strong>Double-click</strong> text to edit it in place.</li>
+<li><strong>Right-click</strong> an element for a context menu (edit, duplicate, wrap, copy, delete).</li>
+<li><strong>Drag a block</strong> from the left rail, or click one to drop it after the selection. The palette
+covers layout (sections, grids, flex rows), text, media, form controls, and whole blocks (hero,
+nav, card, feature grid, CTA, footer, table).</li>
+<li>The <strong>right panel</strong> edits the selected element's text, link target, image source and alt, classes,
+alignment, colour, size, padding, and margin, and can duplicate, reorder, or delete it.</li>
+</ul>
+<p>Visual edits save on their own a moment after you make them; typed source keeps an explicit
+<strong>Apply</strong> button, where a half-finished tag should not hit disk. While you edit, the page's own
+scripts are parked so a self-rewriting page cannot fight the editor (restored verbatim on save), and
+the frame stays sandboxed without <code>allow-same-origin</code>, so it can never reach the app hosting it —
+the two sides exchange <code>postMessage</code> only.</p>
+<h3 id="intelligent-editing-with-daino">Intelligent editing with D[Ai]NO</h3>
+<p>The editor is agent-aware. A ✨ <strong>D[Ai]NO</strong> section on the element panel and page toolbar turns
+design intent into scoped agent instructions:</p>
+<table>
+<thead>
+<tr>
+<th>Scope</th>
+<th>Action</th>
+<th>What the agent does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Element</td>
+<td><strong>Match style</strong></td>
+<td>Restyle the element to match the page — reusing its colours, typography, spacing, and similar components — changing only classes/inline styles, never content</td>
+</tr>
+<tr>
+<td>Element</td>
+<td><strong>Improve</strong></td>
+<td>Refine layout, spacing, hierarchy, and interactive states while keeping purpose and content</td>
+</tr>
+<tr>
+<td>Element</td>
+<td><strong>Make responsive</strong></td>
+<td>Make the element read well on mobile/tablet/desktop, consistent with the page</td>
+</tr>
+<tr>
+<td>Element</td>
+<td><strong>Fill content</strong></td>
+<td>Replace placeholder text and image slots with real, project-specific copy — drawn from the repository — keeping the layout</td>
+</tr>
+<tr>
+<td>Page</td>
+<td><strong>Polish</strong></td>
+<td>Improve spacing, alignment, hierarchy, typography, and consistency across the whole page</td>
+</tr>
+<tr>
+<td>Page</td>
+<td><strong>Make responsive</strong></td>
+<td>Add the responsive CSS/classes the page needs, preserving its desktop look</td>
+</tr>
+<tr>
+<td>Page</td>
+<td><strong>Improve accessibility</strong></td>
+<td>Semantic HTML, alt text, labels, contrast, focus states, and ARIA</td>
+</tr>
+<tr>
+<td>Page</td>
+<td><strong>Generate from prompt</strong></td>
+<td>Add a new section you describe, matched to the page's existing style and framework</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Auto-match on drop</strong> — when enabled (a toggle on the blocks rail), dropping a block asks D[Ai]NO to
+restyle it to the page automatically, so a pasted-in card adopts the surrounding design without a
+second step.</p>
+<p>While D[Ai]NO edits the page, the canvas, HTML, and components <strong>blur behind a &quot;working on this
+page…&quot; overlay</strong> until the change lands, then the preview <strong>refreshes automatically</strong> — no manual
+reload. If you have unsaved edits of your own when D[Ai]NO writes, nothing is discarded: a banner
+offers <strong>Load D[Ai]NO's version</strong> or <strong>Keep mine</strong>. A page open in the viewer is attached to the
+agent's context automatically, so &quot;make the hero headline bigger&quot; already knows the file.</p>
+<p>You can also just ask in chat — the open page is context, and the preview updates the moment the
+change lands.</p>
+<h3 id="export-and-implement">Export and implement</h3>
+<p>The <strong>Export</strong> menus (viewer for one page, toolbar for the whole canvas) offer a <strong>prototype bundle
+<code>.zip</code></strong> (<code>index.html</code>, other pages under <code>pages/</code>, assets, <code>design.json</code>, <code>README.md</code>), a
+<strong>standalone <code>.html</code></strong>, a <strong>vector <code>.svg</code></strong>, and a <strong>design <code>.json</code></strong> (drop it on another canvas to
+restore it). An artifact can also be downloaded under its original name or written back with <strong>Save
+to project…</strong> so the agent can pick it up. Design stays separate from production code: use <strong>Implement
+Design</strong>, which asks D[Ai]NO to inspect the repository and propose a plan first — a design change is
+never silently turned into code.</p>
+<h2 id="reviewing-changes">Reviewing changes</h2>
+<p>Source Control lists staged, modified, and untracked paths with stage, unstage, and discard actions.
+Selecting one opens a <strong>side-by-side Monaco diff beside your code</strong> — working tree against the index,
+or index against HEAD for a staged change. The GUI never commits or pushes; the agent's workflow owns
+that.</p>
+<h2 id="approvals">Approvals</h2>
+<p>The GUI reuses the TUI's exact command permission model. A gated command shows an inline card:</p>
+<pre><code>Approval needed — the command writes outside the workspace
+rm -rf build/
+[Allow Once]  [Always Allow]  [Reject]
+</code></pre>
+<p>Never-approvable commands are refused, and nothing is committed automatically. Approval prompts,
+model pickers, and confirmations use D[Ai]NO's own in-app dialogs, not the browser's.</p>
+<h2 id="choosing-a-model">Choosing a model</h2>
+<p>The model picker sits above the conversation; picking a profile is a <em>session</em> choice that pins the
+model for this conversation (the terminal client sees the same pin) without changing saved routing.
+The gear opens <strong>Providers</strong> in the same column:</p>
+<ul>
+<li>Every configured provider with type, model, and an <em>in use</em> badge; <strong>+ New</strong> adds one (name, type,
+base URL, model, key, and scope — this project or every project).</li>
+<li>The <strong>model field</strong> is filled from the provider's real catalog: a hosted catalog is <em>searchable</em>
+and accepts a hand-entered id; Ollama/vLLM show the handful actually installed, marking a saved but
+missing model <code>(not installed)</code>.</li>
+<li><strong>Test connection</strong> runs four checks without saving — Endpoint (something answered, how fast),
+Credentials (the key was accepted), Model (this model is offered), Generation (a real one-token
+request came back, the only check that proves a turn works).</li>
+<li>Keys are never rendered back: blank keeps the stored one; a literal key goes to the secret store
+and only its <code>env://</code> / <code>file://</code> / <code>keyring://</code> reference goes into YAML.</li>
+</ul>
+<p>Saving an OpenRouter provider validates the key and requires the model in the live catalog;
+self-hosted providers save even while down.</p>
+<h2 id="agent-settings">Agent settings</h2>
+<p>The same gear opens <strong>Agent settings</strong> — the browser's half of the terminal customization commands.</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Command</th>
+<th>Changes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Autonomy &amp; effort</td>
+<td><code>/mode</code>, <code>/effort</code>, <code>/verbose</code></td>
+<td>How much this conversation may do, reasoning effort, and how much of a turn is reported</td>
+</tr>
+<tr>
+<td>Agent roles</td>
+<td>routing</td>
+<td>Which model plans, builds, reviews, debugs, tests, deploys — see <a href="model-routing.html">model routing</a></td>
+</tr>
+<tr>
+<td>Instructions</td>
+<td><code>DAINO.md</code></td>
+<td>Always-on guidance in precedence layers; shows what actually applies to the open file</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td><code>/memory</code></td>
+<td>Add an authoritative <code>user</code> fact, search, re-verify, forget, or clear project memory</td>
+</tr>
+<tr>
+<td>Playbooks</td>
+<td><code>/playbooks</code></td>
+<td>Built-in and <code>.daino/playbooks/</code> procedures with stages, tools, and approval points</td>
+</tr>
+<tr>
+<td>Providers</td>
+<td><code>/provider</code></td>
+<td>Connect, edit, and test a provider</td>
+</tr>
+</tbody>
+</table>
+<h2 id="slash-commands">Slash commands</h2>
+<p>The GUI chat carries the full <a href="tui.html#slash-commands">TUI command catalog</a>; type <code>/</code> to open the
+menu. Commands that map to a browser action open the matching view:</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Opens / does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/help</code></td>
+<td>Documentation at <code>/docs</code></td>
+</tr>
+<tr>
+<td><code>/clear</code></td>
+<td>Clear the visible conversation</td>
+</tr>
+<tr>
+<td><code>/cancel</code></td>
+<td>Stop the running turn</td>
+</tr>
+<tr>
+<td><code>/mode</code>, <code>/effort</code>, <code>/verbose</code>, <code>/model</code>, <code>/memory</code>, <code>/runtime</code>, <code>/settings</code></td>
+<td>Agent settings panel</td>
+</tr>
+<tr>
+<td><code>/provider</code>, <code>/globalprovider</code></td>
+<td>Provider setup</td>
+</tr>
+<tr>
+<td><code>/files</code></td>
+<td>Code workspace ▸ Explorer</td>
+</tr>
+<tr>
+<td><code>/diff</code></td>
+<td>Code workspace ▸ Source Control</td>
+</tr>
+<tr>
+<td><code>/logs</code>, <code>/map</code></td>
+<td>Insights ▸ logs / execution map</td>
+</tr>
+<tr>
+<td><code>/qa</code>, <code>/inspect</code></td>
+<td>Inspector ▸ Scan</td>
+</tr>
+<tr>
+<td><code>/workspace</code></td>
+<td>Workspaces</td>
+</tr>
+<tr>
+<td><code>/missions</code>, <code>/checkpoints</code></td>
+<td>Insights ▸ the matching view</td>
+</tr>
+</tbody>
+</table>
+<p>Everything else — <code>/ask</code>, <code>/plan</code>, <code>/build</code>, <code>/run</code>, <code>/team</code>, <code>/review</code>, <code>/test</code>, <code>/index</code>,
+<code>/playbooks</code>, <code>/deploy</code>, <code>/status</code>, <code>/tasks</code>, <code>/resume</code>, <code>/checkpoint</code>, <code>/restore</code>, <code>/new</code> — is sent
+to the agent exactly as in the TUI.</p>
+<h2 id="keyboard-shortcuts">Keyboard shortcuts</h2>
+<p>Every binding is also printed next to its menu item (Help ▸ Keyboard shortcuts lists them all).</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Binding</th>
+<th>Action</th>
+<th>Binding</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Save / save all</td>
+<td><code>⌘S</code> / <code>⇧⌘S</code></td>
+<td>Go to line / symbol</td>
+<td><code>⌘G</code> / <code>⇧⌘O</code></td>
+</tr>
+<tr>
+<td>Open file by path</td>
+<td><code>⌘O</code></td>
+<td>Cycle autonomy mode</td>
+<td><code>⇧⇥</code></td>
+</tr>
+<tr>
+<td>Close editor</td>
+<td><code>⌥W</code></td>
+<td>Next model profile</td>
+<td><code>⌘M</code></td>
+</tr>
+<tr>
+<td>Next / previous editor</td>
+<td><code>⌥⌘→</code> / <code>⌥⌘←</code></td>
+<td>Toggle sidebar / panel / agent</td>
+<td><code>⌘B</code> / <code>⌘J</code> / <code>⌘I</code></td>
+</tr>
+<tr>
+<td>Find / replace</td>
+<td><code>⌘F</code> / <code>⌥⌘F</code></td>
+<td>Interface zoom in / out / reset</td>
+<td><code>⌘=</code> / <code>⌘-</code> / <code>⌘0</code></td>
+</tr>
+<tr>
+<td>Find in files</td>
+<td><code>⇧⌘F</code></td>
+<td>New terminal</td>
+<td>`Ctrl+``</td>
+</tr>
+</tbody>
+</table>
+<p><code>Ctrl</code> replaces <code>⌘</code> on Linux and Windows. <code>⌘W</code> and <code>⌘N</code> belong to the browser, which is why closing
+an editor is <code>⌥W</code>.</p>
+<h2 id="settings-and-preferences">Settings and preferences</h2>
+<p>Settings keeps two kinds of state apart. <strong>Interface preferences</strong> stay in the browser and never
+touch your project — theme (Dark / Light / High contrast), interface font size, editor behaviour
+(word wrap, minimap, line numbers, auto-save, close-modified prompt), conversation attachments and
+reasoning display, and a verbose event stream. <strong>Project and agent configuration</strong> is written to
+<code>.daino/config.yaml</code> through the same validated services as the TUI and CLI, effective immediately —
+provider, model routing, runtime (<code>docker</code> / <code>local</code> / <code>ssh</code>, with <code>local</code> flagged as unsandboxed),
+approvals, log level, notifications, and keep-awake.</p>
+<h2 id="sessions">Sessions</h2>
+<p>The TUI and GUI share one session system: work started with <code>--tui</code> reopens with <code>--gui</code> and vice
+versa. <strong>A session is the unit of context</strong>, so each turn sends its recent exchanges as history — a
+days-long conversation makes every prompt bigger and answers in the shadow of old ones (felt most on
+local models). The panel header names and switches conversations; <strong>New</strong> starts a fresh one with an
+empty plan, default autonomy, and no carried-over task state. Each row shows its message count, which
+is prompt weight.</p>
+<h2 id="notifications-and-staying-awake">Notifications and staying awake</h2>
+<p>Both clients raise a real OS notification for the three moments that arrive when nobody is watching —
+a turn finished, something failed, an approval is waiting — through one shared service (macOS
+<code>terminal-notifier</code>/<code>osascript</code>, Linux <code>notify-send</code>, Windows balloon), plus the terminal bell.
+While the agent works, D[Ai]NO stops the machine sleeping (<code>caffeinate -dimsu</code> / <code>systemd-inhibit</code> /
+<code>SetThreadExecutionState</code>, refcounted and dropped on shutdown), and the browser additionally holds a
+<strong>Screen Wake Lock</strong> while the IDE is the visible tab. A turn ending in a background tab marks its
+title <code>✓</code> or <code>✗</code>. One <em>Keep awake while working</em> switch governs it; <code>DAINO_NOTIFY=off</code> and
+<code>DAINO_WAKELOCK=off</code> disable each for a process.</p>
+<h2 id="reloading-during-a-turn">Reloading during a turn</h2>
+<p><strong>A turn is server-side work and survives the page.</strong> Only an explicit <strong>Stop</strong> cancels it. A
+reconnecting client is told on connect that work is in flight, so it picks the running state back up
+(the runner resumes, the transcript reloads) and can stop the turn a previous connection started. Two
+consequences: an approval nobody is there to answer is <strong>denied</strong> rather than left holding the
+one-turn-at-a-time lock open, and the live file list starts empty after a reload while the closing
+changeset still reports everything (it is built server-side).</p>
+<h2 id="security">Security</h2>
+<ul>
+<li>Default bind is <code>127.0.0.1</code>; file, shell, and terminal APIs are never exposed publicly by default.</li>
+<li><strong>Only this server's own page may call it.</strong> A browser <code>Origin</code> is accepted only when it is this
+instance (or the Vite dev server), and <code>Host</code> must name a served interface — closing cross-origin
+WebSocket and DNS-rebinding attacks that &quot;it only listens on localhost&quot; does not. Non-browser
+clients send no <code>Origin</code> and are unaffected. Set <code>DAINO_GUI_ALLOWED_HOSTS=name1,name2</code> for a
+deliberate alternate hostname.</li>
+<li><strong>One agent turn at a time</strong> — a second tab, or the same project in the terminal client, waits
+rather than interleaving edits against one working tree.</li>
+<li><strong>Terminals are reaped</strong> — a shell unattached for ten minutes is closed, and a project is capped at
+24.</li>
+<li>File writes use optimistic concurrency (content hash) and reject stale writes with a conflict
+warning. Inspections started from the browser skip network-approval checks rather than silently
+granting them, and the live probe refuses any target outside loopback or private address space
+until you confirm you own it — a confirmation that is written to the audit log. Everything
+Insights shows is built from redacted, structured audit records.</li>
+</ul>
+<h2 id="documentation-and-api-reference">Documentation and API reference</h2>
+<p>The <strong>?</strong> button (and <code>/help</code>) opens <code>/docs</code> — these pages, rendered by the IDE with a sidebar,
+search, and an on-page outline from the markdown that ships with the package. The generated OpenAPI
+reference lives at <code>/api-docs</code> (ReDoc at <code>/api-redoc</code>).</p>
+<p>For frontend development, run the Vite dev server, which proxies the backend:</p>
+<pre><code class="language-bash">cd daino/gui
+npm run dev        # http://127.0.0.1:5173, proxying the backend on 4173
+</code></pre>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="tui.html"><span>Previous</span><strong>Terminal UI (TUI)</strong></a>
+            <a class="doc-pager-next" href="workspace.html"><span>Next</span><strong>Workspace</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#layout">Layout</a>
+            <a href="#the-agent-panel">The agent panel</a>
+            <a href="#the-inspector">The Inspector</a>
+            <a href="#the-visual-html-editor">The visual HTML editor</a>
+            <a href="#reviewing-changes">Reviewing changes</a>
+            <a href="#approvals">Approvals</a>
+            <a href="#choosing-a-model">Choosing a model</a>
+            <a href="#agent-settings">Agent settings</a>
+            <a href="#slash-commands">Slash commands</a>
+            <a href="#keyboard-shortcuts">Keyboard shortcuts</a>
+            <a href="#settings-and-preferences">Settings and preferences</a>
+            <a href="#sessions">Sessions</a>
+            <a href="#notifications-and-staying-awake">Notifications and staying awake</a>
+            <a href="#reloading-during-a-turn">Reloading during a turn</a>
+            <a href="#security">Security</a>
+            <a href="#documentation-and-api-reference">Documentation and API reference</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

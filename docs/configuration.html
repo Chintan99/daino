@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Configuration is two layers. The global file at ~/.config/daino/config.yaml ($XDG_CONFIG_HOME/daino, or $DAINO_CONFIG_HOME) holds what follows you between projects: providers, mode" />
+    <meta name="theme-color" content="#07110d" />
+    <title>Configuration — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html" class="current" aria-current="page">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="configuration.html">Operating</a> <span>/</span> Configuration</div>
+<h1 id="configuration">Configuration</h1>
+<p>Configuration is two layers. The <strong>global</strong> file at <code>~/.config/daino/config.yaml</code>
+(<code>$XDG_CONFIG_HOME/daino</code>, or <code>$DAINO_CONFIG_HOME</code>) holds what follows you between
+projects: providers, model profiles, routing, and interface preferences. Connect a model once and
+it becomes available everywhere; new-project onboarding explicitly lets you inherit it or choose
+project-specific model settings.</p>
+<p>The <strong>project</strong> file at <code>.daino/config.yaml</code> holds what is genuinely local — its name, database,
+verification commands, security policy, runtime — and overrides the global layer where the two
+disagree, so one repository can still pin a different model deliberately. Values matching the
+global layer are not copied into the project file: duplicating them would freeze today's choice
+into each repository, so changing the global model later would silently fail to reach it.</p>
+<p>API keys for a global provider are stored under <code>~/.config/daino/secrets/</code>, not inside a
+checkout, so deleting a project cannot break every other one.</p>
+<p>Use <code>/globalprovider</code> to configure the shared provider from any workspace. <code>/provider</code> edits the
+current project's override and includes <strong>Use global settings</strong>, which removes those overrides and
+immediately restores the shared provider, model profiles, and routing.</p>
+<p>Memory policy is configured under <code>memory</code>. Durable project/task state uses the project database;
+cross-project user preferences and global <code>DAINO.md</code> live privately under <code>~/.daino</code> (override
+with <code>DAINO_HOME</code>). Embeddings default to <code>disabled</code>; lexical and metadata retrieval still work.
+See the complete <a href="memory.html#configuration">memory architecture</a> and <code>config.example.yaml</code>.</p>
+<p>Model profiles accept <code>execution_mode</code> (<code>auto</code>, <code>compact</code>, or <code>standard</code>),
+<code>initial_context_tokens</code>, <code>max_agent_steps</code>, <code>no_progress_limit</code>, and <code>staged_retrieval</code>.
+Compact mode is designed for small/local coding models: it uses a bounded task packet and expands
+source or memory only through tools. See <a href="model-routing.html#small-model-execution-profiles">small-model execution profiles</a>.</p>
+<p>Project configuration is <code>.daino/config.yaml</code>, validated with Pydantic. <code>DATABASE_URL</code>,
+<code>DAINO_RUNTIME</code>, <code>OPENROUTER_BASE_URL</code>, <code>OPENROUTER_MODEL</code>, <code>OLLAMA_BASE_URL</code>, <code>OLLAMA_MODEL</code>,
+<code>VLLM_BASE_URL</code>, and <code>VLLM_MODEL</code> override corresponding values. Each <code>*_BASE_URL</code>/<code>*_MODEL</code> pair
+applies to the provider entry of that name (<code>providers.ollama</code>, <code>providers.vllm</code>,
+<code>providers.openrouter</code>), so it only takes effect when the provider is named accordingly.
+<code>OPENROUTER_API_KEY</code>, <code>OLLAMA_API_KEY</code>, and <code>VLLM_API_KEY</code> add secret references
+(<code>env://OPENROUTER_API_KEY</code> and so on), not values.</p>
+<p>Use <code>config.example.yaml</code> as the documented complete example:</p>
+<pre><code class="language-bash">daino config show
+daino config set verification.total_attempts 3
+daino config set runtime.default local
+daino config validate
+</code></pre>
+<p>Provider configuration fields reject literal values. Configure <code>env://</code>, <code>keyring://</code>, or
+<code>file://</code> references. The interactive Providers screen additionally accepts a pasted OpenRouter
+key: it checks the key before saving and stores a valid key in the private <code>.daino/secrets</code>
+directory while persisting only its reference. PostgreSQL is enabled by setting <code>database.url</code> or
+<code>DATABASE_URL</code> to a SQLAlchemy PostgreSQL URL and installing the desired database driver.</p>
+<h2 id="budget">Budget</h2>
+<p>Every model call's cost has always been recorded. These are the settings that
+make it <em>enforced</em>. Each defaults to <code>0</code>, meaning unlimited, so an existing
+project behaves exactly as it did — the gap was never a missing default, it was
+the absence of any way to set one.</p>
+<pre><code class="language-yaml">budget:
+  max_cost_usd: 5.0        # per mission; 0 is unlimited
+  max_total_tokens: 500000
+  max_model_calls: 200
+  warn_at_fraction: 0.8    # warn once at 80% of the tightest ceiling
+</code></pre>
+<p>The stall guard already ends an <em>unproductive</em> run in about a dozen actions.
+These bound the other case: an agent making genuine, non-repeating progress on a
+task it will never finish. A run that hits a ceiling stops the way a step limit
+does — incomplete, with a reason, and with whatever already landed in the working
+tree reported rather than discarded.</p>
+<p>A mission's budget is shared by everything it spawns: a pinned session, a team's
+nine members, and every delegated subagent draw on one account, not nine.</p>
+<p><code>max_cost_usd</code> binds only where the provider reports a charge. A local Ollama or
+a self-hosted vLLM reports none and has none, so use <code>max_total_tokens</code> there.</p>
+<h2 id="web-search">Web search</h2>
+<p><code>web_search</code> scrapes DuckDuckGo by default, which needs no account and is the
+option most likely to break — it is a scrape of an endpoint that discourages
+scraping. The alternatives are documented APIs:</p>
+<pre><code class="language-yaml">web:
+  provider: brave          # duckduckgo | brave | tavily | searxng | google-pse
+  api_key: env://BRAVE_SEARCH_API_KEY
+</code></pre>
+<p><code>searxng</code> needs only <code>base_url</code> and keeps queries inside your network; the
+private-address block is lifted for exactly that hostname and nothing else, and
+a redirect away from it is validated normally. <code>google-pse</code> needs <code>api_key</code> and
+<code>engine_id</code>. Whichever backend answers, the SSRF validation, redirect
+revalidation, byte ceiling and content-type check are the same single
+implementation all network access passes through.</p>
+<h2 id="tracing">Tracing</h2>
+<p>Set an OTLP endpoint and D[Ai]NO emits spans around every model call, loop step,
+tool execution, and delegation:</p>
+<pre><code class="language-yaml">observability:
+  otel_endpoint: http://localhost:4318/v1/traces
+</code></pre>
+<p><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> is honoured when the setting is absent, so a
+deployment that configures every other service through the standard variable gets
+these too. Spans carry identity and cost — role, model, profile, token counts,
+latency — and never prompts, file contents, or command output. A trace collector
+is usually the least access-controlled sink in a deployment, and shipping source
+code to it would be a leak dressed as observability.</p>
+<p>Tracing degrades to nothing when the OpenTelemetry SDK is absent or the collector
+is unreachable. A mission must not fail because a collector went away.</p>
+<h2 id="browser-ide">Browser IDE</h2>
+<p><code>daino . --gui</code> starts the local browser IDE. It binds <code>127.0.0.1</code> by default (never <code>0.0.0.0</code>) on
+port <code>4173</code>; override with <code>--host</code> / <code>--port</code> (port <code>0</code> picks a free port), and <code>--no-browser</code>
+suppresses auto-opening a browser. Remote access requires deliberate configuration. See the
+<a href="gui.html">browser IDE guide</a>.</p>
+<h2 id="migrating-from-vasuki">Migrating from Vasuki</h2>
+<p>D[Ai]NO was renamed from Vasuki. Configuration and state are resolved <strong>read-legacy / write-new</strong>, and
+legacy data is never moved or deleted:</p>
+<ul>
+<li>Project state uses <code>.daino/</code>, but a checkout that already has <code>.vasuki/</code> keeps using it in place
+(its <code>config.yaml</code>, database, and sessions stay together).</li>
+<li>Global config/memory prefer <code>~/.config/daino</code> and <code>~/.daino</code>, falling back to <code>~/.config/vasuki</code>
+and <code>~/.vasuki</code> when only those exist.</li>
+<li>Environment variables <code>DAINO_CONFIG_HOME</code>, <code>DAINO_HOME</code>, and <code>DAINO_RUNTIME</code> are read first, with
+the <code>VASUKI_*</code> equivalents still honoured.</li>
+<li>Instruction files: <code>DAINO.md</code> is discovered first; a legacy <code>VASUKI.md</code> is still read where no
+<code>DAINO.md</code> exists at the same level.</li>
+<li>The default database is <code>.daino/daino.db</code>; an existing <code>.vasuki/vasuki.db</code> is opened in place.</li>
+</ul>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="evals.html"><span>Previous</span><strong>Evals</strong></a>
+            <a class="doc-pager-next" href="runtimes.html"><span>Next</span><strong>Runtimes</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#budget">Budget</a>
+            <a href="#web-search">Web search</a>
+            <a href="#tracing">Tracing</a>
+            <a href="#browser-ide">Browser IDE</a>
+            <a href="#migrating-from-vasuki">Migrating from Vasuki</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

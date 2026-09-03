@@ -1,22 +1,23 @@
-"""Render every ``docs/*.md`` into a styled page of the documentation site.
+"""Render ``docs/*.md`` into the documentation site: pages, nav, and search.
 
-The site is deployed as static files — ``upload-pages-artifact`` on ``docs/``,
-with no Jekyll — so a ``.md`` file in there is served as a download, not as a
-page. That is why every "read more" link on the landing page used to point at
-``github.com/.../blob/v2/docs/*.md``: there was nothing else to point at, and a
-reader following one left the documentation site for a source-code view of the
-file they wanted to read.
+GitHub Pages serves this repository's ``docs/`` folder, so a ``.md`` file in
+there is not a page — it is either a download or, when Pages builds the branch
+with Jekyll, a default-themed conversion that shares nothing with the site
+around it. Both were happening: the landing page's "read more" links pointed at
+``github.com/.../blob/v2/docs/*.md`` because there was nothing else to point at,
+and once they were repointed the reader landed on Jekyll's rendering instead.
 
-This closes that. Each markdown file becomes ``docs/<name>.html`` wearing the
-same header, navigation, footer, and stylesheet as the landing page, and every
-internal ``.md`` link is rewritten to the generated page beside it.
+This builds the real thing. Every markdown file becomes ``docs/<name>.html``
+wearing the site's own header, sidebar, contents rail, and stylesheet; internal
+``.md`` links are rewritten to the pages beside them; and ``search-index.json``
+is written so the whole set can be searched without a server.
 
-Run it before deploying::
+    python scripts/build_docs_site.py            # build
+    python scripts/build_docs_site.py --check    # fail if the build is stale
 
-    python scripts/build_docs_site.py
-
-Generated pages are not committed — the workflow builds them into the artifact
-it uploads — so nothing here has to be kept in sync by hand.
+The output is committed, because Pages may be serving the branch directly
+rather than a workflow artifact. ``docs/.nojekyll`` is what stops it rewriting
+these pages on the way out.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import json
 import re
 import unicodedata
 from collections.abc import Iterable
@@ -35,31 +37,42 @@ from markdown_it.token import Token
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+HERE = Path(__file__).resolve().parent
+TEMPLATE = (HERE / "docs_page_template.html").read_text(encoding="utf-8")
 
-#: Files in ``docs/`` that are the site itself rather than a page of it.
-NOT_PAGES = {"index.html", "styles.css", "script.js", "install.sh"}
-
-#: The landing-page sections the top navigation points at. Written as
-#: ``index.html#…`` because a generated page is not the landing page, and a bare
-#: fragment would scroll the reader to nowhere on the page they are already on.
-NAV = (
-    ("index.html#installation", "Installation"),
-    ("index.html#getting-started", "Get started"),
-    ("index.html#interfaces", "Interfaces"),
-    ("index.html#workspaces", "GUI tabs"),
-    ("index.html#providers", "Providers"),
-    ("index.html#features", "Features"),
-    ("index.html#reference", "Reference"),
+#: The sidebar, and with it the reading order. Grouped by what the reader is
+#: trying to do rather than alphabetically: a list of twenty-two file names is a
+#: directory listing, not documentation. A markdown file missing from here is
+#: reported rather than quietly left out of the navigation.
+GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Start here", ("installation", "getting-started", "features")),
+    ("Interfaces", ("tui", "gui", "workspace")),
+    ("Models", ("providers", "model-routing")),
+    (
+        "Working with it",
+        ("missions", "memory", "repository-intelligence", "extending", "playbooks", "evals"),
+    ),
+    ("Operating", ("configuration", "runtimes", "security", "deployment", "infrastructure")),
+    ("Reference", ("cli-reference", "architecture", "contributing")),
 )
 
-#: Title shown in the browser tab and the page header, when the markdown does
-#: not open with an ``h1`` of its own.
-FALLBACK_TITLES = {"index": "Documentation"}
+#: Shown in the sidebar and search results instead of the file name.
+TITLES = {
+    "cli-reference": "CLI reference",
+    "getting-started": "Getting started",
+    "gui": "Browser IDE (GUI)",
+    "model-routing": "Model routing",
+    "repository-intelligence": "Repository intelligence",
+    "tui": "Terminal UI (TUI)",
+}
 
-#: The page shell, kept beside this file rather than inside it. It is HTML —
-#: SVG path data does not wrap to a Python line limit, and editing the site
-#: chrome should not mean editing a string literal.
-TEMPLATE = (Path(__file__).resolve().parent / "docs_page_template.html").read_text(encoding="utf-8")
+#: How much of a section's prose is indexed. Enough to match a phrase the reader
+#: half-remembers, bounded so the index stays a small download.
+SECTION_CHARS = 700
+
+
+def nav_title(stem: str) -> str:
+    return TITLES.get(stem) or stem.replace("-", " ").capitalize()
 
 
 def slugify(text: str, seen: dict[str, int]) -> str:
@@ -86,7 +99,7 @@ def rewrite_link(href: str) -> str:
 
 
 def anchor_headings(tokens: list[Token]) -> list[tuple[int, str, str]]:
-    """Give every heading an id, and return the outline for the page's contents."""
+    """Give every heading an id, and return the outline for nav and search."""
     outline: list[tuple[int, str, str]] = []
     seen: dict[str, int] = {}
     for index, token in enumerate(tokens):
@@ -106,11 +119,55 @@ def retarget_links(tokens: Iterable[Token]) -> None:
         for child in token.children or ():
             if child.type != "link_open":
                 continue
-            href = child.attrGet("href") or ""
-            child.attrSet("href", rewrite_link(str(href)))
-            if urlsplit(str(href)).netloc:
+            href = str(child.attrGet("href") or "")
+            child.attrSet("href", rewrite_link(href))
+            if urlsplit(href).netloc:
                 child.attrSet("target", "_blank")
                 child.attrSet("rel", "noreferrer")
+
+
+#: Markdown that means nothing once the text is an excerpt in a result list:
+#: emphasis markers, backticks, link syntax around the words it wraps, and the
+#: box-drawing characters a directory tree is made of.
+_NOISE = (
+    (re.compile(r"!?\[([^\]]*)\]\([^)]*\)"), r"\1"),
+    (re.compile(r"[*_`>|#]+"), " "),
+    (re.compile(r"[\u2500-\u257f]+"), " "),
+)
+
+
+def section_text(tokens: list[Token], start: int) -> str:
+    """The prose under one heading, flattened and cleaned for the search index."""
+    collected: list[str] = []
+    for token in tokens[start + 3 :]:
+        if token.type == "heading_open":
+            break
+        if token.type in {"inline", "fence", "code_block"}:
+            collected.append(token.content)
+        if sum(len(item) for item in collected) > SECTION_CHARS * 2:
+            break
+    text = " ".join(collected)
+    for pattern, replacement in _NOISE:
+        text = pattern.sub(replacement, text)
+    return " ".join(text.split())[:SECTION_CHARS]
+
+
+def build_index(stem: str, title: str, tokens: list[Token]) -> list[dict[str, str]]:
+    """One search entry per heading, so a hit lands on the section, not the page."""
+    entries: list[dict[str, str]] = []
+    for index, token in enumerate(tokens):
+        if token.type != "heading_open" or token.tag not in {"h1", "h2", "h3"}:
+            continue
+        anchor = str(token.attrGet("id") or "")
+        entries.append(
+            {
+                "page": title,
+                "heading": "" if token.tag == "h1" else tokens[index + 1].content,
+                "url": f"{stem}.html" if token.tag == "h1" else f"{stem}.html#{anchor}",
+                "text": section_text(tokens, index),
+            }
+        )
+    return entries
 
 
 def asset_version() -> str:
@@ -121,13 +178,96 @@ def asset_version() -> str:
     rendering at its full 1728px inside a 1140px column.
     """
     digest = hashlib.sha256()
-    for name in ("styles.css", "script.js"):
+    for name in ("styles.css", "script.js", "docs.js"):
         digest.update((DOCS / name).read_bytes())
     return digest.hexdigest()[:10]
 
 
-def render(path: Path, version: str) -> str:
-    """Turn one markdown file into a complete page."""
+def sidebar_html(current: str) -> str:
+    """The full documentation index, with the open page marked."""
+    blocks: list[str] = []
+    for group, stems in GROUPS:
+        links = "\n".join(
+            '            <a href="{stem}.html"{aria}>{label}</a>'.format(
+                stem=stem,
+                aria=' class="current" aria-current="page"' if stem == current else "",
+                label=html.escape(nav_title(stem)),
+            )
+            for stem in stems
+        )
+        blocks.append(
+            '          <div class="doc-nav-group">\n'
+            f'            <div class="doc-nav-label">{html.escape(group)}</div>\n'
+            f"{links}\n"
+            "          </div>"
+        )
+    return "\n".join(blocks)
+
+
+def pager_html(stem: str) -> str:
+    """Previous and next page, in the sidebar's reading order."""
+    order = [item for _, stems in GROUPS for item in stems]
+    position = order.index(stem)
+    parts: list[str] = []
+    if position > 0:
+        previous = order[position - 1]
+        parts.append(
+            f'            <a class="doc-pager-prev" href="{previous}.html">'
+            f"<span>Previous</span><strong>{html.escape(nav_title(previous))}</strong></a>"
+        )
+    if position < len(order) - 1:
+        following = order[position + 1]
+        parts.append(
+            f'            <a class="doc-pager-next" href="{following}.html">'
+            f"<span>Next</span><strong>{html.escape(nav_title(following))}</strong></a>"
+        )
+    return "\n".join(parts)
+
+
+def group_of(stem: str) -> tuple[str, str]:
+    """The sidebar group this page sits in, and the page that opens it."""
+    for group, stems in GROUPS:
+        if stem in stems:
+            return group, f"{stems[0]}.html"
+    return "Documentation", "index.html"
+
+
+def description_of(tokens: list[Token], title: str) -> str:
+    """The opening sentence, for the page's meta description."""
+    first = next(
+        (
+            token.content
+            for index, token in enumerate(tokens)
+            if token.type == "inline" and index and tokens[index - 1].type == "paragraph_open"
+        ),
+        "",
+    )
+    cleaned = " ".join(re.sub(r"[`*\[\]]", "", first).split())[:180]
+    return cleaned or f"{title} — D[Ai]NO documentation."
+
+
+def toc_html(outline: list[tuple[int, str, str]]) -> str:
+    """The contents rail, for a page long enough to need one."""
+    contents = [(slug, text) for level, slug, text in outline if level == 2]
+    if len(contents) <= 2:
+        return ""
+    items = "\n            ".join(
+        f'<a href="#{slug}">{html.escape(text)}</a>' for slug, text in contents
+    )
+    return (
+        '      <nav class="doc-toc" aria-label="On this page">\n'
+        '        <div class="doc-toc-inner">\n'
+        '          <div class="doc-toc-label">On this page</div>\n'
+        '          <div class="doc-toc-links">\n'
+        f"            {items}\n"
+        "          </div>\n"
+        "        </div>\n"
+        "      </nav>\n"
+    )
+
+
+def render(path: Path, version: str) -> tuple[str, list[dict[str, str]]]:
+    """Turn one markdown file into a page and its search entries."""
     parser = MarkdownIt("commonmark", {"typographer": False})
     parser.enable(["table", "strikethrough", "linkify"])
     tokens = parser.parse(path.read_text(encoding="utf-8"))
@@ -136,34 +276,20 @@ def render(path: Path, version: str) -> str:
     body = parser.renderer.render(tokens, parser.options, {})
 
     stem = path.stem
-    title = next((text for level, _, text in outline if level == 1), None)
-    title = title or FALLBACK_TITLES.get(stem, stem.replace("-", " ").capitalize())
-    # The h1 is rendered by the markdown itself, so the page header must not
-    # print it a second time.
-    contents = [(level, slug, text) for level, slug, text in outline if level == 2]
-
-    nav = "\n          ".join(f'<a href="{href}">{html.escape(label)}</a>' for href, label in NAV)
-    toc = ""
-    if len(contents) > 2:
-        items = "\n            ".join(
-            f'<a href="#{slug}">{html.escape(text)}</a>' for _, slug, text in contents
-        )
-        toc = f"""
-        <nav class="doc-toc" aria-label="On this page">
-          <div class="doc-toc-label">On this page</div>
-          <div class="doc-toc-links">
-            {items}
-          </div>
-        </nav>
-"""
-
-    return TEMPLATE.format(
+    title = next((text for level, _, text in outline if level == 1), "") or nav_title(stem)
+    group, group_href = group_of(stem)
+    page = TEMPLATE.format(
         title=html.escape(title),
+        description=html.escape(description_of(tokens, title)),
         version=version,
-        nav=nav,
+        sidebar=sidebar_html(stem),
         body=body,
-        toc=toc,
+        toc=toc_html(outline),
+        pager=pager_html(stem),
+        group=html.escape(group),
+        group_href=group_href,
     )
+    return page, build_index(stem, title, tokens)
 
 
 def stamp_index(version: str) -> bool:
@@ -181,42 +307,67 @@ def stamp_index(version: str) -> bool:
     return True
 
 
+def out_of_step(paths: list[Path]) -> list[str]:
+    """Markdown the sidebar does not mention, and nav entries with no file."""
+    listed = {stem for _, stems in GROUPS for stem in stems}
+    present = {path.stem for path in paths}
+    return sorted(
+        [f"{stem}.md is not listed in the sidebar" for stem in present - listed]
+        + [f"{stem}.md is in the sidebar but does not exist" for stem in listed - present]
+    )
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Build the documentation site.")
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Fail instead of writing, for use in CI on a committed build.",
+        help="Fail instead of writing, so CI can reject a stale committed build.",
     )
     arguments = parser.parse_args()
 
-    version = asset_version()
-    sources = sorted(path for path in DOCS.glob("*.md") if path.name not in NOT_PAGES)
-    if not sources:
+    paths = sorted(DOCS.glob("*.md"))
+    if not paths:
         raise SystemExit("No markdown pages found in docs/")
+    if problems := out_of_step(paths):
+        raise SystemExit("Documentation navigation is out of step:\n- " + "\n- ".join(problems))
 
-    stale: list[str] = []
-    for source in sources:
-        target = DOCS / f"{source.stem}.html"
-        rendered = render(source, version)
-        if arguments.check:
-            if not target.is_file() or target.read_text(encoding="utf-8") != rendered:
-                stale.append(target.name)
-            continue
-        target.write_text(rendered, encoding="utf-8")
+    version = asset_version()
+    entries: list[dict[str, str]] = []
+    pages: dict[Path, str] = {}
+    for source in paths:
+        page, index = render(source, version)
+        pages[DOCS / f"{source.stem}.html"] = page
+        entries.extend(index)
+    index_json = json.dumps({"pages": entries}, separators=(",", ":")) + "\n"
+    search = DOCS / "search-index.json"
 
     if arguments.check:
+        stale = [
+            target.name
+            for target, page in pages.items()
+            if not target.is_file() or target.read_text(encoding="utf-8") != page
+        ]
+        if not search.is_file() or search.read_text(encoding="utf-8") != index_json:
+            stale.append(search.name)
         if stale:
             raise SystemExit(
-                "These pages are out of date; run scripts/build_docs_site.py:\n- "
+                "These build outputs are out of date; run scripts/build_docs_site.py:\n- "
                 + "\n- ".join(stale)
             )
-        print(f"Documentation pages up to date: {len(sources)} pages, assets v{version}")
+        print(f"Documentation build up to date: {len(pages)} pages, assets v{version}")
         return
 
+    for target, page in pages.items():
+        target.write_text(page, encoding="utf-8")
+    search.write_text(index_json, encoding="utf-8")
+    # Pages may be building this branch with Jekyll, which would rewrite every
+    # page above into its own default theme. This is what stops it.
+    (DOCS / ".nojekyll").touch()
     stamped = stamp_index(version)
     print(
-        f"Built {len(sources)} documentation pages at assets v{version}"
+        f"Built {len(pages)} pages and {len(entries)} search entries "
+        f"({len(index_json) // 1024} KB) at assets v{version}"
         + (" (landing page re-stamped)" if stamped else "")
     )
 

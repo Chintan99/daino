@@ -39,24 +39,31 @@ Run the backend it talks to with `daino <path> --gui` in another terminal. Backe
 ## Documentation site
 
 The public documentation is `docs/index.html` — a hand-written landing page — plus one generated
-page per Markdown file beside it. Pages is served as static files with no Jekyll, so a `.md` file
-is a download rather than a page: `scripts/build_docs_site.py` renders each one into
-`docs/<name>.html` wearing the same header, navigation, and stylesheet, and rewrites internal
-`.md` links to point at the generated pages. Build and validate locally:
+page per Markdown file beside it. `scripts/build_docs_site.py` renders each `docs/*.md` into
+`docs/<name>.html` with the site's header, sidebar, contents rail, and stylesheet; rewrites
+internal `.md` links to the generated pages; and writes `docs/search-index.json`, which
+`docs/docs.js` loads on first use to power the `/` search dialog.
 
 ```bash
-python scripts/build_docs_site.py
-python scripts/validate_docs_site.py
+python scripts/build_docs_site.py          # build pages + search index
+python scripts/build_docs_site.py --check  # what CI runs: fail if the build is stale
+python scripts/validate_docs_site.py       # every page's links, anchors, and assets
 
 python -m http.server 8000 --directory docs
-# open http://127.0.0.1:8000
+# open http://127.0.0.1:8000 — search needs a server, not file://
 ```
 
-The generated pages are gitignored; the workflow builds them into the artifact it uploads, so the
-Markdown is the only copy to keep current. The builder also stamps a content hash onto the
-`styles.css` and `script.js` links (`styles.css?v=…`) — without it a returning reader gets new
-markup against the stylesheet their browser already cached, which is how a screenshot ends up
-rendering at full size inside a narrow column.
+**The build output is committed.** Pages may be serving this branch directly rather than the
+workflow's artifact, and in that mode there is nothing to build the pages into. `docs/.nojekyll`
+is what stops Pages rendering the Markdown itself with its default theme — remove it and every
+page reverts to unstyled Jekyll output. Rebuild whenever you touch a `.md` file, `styles.css`, or
+`docs.js`; `--check` fails the workflow otherwise.
+
+Adding a page means adding its stem to `GROUPS` in the builder — that tuple is the sidebar and the
+previous/next order, and the build refuses to run if a Markdown file is missing from it. The
+builder also stamps a content hash onto the `styles.css` and `script.js` links (`styles.css?v=…`);
+without it a returning reader gets new markup against the stylesheet their browser already cached,
+which is how a screenshot ends up rendering at full size inside a narrow column.
 
 Keep the site styles in `docs/styles.css` and its small interactive layer in `docs/script.js`.
 Check the default dark-green palette, the light-theme toggle, installation tabs, copy buttons,

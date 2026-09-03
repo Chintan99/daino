@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Run daino --help or daino &lt;group&gt; --help for the authoritative options installed with your version. Commands operate on the current repository unless --project &lt;path&gt; is supplied." />
+    <meta name="theme-color" content="#07110d" />
+    <title>CLI reference — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html" class="current" aria-current="page">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="cli-reference.html">Reference</a> <span>/</span> CLI reference</div>
+<h1 id="cli-reference">CLI reference</h1>
+<p>Run <code>daino --help</code> or <code>daino &lt;group&gt; --help</code> for the authoritative options installed with your
+version. Commands operate on the current repository unless <code>--project &lt;path&gt;</code> is supplied.</p>
+<h2 id="interactive-workspaces">Interactive workspaces</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino . --tui</code></td>
+<td>Open the terminal workspace for the current directory</td>
+</tr>
+<tr>
+<td><code>daino . --gui</code></td>
+<td>Start the browser IDE in the background and open it</td>
+</tr>
+<tr>
+<td><code>daino . --gui --foreground</code></td>
+<td>Keep the browser IDE server attached to the terminal</td>
+</tr>
+<tr>
+<td><code>daino ps</code></td>
+<td>List background GUI servers (session id, URL, project, PID, started, uptime)</td>
+</tr>
+<tr>
+<td><code>daino kill [.|&lt;session-id&gt;]</code></td>
+<td>Stop a GUI server by directory (default: current) or session id</td>
+</tr>
+<tr>
+<td><code>daino tui --project &lt;path&gt;</code></td>
+<td>Open the TUI with an explicit project path</td>
+</tr>
+</tbody>
+</table>
+<p>Bare <code>daino</code> or <code>daino --help</code> prints every command; <code>daino --tui</code> and <code>daino --gui</code> open the
+workspaces for the current directory.</p>
+<p>The browser server binds to <code>127.0.0.1:4173</code> by default. Use <code>--port 0</code> for a free port,
+<code>--no-browser</code> to suppress auto-opening, or <code>--host</code> only when deliberate remote exposure is
+required. Read <a href="gui.html#security">Browser IDE security</a> first.</p>
+<h2 id="setup-and-diagnostics">Setup and diagnostics</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino init [path]</code></td>
+<td>Initialize configuration, database, runtime detection, Git baseline, and repository index</td>
+</tr>
+<tr>
+<td><code>daino doctor</code></td>
+<td>Check configuration, database, Git, and optional runtime tools</td>
+</tr>
+<tr>
+<td><code>daino doctor --fix-terminal</code></td>
+<td>Restore a terminal left in alternate-screen or mouse mode after a native crash</td>
+</tr>
+<tr>
+<td><code>daino config show</code></td>
+<td>Print validated configuration with secret references, never secret values</td>
+</tr>
+<tr>
+<td><code>daino config set &lt;key&gt; &lt;value&gt;</code></td>
+<td>Update a dotted setting using a YAML-formatted value</td>
+</tr>
+<tr>
+<td><code>daino config validate</code></td>
+<td>Validate the complete merged configuration</td>
+</tr>
+</tbody>
+</table>
+<h2 id="providers-and-routing">Providers and routing</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino providers list</code></td>
+<td>List configured endpoints and secret references</td>
+</tr>
+<tr>
+<td><code>daino providers add &lt;name&gt; ...</code></td>
+<td>Add a provider and matching model profile</td>
+</tr>
+<tr>
+<td><code>daino providers test &lt;name&gt;</code></td>
+<td>Run a provider health check</td>
+</tr>
+<tr>
+<td><code>daino providers remove &lt;name&gt;</code></td>
+<td>Remove a provider and its project routing</td>
+</tr>
+<tr>
+<td><code>daino models list</code></td>
+<td>List model profiles, context windows, and assigned roles</td>
+</tr>
+<tr>
+<td><code>daino models test &lt;profile&gt;</code></td>
+<td>Make a minimal completion request</td>
+</tr>
+<tr>
+<td><code>daino models route &lt;role&gt; &lt;profile&gt;</code></td>
+<td>Assign a profile and optional fallbacks to one agent role</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="providers.html">Providers</a> and <a href="model-routing.html">Model routing</a> for examples and configuration.</p>
+<h2 id="repository-intelligence">Repository intelligence</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino repo index</code></td>
+<td>Refresh the incremental repository index</td>
+</tr>
+<tr>
+<td><code>daino repo status</code></td>
+<td>Show index freshness and summary</td>
+</tr>
+<tr>
+<td><code>daino repo map</code></td>
+<td>Render a compact repository map</td>
+</tr>
+<tr>
+<td><code>daino repo symbols [query]</code></td>
+<td>List or search declarations</td>
+</tr>
+<tr>
+<td><code>daino repo references &lt;symbol&gt;</code></td>
+<td>Find indexed references to a declaration</td>
+</tr>
+<tr>
+<td><code>daino repo routes</code></td>
+<td>List detected API routes</td>
+</tr>
+<tr>
+<td><code>daino repo databases</code></td>
+<td>List database and persistence candidates</td>
+</tr>
+<tr>
+<td><code>daino repo tests</code></td>
+<td>List detected test files and frameworks</td>
+</tr>
+<tr>
+<td><code>daino repo dependencies</code></td>
+<td>Show dependency relationships</td>
+</tr>
+</tbody>
+</table>
+<h2 id="missions">Missions</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino ask &quot;&lt;question&gt;&quot;</code></td>
+<td>Ask about a compact repository summary without editing</td>
+</tr>
+<tr>
+<td><code>daino plan &quot;&lt;request&gt;&quot;</code></td>
+<td>Compile requirements and persist an approval-gated task plan</td>
+</tr>
+<tr>
+<td><code>daino build &quot;&lt;request&gt;&quot;</code></td>
+<td>Implement and verify a change in an isolated worktree</td>
+</tr>
+<tr>
+<td><code>daino run &quot;&lt;request&gt;&quot;</code></td>
+<td>Plan, implement, verify, review, commit in the worktree, and export evidence</td>
+</tr>
+<tr>
+<td><code>daino run &quot;&lt;request&gt;&quot; --non-interactive</code></td>
+<td>Run without prompts; approval-requiring actions fail closed</td>
+</tr>
+<tr>
+<td><code>daino missions list</code></td>
+<td>List durable missions</td>
+</tr>
+<tr>
+<td><code>daino missions show &lt;id&gt; --diff</code></td>
+<td>Inspect status, tasks, and the mission diff</td>
+</tr>
+<tr>
+<td><code>daino missions resume &lt;id&gt;</code></td>
+<td>Continue an interrupted mission</td>
+</tr>
+<tr>
+<td><code>daino missions cancel &lt;id&gt;</code></td>
+<td>Cancel a pending or running mission</td>
+</tr>
+<tr>
+<td><code>daino missions retry &lt;id&gt;</code></td>
+<td>Start a new isolated attempt while preserving failed evidence</td>
+</tr>
+<tr>
+<td><code>daino missions approve &lt;id&gt;</code></td>
+<td>Record plan approval</td>
+</tr>
+<tr>
+<td><code>daino missions discard &lt;id&gt;</code></td>
+<td>Discard a mission workspace after confirmation</td>
+</tr>
+<tr>
+<td><code>daino missions export &lt;id&gt; --format markdown</code></td>
+<td>Export the evidence bundle</td>
+</tr>
+</tbody>
+</table>
+<p>Missions edit an isolated Git worktree and never push or merge automatically. Use <code>--mode</code> on
+planning/build commands to select a project mode when needed.</p>
+<h2 id="verification-and-review">Verification and review</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino test</code></td>
+<td>Run the project's configured verification commands</td>
+</tr>
+<tr>
+<td><code>daino test &quot;pytest -q&quot;</code></td>
+<td>Run an explicit command through the configured runtime</td>
+</tr>
+<tr>
+<td><code>daino test --json</code></td>
+<td>Emit structured verification data for scripts or CI</td>
+</tr>
+<tr>
+<td><code>daino review</code></td>
+<td>Ask an independent reviewer model to inspect the current Git diff</td>
+</tr>
+</tbody>
+</table>
+<h2 id="memory-and-checkpoints">Memory and checkpoints</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino memory list</code></td>
+<td>List durable memory records</td>
+</tr>
+<tr>
+<td><code>daino memory search &quot;&lt;query&gt;&quot;</code></td>
+<td>Search project and user memory</td>
+</tr>
+<tr>
+<td><code>daino memory forget &lt;id&gt;</code></td>
+<td>Remove one memory record</td>
+</tr>
+<tr>
+<td><code>daino memory verify &lt;id&gt;</code></td>
+<td>Mark a record verified after checking its source</td>
+</tr>
+<tr>
+<td><code>daino memory clear-project</code></td>
+<td>Clear project memory after confirmation</td>
+</tr>
+<tr>
+<td><code>daino checkpoints list</code></td>
+<td>List recoverable workspace snapshots</td>
+</tr>
+<tr>
+<td><code>daino checkpoints create --description &quot;&lt;text&gt;&quot;</code></td>
+<td>Create a manual checkpoint</td>
+</tr>
+<tr>
+<td><code>daino checkpoints restore &lt;id&gt;</code></td>
+<td>Restore matching files after confirmation</td>
+</tr>
+</tbody>
+</table>
+<p>Read <a href="memory.html">Memory and DAINO.md</a> for scope, precedence, staleness, and storage details.</p>
+<h2 id="playbooks">Playbooks</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino playbooks list</code></td>
+<td>List built-in and project playbooks</td>
+</tr>
+<tr>
+<td><code>daino playbooks show &lt;name&gt;</code></td>
+<td>Print the validated playbook YAML</td>
+</tr>
+<tr>
+<td><code>daino playbooks run &lt;name&gt; --request &quot;&lt;request&gt;&quot;</code></td>
+<td>Start the playbook as a specification-mode mission</td>
+</tr>
+</tbody>
+</table>
+<h2 id="deployment">Deployment</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino deploy inspect --target &lt;name&gt;</code></td>
+<td>Inspect a remote target without changes</td>
+</tr>
+<tr>
+<td><code>daino deploy plan --target &lt;name&gt;</code></td>
+<td>Create a structured deployment plan</td>
+</tr>
+<tr>
+<td><code>daino deploy apply --target &lt;name&gt; --approve</code></td>
+<td>Upload, start, verify, and promote a versioned release</td>
+</tr>
+<tr>
+<td><code>daino deploy verify --target &lt;name&gt;</code></td>
+<td>Run Compose and health-endpoint checks</td>
+</tr>
+<tr>
+<td><code>daino deploy status --target &lt;name&gt;</code></td>
+<td>Show recorded target state</td>
+</tr>
+<tr>
+<td><code>daino deploy logs --target &lt;name&gt;</code></td>
+<td>Retrieve bounded service logs</td>
+</tr>
+<tr>
+<td><code>daino deploy rollback --target &lt;name&gt; --approve</code></td>
+<td>Restore the previous healthy release</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="deployment.html">Deployment</a> for target configuration and safety behavior.</p>
+<h2 id="infrastructure">Infrastructure</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino infra validate</code></td>
+<td>Format-check and validate Terraform/OpenTofu files</td>
+</tr>
+<tr>
+<td><code>daino infra plan</code></td>
+<td>Produce an infrastructure plan</td>
+</tr>
+<tr>
+<td><code>daino infra apply --approve</code></td>
+<td>Apply after explicit approval</td>
+</tr>
+<tr>
+<td><code>daino infra destroy --approve --confirm destroy</code></td>
+<td>Destroy after the stronger confirmation gate</td>
+</tr>
+</tbody>
+</table>
+<h2 id="observability">Observability</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino stats</code></td>
+<td>Emit project usage and execution statistics as JSON</td>
+</tr>
+<tr>
+<td><code>daino stats --mission &lt;id&gt;</code></td>
+<td>Limit statistics to one mission</td>
+</tr>
+<tr>
+<td><code>daino logs --limit 100</code></td>
+<td>Print recent redacted audit events</td>
+</tr>
+<tr>
+<td><code>daino logs --mission &lt;id&gt;</code></td>
+<td>Filter audit events to one mission</td>
+</tr>
+</tbody>
+</table>
+<p>OpenTelemetry export is optional and installed with the <code>otel</code> package extra. Audit logs and
+database events remain local unless you deliberately configure an exporter. With
+<code>observability.otel_endpoint</code> set, spans are emitted around every model call, loop step, tool
+execution, and delegation, carrying identity, token counts, latency and cost — never prompts or
+file contents.</p>
+<h2 id="evals">Evals</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daino eval list</code></td>
+<td>Show every case and whether it needs a model</td>
+</tr>
+<tr>
+<td><code>daino eval run</code></td>
+<td>Run the model-free retrieval and sizing cases</td>
+</tr>
+<tr>
+<td><code>daino eval run --suite retrieval</code></td>
+<td>Limit to one suite</td>
+</tr>
+<tr>
+<td><code>daino eval run --tag graph</code></td>
+<td>Limit to cases carrying a tag</td>
+</tr>
+<tr>
+<td><code>daino eval run --case &lt;id&gt;</code></td>
+<td>Run one case</td>
+</tr>
+<tr>
+<td><code>daino eval run --tasks --model &lt;profile&gt;</code></td>
+<td>Include end-to-end cases against a real model</td>
+</tr>
+<tr>
+<td><code>daino eval run --json</code></td>
+<td>Emit machine-readable results</td>
+</tr>
+</tbody>
+</table>
+<p><code>daino eval run</code> exits non-zero when anything failed or could not run, so it works as a CI gate.
+Task cases are opt-in because each drives a real model against a real repository and costs money.
+Add your own suites under <code>.daino/evals/</code>; a project suite replaces a built-in one of the same
+name. See <a href="evals.html">evals</a>.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="infrastructure.html"><span>Previous</span><strong>Infrastructure</strong></a>
+            <a class="doc-pager-next" href="architecture.html"><span>Next</span><strong>Architecture</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#interactive-workspaces">Interactive workspaces</a>
+            <a href="#setup-and-diagnostics">Setup and diagnostics</a>
+            <a href="#providers-and-routing">Providers and routing</a>
+            <a href="#repository-intelligence">Repository intelligence</a>
+            <a href="#missions">Missions</a>
+            <a href="#verification-and-review">Verification and review</a>
+            <a href="#memory-and-checkpoints">Memory and checkpoints</a>
+            <a href="#playbooks">Playbooks</a>
+            <a href="#deployment">Deployment</a>
+            <a href="#infrastructure">Infrastructure</a>
+            <a href="#observability">Observability</a>
+            <a href="#evals">Evals</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

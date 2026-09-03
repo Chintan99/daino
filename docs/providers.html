@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="LLMProvider defines asynchronous complete, stream, structured_complete, feature discovery, health checking, and cleanup. OpenAICompatibleProvider supplies the common implementation" />
+    <meta name="theme-color" content="#07110d" />
+    <title>Providers — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html" class="current" aria-current="page">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="providers.html">Models</a> <span>/</span> Providers</div>
+<h1 id="providers">Providers</h1>
+<p><code>LLMProvider</code> defines asynchronous <code>complete</code>, <code>stream</code>, <code>structured_complete</code>, feature discovery,
+health checking, and cleanup. <code>OpenAICompatibleProvider</code> supplies the common implementation.
+OpenRouter only adds <code>X-Title</code> and <code>HTTP-Referer</code> when configured. Ollama and vLLM run fully
+offline and permit an empty API key.</p>
+<p>For OpenRouter, token counts and the charged <code>usage.cost</code> returned by the API are persisted for
+complete, structured, and streaming calls. The TUI header sums those durable usage records rather
+than estimating spend from a static price table.</p>
+<pre><code class="language-bash">daino providers add private \
+  --type openai-compatible \
+  --base-url https://llm.internal.example/v1 \
+  --model company-coder \
+  --api-key-ref env://PRIVATE_LLM_KEY
+daino providers test private
+</code></pre>
+<h2 id="offline-providers">Offline providers</h2>
+<p>D[Ai]NO runs entirely on locally hosted models when every role routes to an Ollama or vLLM
+provider. Tool-capable instruct models (for example <code>qwen2.5-coder</code>, <code>llama3.1</code>) give the agent
+loop native tool calling plus grammar-constrained structured output, so no cloud provider is
+required for planning, building, repairing, or review.</p>
+<pre><code class="language-bash">daino providers add local-ollama \
+  --type ollama \
+  --base-url http://127.0.0.1:11434/v1 \
+  --model qwen2.5-coder:7b
+daino providers test local-ollama
+
+daino providers add local-vllm \
+  --type vllm \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model Qwen/Qwen2.5-Coder-7B-Instruct \
+  --local
+</code></pre>
+<p>Both types are marked local automatically, so data-sensitivity routing keeps restricted work on
+the machine. Ollama needs no API key; vLLM accepts an empty one.</p>
+<h2 id="concurrent-requests-to-one-model-server">Concurrent requests to one model server</h2>
+<p>D[Ai]NO fans out model calls in two places: a QA scan runs its specialists in
+parallel, and <code>/team</code> runs sub-agents in parallel. Against a hosted API that is
+free speed. Against a local runtime it is not: Ollama and vLLM hold one copy of
+one model, so the requests queue inside the server — and the client's timeout is
+running the whole time each one waits, which is how a fan-out that would have
+finished serially instead times out.</p>
+<p><code>max_concurrent_requests</code> bounds the in-flight generation requests per <strong>model
+server</strong> (keyed by base URL, so two profiles on the same Ollama share its queue
+while two Ollamas on different hosts do not block each other):</p>
+<pre><code class="language-yaml">providers:
+  local-ollama:
+    type: ollama
+    base_url: http://127.0.0.1:11434/v1
+    model: qwen3.5:9b
+    max_concurrent_requests: 1   # the default for ollama and vllm
+  openrouter:
+    type: openrouter
+    base_url: https://openrouter.ai/api/v1
+    model: anthropic/claude-sonnet-4
+    max_concurrent_requests: 0   # the default for hosted APIs: no limit
+</code></pre>
+<p><strong>What this does and does not buy you.</strong> Measured on an M-series Mac against a
+warm <code>qwen3.8:27b-mlx</code> — three concurrent 220-token generations with a ~2 KB
+prompt — serialising made no difference to throughput at all:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>wall clock</th>
+<th>slowest request</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>unlimited</td>
+<td>15.5s, 15.9s</td>
+<td>15.5s, 15.9s</td>
+</tr>
+<tr>
+<td>serialised</td>
+<td>15.8s, 15.4s</td>
+<td>15.8s, 15.4s</td>
+</tr>
+</tbody>
+</table>
+<p>Ollama was already serialising internally, so the gate only moves the queue from
+its side to D[Ai]NO's. That is still worth doing — a request waiting for a slot
+has not started its timeout, and nothing thrashes the model server's memory when
+<code>OLLAMA_NUM_PARALLEL</code> is raised — but it is a robustness measure, <strong>not</strong> a
+speed-up. If a local server is genuinely faster with overlap on your hardware,
+set <code>max_concurrent_requests: 0</code> and it will be left alone.</p>
+<p>Metadata calls — listing models, health checks, key validation — are never
+gated, so the provider form keeps answering while a generation is in flight.</p>
+<h2 id="structured-output">Structured output</h2>
+<p>Structured responses use JSON Schema, validate with Pydantic, attempt bounded repair, and fail
+closed. Each backend constrains decoding with the mechanism its server implements:</p>
+<ul>
+<li>OpenAI-compatible and OpenRouter: <code>response_format: json_schema</code></li>
+<li>Ollama: top-level <code>format</code> with the full JSON Schema</li>
+<li>vLLM: <code>guided_json</code></li>
+</ul>
+<p>If a server rejects the constraint parameter, the request is retried once without it, so both
+newer and older server versions keep working. The deterministic test server under <code>tests/</code> uses
+the same protocol and requires no paid credentials.</p>
+<p>Only an HTTP request-shape rejection (for example 400 or 422) disables a schema constraint or
+native tools. Authentication, quota, transport, and server failures remain provider failures and
+move to a configured model fallback instead of repeating the same doomed request in a weaker
+format.</p>
+<h2 id="native-tool-calling">Native tool calling</h2>
+<p>Providers advertise capabilities through <code>features</code> in the provider configuration:
+<code>chat</code>, <code>structured</code>, and <code>tools</code>. The builder/debugger loop sends the action space
+(<code>read_file</code>, <code>search_text</code>, <code>list_directory</code>, <code>replace</code>, <code>write</code>, <code>delete</code>, <code>finish</code>) as
+OpenAI-format tools when the routed provider advertises <code>tools</code>, executes every returned tool
+call through the same validated, scope-checked executor, and threads observations back as <code>tool</code>
+messages. A turn may carry several tool calls. When the provider has no tool support, or rejects
+the tools request once, the loop falls back to the identical action expressed as
+schema-constrained JSON.</p>
+<ul>
+<li>Ollama and OpenRouter advertise <code>tools</code> by default.</li>
+<li>vLLM advertises <code>tools</code> only when you opt in, because the server must be started with
+<code>--enable-auto-tool-choice --tool-call-parser &lt;parser&gt;</code> (for example <code>hermes</code> or
+<code>qwen25</code> for Qwen models):</li>
+</ul>
+<pre><code class="language-yaml">providers:
+  local-vllm:
+    type: vllm
+    base_url: http://127.0.0.1:8000/v1
+    model: Qwen/Qwen2.5-Coder-7B-Instruct
+    features: [chat, structured, tools]
+</code></pre>
+<p>Mission builders receive the same policy-gated command runner as the interactive coding agent.
+Tests, linters, builds, and read-only inspection can therefore run inside the implementation loop;
+installs and network commands remain unavailable in a headless mission unless an approval-capable
+interface is attached, and destructive commands remain refused.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="workspace.html"><span>Previous</span><strong>Workspace</strong></a>
+            <a class="doc-pager-next" href="model-routing.html"><span>Next</span><strong>Model routing</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#offline-providers">Offline providers</a>
+            <a href="#concurrent-requests-to-one-model-server">Concurrent requests to one model server</a>
+            <a href="#structured-output">Structured output</a>
+            <a href="#native-tool-calling">Native tool calling</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

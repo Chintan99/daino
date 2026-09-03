@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="The Textual terminal UI is the primary DAiNO experience — a presentation layer over the shared mission engine, not a second implementation of providers, agents, Git, verification, " />
+    <meta name="theme-color" content="#07110d" />
+    <title>Terminal UI (TUI) — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html" class="current" aria-current="page">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="tui.html">Interfaces</a> <span>/</span> Terminal UI (TUI)</div>
+<h1 id="terminal-ui-tui">Terminal UI (TUI)</h1>
+<p>The Textual terminal UI is the primary D[Ai]NO experience — a presentation layer over the shared
+mission engine, not a second implementation of providers, agents, Git, verification, or deployment.
+Prefer a graphical editor? <code>daino . --gui</code> opens the <a href="gui.html">browser IDE</a> on the same runtime and
+the same sessions.</p>
+<h2 id="launch">Launch</h2>
+<p>Requires Python 3.12+ and Git; Docker is optional. These forms are equivalent:</p>
+<pre><code class="language-bash">daino . --tui
+daino tui
+daino --project /path/to/repo --tui
+</code></pre>
+<p>First launch in an uninitialized directory runs onboarding (choose global or project model settings)
+before the database, index, and runtime are created. Provider setup can be deferred, so a local
+Ollama or vLLM workflow never needs cloud credentials. Every launch starts a fresh conversation;
+earlier sessions stay browsable, and interrupted work shows its goal, progress, and <code>/resume</code>
+command on startup.</p>
+<h2 id="the-interface">The interface</h2>
+<p>A compact, flat workspace: hierarchy comes from colour and hairline rules, not boxes. Each message
+kind has its own hue, and diffs get filled green/red backgrounds while keeping syntax colours.</p>
+<ul>
+<li><strong>Two-line header</strong> — project and agent state above model, provider, runtime, usage, and spend
+(OpenRouter spend is its provider-reported charged <code>usage.cost</code>).</li>
+<li><strong>Tab row</strong> — eight working views with live counts: <strong>chat, missions, QA, files, changes, tests,
+logs, map</strong>. Click, or focus and press Enter/Space. The rest (repository, approvals, checkpoints,
+playbooks, deployments, providers, settings, help) open from the command palette or slash commands.</li>
+<li><strong>Checklist panel</strong> (right) — appears when the agent makes a multi-step plan; each item moves
+pending → active → completed, with a live phase label (thinking, planning, inspecting, building,
+verifying). Its header becomes a running dinosaur that freezes on <code>ERROR</code> or stops at
+<code>TASK COMPLETED</code>. Below it, while a turn edits, an <strong>EDITED</strong> list shows every file touched with
+running <code>+</code>/<code>-</code> counts.</li>
+<li><strong>Context strip</strong> — a dim line above the prompt reporting active mission, attached files,
+verification state, pending approvals, and latest activity. <code>Ctrl+I</code> hides it.</li>
+<li><strong>Prompt</strong> — multiline, with paste, history, slash completion, and <code>@</code> completion.</li>
+</ul>
+<h2 id="autonomy-modes">Autonomy modes</h2>
+<p><code>Shift+Tab</code> cycles the mode (shown as a colour-coded badge); <code>/mode &lt;name&gt;</code> sets one directly.</p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Plan</code></td>
+<td>Read-only planning. Instructions produce a checklist but do not execute it.</td>
+</tr>
+<tr>
+<td><code>Ask</code></td>
+<td>Routine repository work runs; installs, network, and other gated commands ask once.</td>
+</tr>
+<tr>
+<td><code>Session</code></td>
+<td>Command approvals are granted until a new conversation starts.</td>
+</tr>
+<tr>
+<td><code>Full</code></td>
+<td>In-scope commands and mission execution/change gates continue without prompts.</td>
+</tr>
+</tbody>
+</table>
+<p>Hard-denied destructive commands stay blocked in every mode. Plan mode also blocks team writes and
+deployment changes.</p>
+<h2 id="talking-to-the-agent">Talking to the agent</h2>
+<p>Plain text goes to the agent, which decides whether the request is a question to answer or a change
+to make. <code>/ask</code> forces an answer without touching the repository. <code>/plan</code>, <code>/run</code>, and <code>/build</code>
+drive the approval-gated mission workflow. A prompt beginning with <code>!</code> runs a shell command
+<em>yourself</em> — through a real shell in the project runtime, so pipes and redirects work — and adds its
+output to the conversation. It is not policy-gated, because a command you just typed needs no
+approval.</p>
+<p><strong>References</strong> attach exact source (within the repository boundary and context budget):</p>
+<pre><code class="language-text">@file:app/services/tariff.py
+@symbol:TariffVersionService.publish
+@mission:M-104
+@playbook:fix-failing-test
+</code></pre>
+<p><strong>Web research</strong> — the agent can search the public web and fetch readable text from the most
+relevant pages. In Ask mode the first network operation asks for approval; Session/Full skip the
+prompt. Only public <code>http</code>/<code>https</code> URLs are accepted, redirects are rechecked, and
+localhost/private-network destinations are blocked. Results are marked untrusted; ask for sources to
+get URLs in the answer.</p>
+<h2 id="keyboard-shortcuts">Keyboard shortcuts</h2>
+<table>
+<thead>
+<tr>
+<th>Shortcut</th>
+<th>Action</th>
+<th>Shortcut</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ctrl+P</code></td>
+<td>Command palette</td>
+<td><code>Ctrl+D</code></td>
+<td>Diff</td>
+</tr>
+<tr>
+<td><code>Shift+Tab</code></td>
+<td>Cycle autonomy mode</td>
+<td><code>Ctrl+L</code></td>
+<td>Redacted logs</td>
+</tr>
+<tr>
+<td><code>Ctrl+N</code></td>
+<td>New session</td>
+<td><code>Ctrl+I</code></td>
+<td>Toggle context strip</td>
+</tr>
+<tr>
+<td><code>Ctrl+O</code></td>
+<td>Files</td>
+<td><code>Enter</code></td>
+<td>Submit</td>
+</tr>
+<tr>
+<td><code>Ctrl+M</code></td>
+<td>Session model selector</td>
+<td><code>Shift+Enter</code></td>
+<td>Newline</td>
+</tr>
+<tr>
+<td><code>Ctrl+R</code></td>
+<td>Missions / resume</td>
+<td><code>Esc</code></td>
+<td>Close modal / cancel</td>
+</tr>
+<tr>
+<td><code>Ctrl+T</code></td>
+<td>Run verification</td>
+<td><code>Ctrl+C</code></td>
+<td>Cancel work, preserve state</td>
+</tr>
+<tr>
+<td><code>?</code></td>
+<td>Help</td>
+<td><code>Ctrl+Q</code></td>
+<td>Quit when safe</td>
+</tr>
+</tbody>
+</table>
+<p>Enter always submits and Shift+Enter always inserts a newline; neither is configurable. Theme
+(<code>dark</code>, <code>light</code>, <code>system</code>), display mode, hints, streaming, and custom bindings are validated under
+the <code>tui</code> section of <code>.daino/config.yaml</code>.</p>
+<h2 id="slash-commands">Slash commands</h2>
+<p>Type <code>/</code> to open the command menu; Up/Down to choose, Enter to insert, Enter again to run (an
+exactly typed command like <code>/bye</code> runs on the first Enter). The same catalog is available in the
+<a href="gui.html#slash-commands">browser IDE</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/help</code></td>
+<td>Help, workflow, security, shortcuts</td>
+</tr>
+<tr>
+<td><code>/clear</code></td>
+<td>Clear the visible transcript</td>
+</tr>
+<tr>
+<td><code>/new [title]</code></td>
+<td>New persistent conversation session</td>
+</tr>
+<tr>
+<td><code>/mode [plan|ask|session|full]</code></td>
+<td>Show or set agent autonomy</td>
+</tr>
+<tr>
+<td><code>/ask &lt;question&gt;</code></td>
+<td>Repository-grounded answer, no edits</td>
+</tr>
+<tr>
+<td><code>/plan &lt;instruction&gt;</code></td>
+<td>Requirements plus an approval-gated plan</td>
+</tr>
+<tr>
+<td><code>/build [instruction]</code></td>
+<td>Plan a change or execute the active approved plan</td>
+</tr>
+<tr>
+<td><code>/run &lt;instruction&gt;</code></td>
+<td>Start the full mission workflow</td>
+</tr>
+<tr>
+<td><code>/team &lt;instruction&gt;</code></td>
+<td>Split work across parallel scoped sub-agents</td>
+</tr>
+<tr>
+<td><code>/review</code></td>
+<td>Fresh independent model review of active changes</td>
+</tr>
+<tr>
+<td><code>/test [targeted|failed|full|command]</code></td>
+<td>Run verification asynchronously</td>
+</tr>
+<tr>
+<td><code>/qa [run]</code></td>
+<td>Open QA or run the full parallel repository audit</td>
+</tr>
+<tr>
+<td><code>/status</code></td>
+<td>Current project, mission, model, runtime</td>
+</tr>
+<tr>
+<td><code>/missions</code></td>
+<td>Durable mission browser</td>
+</tr>
+<tr>
+<td><code>/tasks</code></td>
+<td>List unfinished crash-safe task state</td>
+</tr>
+<tr>
+<td><code>/memory [subcommand]</code></td>
+<td>Inspect/search/verify/forget scoped memory</td>
+</tr>
+<tr>
+<td><code>/resume [mission-id]</code></td>
+<td>Open/resume a mission</td>
+</tr>
+<tr>
+<td><code>/cancel</code></td>
+<td>Cancel active work safely</td>
+</tr>
+<tr>
+<td><code>/files [query]</code></td>
+<td>File/symbol browser</td>
+</tr>
+<tr>
+<td><code>/diff [staged]</code></td>
+<td>Mission or staged diff</td>
+</tr>
+<tr>
+<td><code>/checkpoints</code></td>
+<td>Checkpoint browser</td>
+</tr>
+<tr>
+<td><code>/checkpoint [description]</code></td>
+<td>Create a recoverable checkpoint</td>
+</tr>
+<tr>
+<td><code>/restore &lt;checkpoint-id&gt;</code></td>
+<td>Preview impact and request restore approval</td>
+</tr>
+<tr>
+<td><code>/model [profile]</code></td>
+<td>Session-only model selection</td>
+</tr>
+<tr>
+<td><code>/effort [auto|none|minimal|low|medium|high|xhigh|max]</code></td>
+<td>Session reasoning effort</td>
+</tr>
+<tr>
+<td><code>/verbose [on|off]</code></td>
+<td>Show detailed live progress or only <code>working…</code></td>
+</tr>
+<tr>
+<td><code>/provider [name]</code></td>
+<td>Provider view or connection test</td>
+</tr>
+<tr>
+<td><code>/globalprovider</code></td>
+<td>Configure providers shared by every project</td>
+</tr>
+<tr>
+<td><code>/runtime [local|docker|ssh]</code></td>
+<td>Session runtime switch</td>
+</tr>
+<tr>
+<td><code>/index</code></td>
+<td>Rebuild repository intelligence</td>
+</tr>
+<tr>
+<td><code>/playbooks</code></td>
+<td>Playbook browser</td>
+</tr>
+<tr>
+<td><code>/deploy &lt;action&gt; &lt;target&gt;</code></td>
+<td>Inspect, plan, apply, verify, or roll back</td>
+</tr>
+<tr>
+<td><code>/logs</code></td>
+<td>Filtered, redacted logs</td>
+</tr>
+<tr>
+<td><code>/map</code></td>
+<td>Prompt execution graphs with models, tools, timing, tokens, cost</td>
+</tr>
+<tr>
+<td><code>/settings</code></td>
+<td>Validated settings</td>
+</tr>
+<tr>
+<td><code>/bye</code>, <code>/quit</code></td>
+<td>Exit safely</td>
+</tr>
+</tbody>
+</table>
+<p>Reasoning-effort levels are provider-specific; a level a provider cannot represent returns an
+explicit error rather than being silently ignored. <code>/verbose on</code> expands the live indicator into
+phases and, when the provider exports a reasoning stream, shows a bounded, redacted <strong>thinking ·
+live recent</strong> tail that is never added to the answer, history, or audit log. <code>/verbose off</code>
+collapses live events to <code>working…</code>.</p>
+<h2 id="what-the-agent-can-do">What the agent can do</h2>
+<p>A bare prompt runs the agent in a loop: pick one action, see the result, pick the next, until it
+answers or finishes. Every edit posts its diff as it lands and every command posts what it ran, so a
+long turn stays readable.</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>read_file</code>, <code>glob</code>, <code>grep</code>, <code>search_text</code>, <code>list_directory</code></td>
+<td>Read and find files by name, pattern, or content</td>
+</tr>
+<tr>
+<td><code>replace</code>, <code>multi_edit</code>, <code>write</code>, <code>delete</code></td>
+<td>Change spans, create files, or remove them</td>
+</tr>
+<tr>
+<td><code>run_command</code>, <code>resolve_command_failure</code></td>
+<td>Run a command; link a failure to a later passing check</td>
+</tr>
+<tr>
+<td><code>todo</code></td>
+<td>Record and update a plan for multi-step work</td>
+</tr>
+<tr>
+<td><code>memory_search</code>, <code>memory_list</code>, <code>memory_save</code>, <code>memory_update</code>, <code>memory_verify</code>, <code>memory_forget</code></td>
+<td>Durable memory lifecycle</td>
+</tr>
+<tr>
+<td><code>respond</code>, <code>finish</code></td>
+<td>Answer without changing anything, or stop after changes</td>
+</tr>
+</tbody>
+</table>
+<p>Two honesty rules: a whole-file overwrite of a file the agent has not read is refused, and <code>write</code>
+is for new files only (large rewrites are several <code>replace</code> edits, because a reply cut off past the
+output limit is discarded). After files change, any failing command blocks <code>finish</code> — an unrelated
+green check cannot erase it; the agent must retry it, split a rejected <code>a &amp;&amp; b</code>, or link a passing
+equivalent.</p>
+<h3 id="commands-the-agent-runs">Commands the agent runs</h3>
+<p><code>run_command</code> has no shell — one executable and its arguments, so a pipe cannot be smuggled in.
+Commands are gated by category:</p>
+<table>
+<thead>
+<tr>
+<th>Category</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tests, linters, type checkers, builds, language runners, <code>git status</code>/<code>diff</code>/<code>log</code></td>
+<td>Run immediately</td>
+</tr>
+<tr>
+<td>Installs, network tools, <code>git push</code>, <code>git reset --hard</code></td>
+<td>Ask once; &quot;approve for this session&quot; is remembered</td>
+</tr>
+<tr>
+<td><code>rm -rf</code>, <code>mkfs</code>, <code>DROP DATABASE</code>, <code>terraform destroy</code>, firewall flushes</td>
+<td>Refused, not approvable</td>
+</tr>
+</tbody>
+</table>
+<p>Approving <code>pip install httpx</code> covers <code>pip install requests</code> for the session but not <code>pip uninstall</code>:
+the memory is keyed on the executable and its verb. Widen or narrow with <code>security.allowed_commands</code>
+and <code>security.denied_commands</code>.</p>
+<h2 id="teams-of-sub-agents">Teams of sub-agents</h2>
+<p><code>/team &lt;instruction&gt;</code> asks a team lead to split one instruction into a roster of sub-agents that run
+in dependency order, with independent members running in parallel:</p>
+<pre><code class="language-text">/team add rate limiting to the API and cover it with tests
+
+Wave 1: survey [architect]  scope: read-only
+Wave 2: limiter [builder] scope: api/**   ·   tests [tester] scope: tests/**
+</code></pre>
+<p>Three rules, all enforced before any model call: <strong>scopes may not overlap within a wave</strong>, <strong>writers
+must declare a scope</strong> (empty means &quot;anything&quot; and is rejected), and <strong>explorers are read-only</strong>. A
+team runs in an isolated Git worktree with a checkpoint taken first, so <code>/diff</code>, <code>/checkpoints</code>, and
+<code>/restore</code> all apply. A failed member does not abort its peers; dependents are reported skipped.
+Teams cap at eight members, and deployment is deliberately not a team role.</p>
+<h2 id="inspector">Inspector</h2>
+<p>The <strong>inspector</strong> tab has two halves, reachable with <code>/inspector</code>, <code>/review</code>, or the older <code>/qa</code>.</p>
+<h3 id="repository-scan">Repository scan</h3>
+<p><strong>Run scan</strong> (or <code>/qa run</code>) runs a repository-wide, read-only audit <em>and</em> a vulnerability
+assessment. D[Ai]NO detects the project stacks and collects deterministic evidence — configured
+lint/type/test/build commands, Playwright e2e tests when present, dependency audits
+(<code>npm</code>/<code>pnpm</code>/<code>yarn</code>/<code>bun</code>, bundled <code>pip-audit</code>, installed <code>cargo-audit</code>/<code>govulncheck</code>), and
+whichever security scanners the host has (<code>bandit</code>, <code>gitleaks</code>, <code>semgrep</code>, <code>osv-scanner</code>, <code>trivy</code>).
+A built-in offline audit runs regardless of what is installed: credential shapes, insecure code
+patterns, and weak container/IaC/CI configuration. Unavailable scanners are shown as skipped;
+nothing is installed silently.</p>
+<p>Then architecture, application-security, threat-model, supply-chain, code-quality, and detected
+frontend/backend specialists run concurrently (read/search tools only — they cannot edit or run
+commands), and a summarizer produces the severity-ordered consolidated report. Everything is folded
+into one findings list and a deterministic <strong>release-gate verdict</strong> — pass, review, or blocked —
+which the completion notification carries. Reports are saved under <code>.daino/qa/</code>; the <strong>Saved scans</strong>
+table reloads any prior run.</p>
+<p>The live probe of a running application is browser-only; the terminal client has no app to point it
+at. See <a href="gui.html#the-inspector">the Inspector</a>.</p>
+<h3 id="change-review">Change review</h3>
+<p><strong>Review change</strong> reads the change in front of you rather than the whole repository. Pick the scope
+beside the button — the working tree (including files you have just created), what is staged, or
+this branch against its base.</p>
+<p>It runs mechanically first, over only the lines the change introduced: every changed file is
+re-parsed for syntax, and it looks for conflict markers, debugging left in, credentials, deceptive
+unicode, missing or weakened tests, lockfile and migration drift, and removed public definitions.
+Then four read-only reviewers — correctness, gaps, impact, security — read the diff and the code
+around it, and a synthesis step writes up what the change does, what blocks it, and what is missing.</p>
+<p>It ends in a merge verdict: <strong>ready to merge</strong>, <strong>needs a look</strong>, or <strong>do not merge</strong>. Reviews are
+saved under <code>.daino/reviews/</code>. See <a href="gui.html#review">Review</a> for the full rule list.</p>
+<h2 id="providers">Providers</h2>
+<p>The Providers screen adds and tests OpenRouter, local Ollama, local vLLM, and generic
+OpenAI-compatible endpoints. Selecting OpenRouter fills its endpoint and fetches the live model
+catalog into a searchable selector; on save the key is validated before anything is written, and a
+pasted key is stored privately under <code>.daino/secrets</code> (config keeps only a <code>file://</code> reference).
+<code>env://</code> and <code>keyring://</code> references are also supported.</p>
+<pre><code class="language-bash">daino providers add openrouter --type openrouter \
+  --base-url https://openrouter.ai/api/v1 --model openai/gpt-oss-20b:free \
+  --api-key-ref env://OPENROUTER_API_KEY
+
+daino providers add local-ollama --type ollama \
+  --base-url http://127.0.0.1:11434/v1 --model qwen2.5-coder:7b --local
+</code></pre>
+<p>Choosing <code>ollama</code> (rather than <code>openai-compatible</code>) enables native tool calling and Ollama's
+top-level <code>format</code> schema constraint. Local endpoints need no cloud credentials.</p>
+<h2 id="sessions-and-context">Sessions and context</h2>
+<p><code>/new [title]</code> (Ctrl+N) starts a fresh conversation. That matters beyond tidiness: each turn sends
+the session's recent exchanges as history, so a long session makes every prompt larger and answers a
+new request in the shadow of old ones. On a local model, where prompt size is throughput, starting a
+session for new work is often the cheapest speed-up available. Sessions are named after their first
+request, and the TUI and GUI share the same session store.</p>
+<h2 id="the-closing-changeset">The closing changeset</h2>
+<p>A turn that edited anything ends with one summary of everything it touched, so &quot;what changed?&quot; never
+means scrolling back:</p>
+<pre><code>changed
+Edited 3 files  +48 -17
+  new.py        +30 -0
+  README.md     +16 -1
+</code></pre>
+<p>The counts carry the colour because they are what gets scanned. The same message drives the browser
+IDE's changeset card, so the two clients cannot disagree about what a turn did.</p>
+<h2 id="notifications-and-staying-awake">Notifications and staying awake</h2>
+<p>The client raises an OS notification (and the terminal bell) when a turn completes, when something
+fails, and when a command is waiting for approval — the three moments that arrive after you look
+away. While work is in progress it holds an OS sleep inhibitor (<code>caffeinate</code>, <code>systemd-inhibit</code>, or
+<code>SetThreadExecutionState</code>), released as soon as work ends. Both are configurable:</p>
+<pre><code>/settings
+notifications.on_completed   false
+notifications.desktop        false
+keep_awake                   false
+</code></pre>
+<p>Notification preferences are user-level and follow you between projects; <code>DAINO_NOTIFY=off</code> and
+<code>DAINO_WAKELOCK=off</code> disable each for one run.</p>
+<h2 id="automation">Automation</h2>
+<p>Explicit commands never open the TUI, so the same runtime scripts in CI:</p>
+<pre><code class="language-bash">daino run &quot;Fix failing authentication test&quot; --non-interactive
+daino plan &quot;Add JWT authentication&quot;
+daino test --json
+daino missions list --json
+daino deploy inspect --target production --json
+</code></pre>
+<p>See the <a href="cli-reference.html">CLI reference</a> for the complete command set.</p>
+<h2 id="known-limitations">Known limitations</h2>
+<ul>
+<li>Long-running background processes (a dev server) are not managed: commands run to completion within
+a timeout, so the agent cannot start a server and then probe it.</li>
+<li>Diffs are unified and syntax-highlighted; side-by-side and hunk-level restore are next.</li>
+<li>The file browser is read-only apart from agent context selection.</li>
+<li>Sessions are local to one repository database.</li>
+</ul>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="features.html"><span>Previous</span><strong>Features</strong></a>
+            <a class="doc-pager-next" href="gui.html"><span>Next</span><strong>Browser IDE (GUI)</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#launch">Launch</a>
+            <a href="#the-interface">The interface</a>
+            <a href="#autonomy-modes">Autonomy modes</a>
+            <a href="#talking-to-the-agent">Talking to the agent</a>
+            <a href="#keyboard-shortcuts">Keyboard shortcuts</a>
+            <a href="#slash-commands">Slash commands</a>
+            <a href="#what-the-agent-can-do">What the agent can do</a>
+            <a href="#teams-of-sub-agents">Teams of sub-agents</a>
+            <a href="#inspector">Inspector</a>
+            <a href="#providers">Providers</a>
+            <a href="#sessions-and-context">Sessions and context</a>
+            <a href="#the-closing-changeset">The closing changeset</a>
+            <a href="#notifications-and-staying-awake">Notifications and staying awake</a>
+            <a href="#automation">Automation</a>
+            <a href="#known-limitations">Known limitations</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

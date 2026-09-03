@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="DAiNO uses one agent runtime behind a terminal UI, a browser IDE, and automation-friendly CLI commands. The table below is a map of the complete feature set and where to learn each" />
+    <meta name="theme-color" content="#07110d" />
+    <title>Feature overview — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html" class="current" aria-current="page">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="installation.html">Start here</a> <span>/</span> Feature overview</div>
+<h1 id="feature-overview">Feature overview</h1>
+<p>D[Ai]NO uses one agent runtime behind a terminal UI, a browser IDE, and automation-friendly CLI
+commands. The table below is a map of the complete feature set and where to learn each workflow.</p>
+<h2 id="coding-workflow">Coding workflow</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does</th>
+<th>Learn more</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Grounded questions and edits</td>
+<td>Reads repository context, answers questions, or edits files from the same prompt surface</td>
+<td><a href="tui.html">TUI</a>, <a href="gui.html">GUI</a></td>
+</tr>
+<tr>
+<td>Agent shell</td>
+<td>Runs tests, linters, builds, and inspection commands; uses the results to continue fixing the task</td>
+<td><a href="tui.html#commands-the-agent-runs">TUI: commands</a></td>
+</tr>
+<tr>
+<td>Visible task plans</td>
+<td>Streams a live checklist of pending, active, and completed steps</td>
+<td><a href="tui.html#the-interface">TUI</a>, <a href="gui.html#stop-tasks-and-live-changes">GUI</a></td>
+</tr>
+<tr>
+<td>Diff and changeset review</td>
+<td>Shows file-level changes, patch details, verification, and restore actions</td>
+<td><a href="tui.html#the-closing-changeset">TUI</a>, <a href="gui.html#the-changeset">GUI</a></td>
+</tr>
+<tr>
+<td>Verification and repair</td>
+<td>Runs configured checks, performs bounded repair, and blocks completion while required evidence is failing</td>
+<td><a href="architecture.html#the-chat-agent">Architecture</a></td>
+</tr>
+<tr>
+<td>Independent review</td>
+<td>Routes the resulting diff to a reviewer model before a mission is accepted</td>
+<td><a href="cli-reference.html#verification-and-review">CLI reference</a></td>
+</tr>
+<tr>
+<td>Public web research</td>
+<td>Searches and fetches bounded public pages through the active network-approval policy; DuckDuckGo by default, or an API-backed engine</td>
+<td><a href="security.html">Security</a>, <a href="configuration.html#web-search">Configuration</a></td>
+</tr>
+<tr>
+<td>Compiler feedback on edits</td>
+<td>Every edit reports the language server's errors and warnings for the file, unasked, so a broken caller surfaces immediately rather than at the next test run</td>
+<td><a href="repository-intelligence.html">Repository intelligence</a></td>
+</tr>
+<tr>
+<td>Definition and reference lookup</td>
+<td>The agent resolves symbols through the same language servers the IDE uses, by name rather than by line and column</td>
+<td><a href="repository-intelligence.html">Repository intelligence</a></td>
+</tr>
+<tr>
+<td>Mid-turn delegation</td>
+<td>The model can split independent work across scoped subagents itself, with non-overlapping write scopes checked before any of them start</td>
+<td><a href="tui.html#teams-of-sub-agents">TUI: teams</a></td>
+</tr>
+<tr>
+<td>Parallel tool calls</td>
+<td>Independent lookups in one turn are awaited together, so four reads cost one read's latency</td>
+<td><a href="architecture.html#the-chat-agent">Architecture</a></td>
+</tr>
+<tr>
+<td>Image input</td>
+<td>Screenshots, mockups and exported diagrams reach a vision-capable model, by <code>@image:</code> reference or by the agent reading one</td>
+<td><a href="tui.html">TUI</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="interfaces">Interfaces</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does</th>
+<th>Learn more</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Terminal UI</td>
+<td>Persistent chat, files, Git, QA, tasks, logs, approvals, providers, memory, and command palette</td>
+<td><a href="tui.html">Terminal UI</a></td>
+</tr>
+<tr>
+<td>Browser IDE</td>
+<td>Monaco editor, file explorer/search, source control, terminal, agent panel, and shared sessions</td>
+<td><a href="gui.html">Browser IDE</a></td>
+</tr>
+<tr>
+<td>Design workspace</td>
+<td>Creates and edits architecture, flowchart, database, API-flow, UI, and prototype artifacts on a shared canvas</td>
+<td><a href="gui.html#workspaces-top-tabs">GUI: Design</a></td>
+</tr>
+<tr>
+<td>Visual HTML editor</td>
+<td>Preview, edit, split, and source modes, with viewport controls and agent-assisted styling</td>
+<td><a href="gui.html#the-visual-html-editor">GUI: visual editing</a></td>
+</tr>
+<tr>
+<td>Project preview</td>
+<td>Detects and runs a development server, then embeds the actual app, and makes it the inspection's live target</td>
+<td><a href="gui.html#live-app">GUI: live app</a></td>
+</tr>
+<tr>
+<td>Headless CLI</td>
+<td>Supports scripts and CI with structured verification, repository queries, mission controls, and evidence export</td>
+<td><a href="cli-reference.html">CLI reference</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="planning-teams-and-durability">Planning, teams, and durability</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does</th>
+<th>Learn more</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Isolated missions</td>
+<td>Compiles requirements, asks for plan approval, edits a Git worktree, verifies, reviews, and records evidence</td>
+<td><a href="missions.html">Missions</a></td>
+</tr>
+<tr>
+<td>Parallel sub-agents</td>
+<td>Splits work into dependency waves with non-overlapping write scopes and read-only specialist roles</td>
+<td><a href="tui.html#teams-of-sub-agents">TUI: teams</a></td>
+</tr>
+<tr>
+<td>Project QA</td>
+<td>Combines deterministic tests, linters, browser tests, dependency scans, and parallel read-only specialists</td>
+<td><a href="tui.html#inspector">TUI: Inspector</a></td>
+</tr>
+<tr>
+<td>Knowledge workspaces</td>
+<td>A goal, uploaded files, documents, a plan, and research — continuing across many sessions, stored as real files under <code>.daino/workspaces/</code></td>
+<td><a href="workspace.html">Workspace</a></td>
+</tr>
+<tr>
+<td>Document extraction</td>
+<td>PDF, Word, Excel, and PowerPoint uploads become markdown the agent can read</td>
+<td><a href="workspace.html#uploads">Workspace: uploads</a></td>
+</tr>
+<tr>
+<td>Cited research</td>
+<td>Every page the agent fetches is recorded as a source and cached, so a claim stays checkable</td>
+<td><a href="workspace.html#research-and-sources">Workspace: research</a></td>
+</tr>
+<tr>
+<td>Executable plans</td>
+<td>Daino works through a workspace plan one step per agent turn, pausing, resuming and reporting as it goes</td>
+<td><a href="workspace.html#running-the-plan">Workspace: running the plan</a></td>
+</tr>
+<tr>
+<td>Steerable runs</td>
+<td>New direction typed mid-run updates the plan at the next step boundary without discarding finished work</td>
+<td><a href="workspace.html#steering-it-while-it-works">Workspace: steering</a></td>
+</tr>
+<tr>
+<td>Run approvals</td>
+<td>Actions are classified by what they can cost; reading and writing in the workspace proceed, commands and deletions ask</td>
+<td><a href="workspace.html#approvals">Workspace: approvals</a></td>
+</tr>
+<tr>
+<td>Change sets</td>
+<td>Everything one step touched, reviewed and undone together, on top of the per-file history</td>
+<td><a href="workspace.html#reviewing-what-changed">Workspace: reviewing</a></td>
+</tr>
+<tr>
+<td>Skills</td>
+<td>Reusable ways of working — PRD, competitive research, incident review — chosen from the goal and overridable per project</td>
+<td><a href="workspace.html#skills">Workspace: skills</a></td>
+</tr>
+<tr>
+<td>Office deliverables</td>
+<td>Word, Excel, PowerPoint and PDF rendered from a document with its structure intact</td>
+<td><a href="workspace.html#finished-files">Workspace: finished files</a></td>
+</tr>
+<tr>
+<td>Stale-document warnings</td>
+<td>A document written from another is flagged when its source changes; advisory, never rewritten automatically</td>
+<td><a href="workspace.html#provenance-and-stale-documents">Workspace: provenance</a></td>
+</tr>
+<tr>
+<td>Cross-mode handoff</td>
+<td>A workspace starts diagrams in DESIGN and prepares coding work for CODE, linking both back</td>
+<td><a href="workspace.html#working-with-code-and-design">Workspace: CODE and DESIGN</a></td>
+</tr>
+<tr>
+<td>Vulnerability assessment</td>
+<td>Offline audit for secrets, insecure code, and weak configuration; installed SAST and dependency scanners; a non-destructive probe of the running app</td>
+<td><a href="gui.html#the-inspector">GUI: the Inspector</a></td>
+</tr>
+<tr>
+<td>Change review</td>
+<td>Reviews one change — working tree, staged, or branch against base — for correctness, gaps, and what was left behind, ending in a merge verdict</td>
+<td><a href="gui.html#review">GUI: review</a></td>
+</tr>
+<tr>
+<td>Syntax verification</td>
+<td>Every changed file is re-parsed, through the language's own parser or its grammar, so a change that stops a file compiling cannot pass</td>
+<td><a href="gui.html#review">GUI: review</a></td>
+</tr>
+<tr>
+<td>Release gate</td>
+<td>One deterministic verdict — safe to push, review first, or do not push — with every reason it depended on</td>
+<td><a href="gui.html#the-verdict">GUI: the verdict</a></td>
+</tr>
+<tr>
+<td>Sessions</td>
+<td>Persists conversation history, selected context, current plans, model choice, and events per repository</td>
+<td><a href="tui.html#sessions-and-context">TUI: sessions</a>, <a href="gui.html#sessions">GUI: sessions</a></td>
+</tr>
+<tr>
+<td>Checkpoints and restore</td>
+<td>Archives the working tree before edits and supports reviewed recovery without automatic pushes</td>
+<td><a href="cli-reference.html#memory-and-checkpoints">CLI reference</a></td>
+</tr>
+<tr>
+<td>Playbooks</td>
+<td>Loads validated, versioned engineering workflows from built-ins and <code>.daino/playbooks</code></td>
+<td><a href="playbooks.html">Playbooks</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="models-context-and-memory">Models, context, and memory</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does</th>
+<th>Learn more</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Multiple providers</td>
+<td>Connects OpenRouter, Ollama, vLLM, and OpenAI-compatible endpoints</td>
+<td><a href="providers.html">Providers</a></td>
+</tr>
+<tr>
+<td>Role-based routing</td>
+<td>Assigns architect, planner, builder, reviewer, debugger, tester, summarizer, and deployer roles to different profiles</td>
+<td><a href="model-routing.html">Model routing</a></td>
+</tr>
+<tr>
+<td>Local-model profiles</td>
+<td>Provides compact context, staged retrieval, bounded steps, and serialized local-server requests</td>
+<td><a href="model-routing.html#small-model-execution-profiles">Model routing</a></td>
+</tr>
+<tr>
+<td>Repository intelligence</td>
+<td>Incrementally indexes languages, symbols, references, routes, tests, dependencies, databases, and entry points</td>
+<td><a href="repository-intelligence.html">Repository intelligence</a></td>
+</tr>
+<tr>
+<td>Hierarchical instructions</td>
+<td>Applies global, repository, and directory-scoped <code>DAINO.md</code> guidance according to file scope</td>
+<td><a href="memory.html#dainomd-hierarchy">Memory</a></td>
+</tr>
+<tr>
+<td>Durable memory</td>
+<td>Recovers unfinished work and retrieves verified facts, decisions, episodes, and preferences without an external vector database</td>
+<td><a href="memory.html">Memory</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="extensibility">Extensibility</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does</th>
+<th>Learn more</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Slash commands</td>
+<td>Reusable prompts invoked by name, with argument substitution and namespacing</td>
+<td><a href="extending.html#slash-commands">Extending</a></td>
+</tr>
+<tr>
+<td>Agent skills</td>
+<td>Written-down practice the model loads when the task matches its description, so a dozen skills cost a dozen lines of prompt</td>
+<td><a href="extending.html#skills">Extending</a></td>
+</tr>
+<tr>
+<td>Lifecycle hooks</td>
+<td>Commands run before and after each tool, on prompt submit, and at stop; can block an action or feed the model what changed</td>
+<td><a href="extending.html#hooks">Extending</a></td>
+</tr>
+<tr>
+<td>MCP servers</td>
+<td>External tool servers over stdio or HTTP, discovered and namespaced, reaching the model as ordinary tools</td>
+<td><a href="extending.html#mcp-servers">Extending</a></td>
+</tr>
+<tr>
+<td>Extension diagnostics</td>
+<td>One endpoint reporting what loaded, what did not, and why — because everything here fails quietly by design</td>
+<td><a href="extending.html#seeing-what-loaded">Extending</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="safety-and-operations">Safety and operations</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does</th>
+<th>Learn more</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Four autonomy modes</td>
+<td>Moves between read-only planning, per-command approval, session approval, and full mission execution</td>
+<td><a href="security.html">Security</a></td>
+</tr>
+<tr>
+<td>Policy-gated commands</td>
+<td>Allows routine work, prompts for sensitive categories, and refuses destructive patterns</td>
+<td><a href="security.html">Security</a></td>
+</tr>
+<tr>
+<td>Secret references</td>
+<td>Resolves <code>env://</code>, <code>keyring://</code>, and <code>file://</code> values only at the provider or SSH boundary</td>
+<td><a href="configuration.html">Configuration</a></td>
+</tr>
+<tr>
+<td>Runtime isolation</td>
+<td>Local, sandboxed-local, or ephemeral Docker coding runtimes, plus verified SSH for deployment operations</td>
+<td><a href="runtimes.html">Runtimes</a></td>
+</tr>
+<tr>
+<td>Sandboxed local mode</td>
+<td>The host toolchain with credentials scrubbed from the environment and, where the platform provides it, writes confined to the project and the network denied</td>
+<td><a href="runtimes.html#sandboxed-local-mode">Runtimes</a></td>
+</tr>
+<tr>
+<td>Spend ceilings</td>
+<td>Per-mission cost, token, and call limits that stop a productive but useless run, enforced rather than only recorded</td>
+<td><a href="configuration.html#budget">Configuration</a></td>
+</tr>
+<tr>
+<td>Compose deployment</td>
+<td>Inspects, plans, deploys, verifies, promotes, and rolls back versioned remote releases</td>
+<td><a href="deployment.html">Deployment</a></td>
+</tr>
+<tr>
+<td>Terraform/OpenTofu</td>
+<td>Validates and plans infrastructure, with explicit gates for apply and destroy</td>
+<td><a href="infrastructure.html">Infrastructure as code</a></td>
+</tr>
+<tr>
+<td>Audit and usage data</td>
+<td>Records redacted events, token/cost usage, model decisions, checks, approvals, and rollback points</td>
+<td><a href="cli-reference.html#observability">CLI reference: observability</a></td>
+</tr>
+<tr>
+<td>Distributed tracing</td>
+<td>OpenTelemetry spans around every model call, loop step, tool execution and delegation, carrying identity and cost but never prompts or file contents</td>
+<td><a href="configuration.html">Configuration</a></td>
+</tr>
+<tr>
+<td>Eval harness</td>
+<td>Measures end-to-end task success per model, and pins the retrieval ranking and context sizing constants with model-free cases that run in CI</td>
+<td><a href="evals.html">Evals</a></td>
+</tr>
+<tr>
+<td>Notifications and wake lock</td>
+<td>Signals completion and optionally prevents the machine from sleeping during active work</td>
+<td><a href="tui.html#notifications-and-staying-awake">TUI</a>, <a href="gui.html#notifications-and-staying-awake">GUI</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="current-boundaries">Current boundaries</h2>
+<p>D[Ai]NO does not silently push, merge, or deploy. Missions execute their dependency-ordered tasks
+sequentially; <code>/team</code> is the parallel path. Sessions are local to one repository database, and
+remote Compose deployment expects an already provisioned Linux host. See the
+<a href="https://github.com/Chintan99/daino#current-limitations" target="_blank" rel="noreferrer">README limitations</a> for the concise list.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="getting-started.html"><span>Previous</span><strong>Getting started</strong></a>
+            <a class="doc-pager-next" href="tui.html"><span>Next</span><strong>Terminal UI (TUI)</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#coding-workflow">Coding workflow</a>
+            <a href="#interfaces">Interfaces</a>
+            <a href="#planning-teams-and-durability">Planning, teams, and durability</a>
+            <a href="#models-context-and-memory">Models, context, and memory</a>
+            <a href="#extensibility">Extensibility</a>
+            <a href="#safety-and-operations">Safety and operations</a>
+            <a href="#current-boundaries">Current boundaries</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

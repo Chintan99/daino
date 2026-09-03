@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Roles are architect, planner, builder, reviewer, debugger, tester, summarizer, and deployer. Each route names a model profile, while fallbacks are ordered profile names." />
+    <meta name="theme-color" content="#07110d" />
+    <title>Model routing — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html" class="current" aria-current="page">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="providers.html">Models</a> <span>/</span> Model routing</div>
+<h1 id="model-routing">Model routing</h1>
+<p>Roles are <code>architect</code>, <code>planner</code>, <code>builder</code>, <code>reviewer</code>, <code>debugger</code>, <code>tester</code>, <code>summarizer</code>, and
+<code>deployer</code>. Each route names a model profile, while fallbacks are ordered profile names.</p>
+<p>Profiles record local/remote placement, context and output limits, planning/coding/debugging/review
+scores, tool and structured-output reliability, domain capability, cost, latency, and allowed data
+sensitivity.</p>
+<p>The router escalates after two task failures, architecture changes, a large affected file set,
+security-critical scope, repeated structured-output failures, or persistent test failure. Data
+sensitivity can force a suitable local profile. Every selection and reason is persisted.</p>
+<p>Fallbacks also provide operational failover. If the selected local server is unavailable, rate
+limited, or returns an invalid provider response, D[Ai]NO tries the configured fallbacks in order
+and records both the failed call and the replacement selection. A model chosen explicitly for a
+session stays pinned and is never silently replaced. Fallback candidates that do not allow the
+task's data sensitivity are skipped; work forced local by sensitivity never falls through to a
+remote provider.</p>
+<p>The selected profile's context window is enforced on every request. D[Ai]NO reserves room for the
+model's reply and tool schema, budgets repository context against what remains, and retains the
+system prompt, current task, and newest complete tool exchanges as a conversation grows. Oversized
+observations are clipped head-and-tail rather than dropping the failure the model needs to repair.</p>
+<h2 id="small-model-execution-profiles">Small-model execution profiles</h2>
+<p>Each model profile also controls how a coding task is handed off:</p>
+<pre><code class="language-yaml">models:
+  local-coder:
+    provider: local-ollama
+    model: qwen2.5-coder:7b
+    local: true
+    coding_score: 8
+    execution_mode: compact       # auto, compact, standard
+    initial_context_tokens: 8192  # 0 derives it from the model window
+    max_agent_steps: 0            # 0 is unlimited; positive values set a hard cap
+    no_progress_limit: 3
+    staged_retrieval: true
+</code></pre>
+<p><code>auto</code> chooses compact mode for context windows at or below 16K, or for local profiles with modest
+coding/tool/structured-output reliability. Neutral default capability scores do not classify a
+remote model as small. <code>standard</code> is an explicit opt-out.</p>
+<p>Compact mode sends a task packet containing the objective, acceptance checks, current constraints
+and decisions, relevant files, progress, current failures, verification commands, and exactly one
+recommended next action. The initial packet contains at most four ranked memories and four source
+files. Large relevant files prefer indexed symbol windows; omitted content is labeled rather than
+presented as absent. The agent expands context with <code>read_file</code>, <code>grep</code>, or <code>memory_search</code> only
+when the current step needs it.</p>
+<p>Compact models receive one tool action per turn and a shorter recent-tool history. Deterministic
+tests, lint, type checks, and builds remain authoritative. After <code>no_progress_limit</code> consecutive
+failed or repeated actions, the loop updates its routing context to the existing escalation path;
+the next call uses the configured stronger fallback. A model explicitly selected for the session
+stays pinned, so D[Ai]NO reports the escalation signal but never silently violates that choice.</p>
+<pre><code class="language-bash">daino models route builder local-coder --fallback strong-cloud
+daino models route debugger strong-cloud
+</code></pre>
+<h2 id="task-size-follows-the-executing-model">Task size follows the executing model</h2>
+<p>The planner is told what the <strong>builder</strong> can hold, not what the planner itself can. The shipped
+configuration pairs a strong cloud planner with a local builder, and without this the planner writes
+tasks in its own terms: a scope the executor cannot fit, which it then thrashes on.</p>
+<p>Those limits are derived from the same arithmetic that sizes context packing — files per task,
+source tokens per task, and the working room left after that context is re-added on every compaction
+pass — and are rendered into the planning prompt as numbers, alongside the file sizes the repository
+map already reports.</p>
+<p>A task that overruns them anyway is split rather than failed:</p>
+<ul>
+<li><strong>Before the turn.</strong> If the scope no longer fits — a file grew, a glob expanded, or the plan was
+made with no builder routed — the task is cut into slices without spending a model call.</li>
+<li><strong>After a stall.</strong> A run that stops having compacted repeatedly is a window problem, not a stuck
+model, so the budget is tightened against that evidence and the task is split again.</li>
+</ul>
+<p>Slices are cut deterministically over the task's own file list, in the planner's order, and their
+union is exactly the parent's scope. They run in sequence, and only the last one carries the
+parent's verification commands — the earlier ones do not commit, so nothing enters the branch that
+no check has passed. Splitting is bounded: two rounds per planned task, never a slice of one file,
+and never a &quot;split&quot; into a single copy of the original.</p>
+<p>One case arithmetic cannot decide is a single file larger than the whole per-task budget, where the
+split has to run <em>through</em> the file. There the planner is asked once more, given that file's symbol
+outline so it can cut along real boundaries; the ids and dependencies it returns are rebuilt rather
+than trusted.</p>
+<p>A Workspace plan is prose and has no file scope to pack, so nothing is split automatically. Instead
+the plan is scaled up front — how many artifacts one step may produce, how much material it may read
+— and a step that stalls on compaction says so, naming the fix, rather than reporting a generic
+failure.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="providers.html"><span>Previous</span><strong>Providers</strong></a>
+            <a class="doc-pager-next" href="missions.html"><span>Next</span><strong>Missions</strong></a>
+          </nav>
+        </article>
+      </main>
+
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>

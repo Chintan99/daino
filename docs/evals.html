@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="DAiNO&#x27;s unit tests measure mechanism: that the loop applies actions, that the compactor sheds the right things, that the command gate refuses the right commands. None of them measu" />
+    <meta name="theme-color" content="#07110d" />
+    <title>Evals — D[Ai]NO docs</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=7dd82d7c8c" />
+    <script src="script.js?v=7dd82d7c8c" defer></script>
+    <script src="docs.js?v=7dd82d7c8c" defer></script>
+  </head>
+  <body class="has-docs">
+    <a class="skip-link" href="#doc">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <div class="doc-header-inner">
+        <a class="brand" href="index.html" aria-label="Daino documentation home">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span>D<span class="brand-ai">[Ai]</span>NO</span>
+        </a>
+
+        <button class="doc-nav-toggle" type="button" data-sidebar-toggle aria-expanded="false" aria-controls="doc-sidebar">
+          <span></span><span></span><span></span>
+          <span class="sr-only">Toggle documentation navigation</span>
+        </button>
+
+        <div class="doc-header-actions">
+          <button class="doc-search-open" type="button" data-search-open>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+            <span>Search docs</span>
+            <kbd>/</kbd>
+          </button>
+          <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch to light theme">
+            <svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.4A8.5 8.5 0 0 1 8.6 4 8.5 8.5 0 1 0 20 15.4Z"/></svg>
+            <svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </button>
+          <a class="github-link" href="https://github.com/Chintan99/daino">GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </header>
+
+    <div class="doc-layout">
+      <aside class="doc-sidebar" id="doc-sidebar">
+        <nav class="doc-nav" aria-label="Documentation">
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Start here</div>
+            <a href="installation.html">Installation</a>
+            <a href="getting-started.html">Getting started</a>
+            <a href="features.html">Features</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Interfaces</div>
+            <a href="tui.html">Terminal UI (TUI)</a>
+            <a href="gui.html">Browser IDE (GUI)</a>
+            <a href="workspace.html">Workspace</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Models</div>
+            <a href="providers.html">Providers</a>
+            <a href="model-routing.html">Model routing</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Working with it</div>
+            <a href="missions.html">Missions</a>
+            <a href="memory.html">Memory</a>
+            <a href="repository-intelligence.html">Repository intelligence</a>
+            <a href="extending.html">Extending</a>
+            <a href="playbooks.html">Playbooks</a>
+            <a href="evals.html" class="current" aria-current="page">Evals</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Operating</div>
+            <a href="configuration.html">Configuration</a>
+            <a href="runtimes.html">Runtimes</a>
+            <a href="security.html">Security</a>
+            <a href="deployment.html">Deployment</a>
+            <a href="infrastructure.html">Infrastructure</a>
+          </div>
+          <div class="doc-nav-group">
+            <div class="doc-nav-label">Reference</div>
+            <a href="cli-reference.html">CLI reference</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="contributing.html">Contributing</a>
+          </div>
+        </nav>
+      </aside>
+
+      <main class="doc-main" id="doc">
+        <article class="doc-body">
+          <div class="doc-breadcrumb"><a href="index.html">D[Ai]NO</a> <span>/</span> <a href="missions.html">Working with it</a> <span>/</span> Evals</div>
+<h1 id="evals">Evals</h1>
+<p>D[Ai]NO's unit tests measure mechanism: that the loop applies actions, that the
+compactor sheds the right things, that the command gate refuses the right
+commands. None of them measure whether the agent <em>finishes the task</em>, and none
+of them measure whether the retrieval ranking picks the right files.</p>
+<p>Those are the two numbers that actually move when someone touches the context
+work, and they were the two nobody could see. The eval harness is how they get
+seen.</p>
+<pre><code class="language-bash">daino eval list          # every case, and which need a model
+daino eval run           # the free ones
+daino eval run --tasks --model my-profile   # the expensive ones
+</code></pre>
+<p><code>daino eval run</code> exits non-zero when anything failed, so it works as a CI gate.</p>
+<h2 id="three-kinds-deliberately-different-in-cost">Three kinds, deliberately different in cost</h2>
+<p><strong><code>retrieval</code></strong> — no model, no network, milliseconds. A synthetic repository, a
+task, and an assertion about which files the ranking chose. This is what turns
+the hand-tuned constants in <code>daino/context/retrieval.py</code> into numbers with a
+regression test.</p>
+<p><strong><code>sizing</code></strong> — also free. A model profile in, and assertions about the envelope
+derived from it: the compaction headroom, the files-per-task ceiling, the source
+budget. These are the thresholds the task splitter acts on, and they are
+arithmetic, and arithmetic can be checked.</p>
+<p><strong><code>task</code></strong> — the expensive one. A scratch Git repository, one real instruction,
+one real model, and assertions about the working tree afterwards. This is what
+&quot;does this model actually work with D[Ai]NO&quot; means.</p>
+<p>The split matters because the cheap two will actually be run on every change, and
+they cover exactly the code with no other test. They run as part of the ordinary
+unit suite too, so a regression fails there whether or not anyone remembered to
+invoke the CLI.</p>
+<h2 id="what-a-case-looks-like">What a case looks like</h2>
+<p>Suites are YAML. Built-in ones ship with D[Ai]NO; a project adds its own under
+<code>.daino/evals/</code>, and a project suite with the same name replaces the built-in
+one. Your real tasks are better evidence about a model than anything shipped.</p>
+<p>A retrieval case:</p>
+<pre><code class="language-yaml">- id: lexical-matches-are-weaker-than-graph-edges
+  kind: retrieval
+  instruction: Fix the webhook signature verification.
+  required: [webhooks/handler.py]
+  files:
+    webhooks/handler.py: |
+      from webhooks.signature import verify
+    webhooks/signature.py: |
+      def verify(request): return True
+    docs/webhook_signature_guide.md: |
+      How webhook signature verification works.
+  retrieval:
+    includes: [webhooks/signature.py]
+    top: [webhooks/signature.py]
+    top_n: 1
+</code></pre>
+<p>Most assertions are about <em>order</em> rather than membership, because that is what
+the constants control:</p>
+<pre><code class="language-yaml">  retrieval:
+    order: [&quot;tests/test_discount.py &gt; tests/test_shipping.py&quot;]
+</code></pre>
+<p>A task case grades the tree, never the agent's account of it:</p>
+<pre><code class="language-yaml">- id: fix-a-failing-test
+  kind: task
+  instruction: &gt;
+    The test suite is failing. Find the bug in the source (not the test), fix it,
+    and confirm the tests pass.
+  files:
+    calculator.py: |
+      def add(a, b):
+          return a - b
+    test_calculator.py: |
+      from calculator import add
+      def test_add():
+          assert add(2, 3) == 5
+  expect:
+    changed: [calculator.py]
+    unchanged: [test_calculator.py]     # editing the test is the cheap cheat
+    commands: [&quot;python -m pytest -q&quot;]
+</code></pre>
+<p><code>unchanged</code> is the assertion that earns its place: the easy way to make a failing
+test pass is to change the test, and a run that does it looks identical in the
+summary to one that fixed the bug.</p>
+<h2 id="reading-the-result">Reading the result</h2>
+<pre><code>retrieval: 5/5 passed (100%)
+sizing: 5/5 passed (100%)
+tasks [gpt-5.6]: 3/4 passed (75%)
+  ✗ a-multi-file-rename
+      service.py does not match 'fetch_user'
+      `python -m pytest -q` exited 1:
+      ImportError: cannot import name 'fetch' from 'client'
+
+Total: 13/14 passed (93%)
+Spent: 184,203 tokens, $0.4120
+</code></pre>
+<p>Three outcomes, not two. A case that <strong>failed</strong> is a capability measurement; a
+case that <strong>could not run</strong> — a provider outage, a missing executable — is not,
+and is excluded from the denominator. Folding the second into the first is how a
+benchmark starts producing numbers that look like model quality and are actually
+network weather.</p>
+<h2 id="assertion-reference">Assertion reference</h2>
+<p><strong>retrieval</strong> — <code>includes</code>, <code>excludes</code>, <code>top</code> + <code>top_n</code>, <code>order</code>
+(<code>&quot;a.py &gt; b.py&quot;</code>), <code>max_selected</code>.</p>
+<p><strong>sizing</strong> — <code>compact</code>, <code>one_action_per_turn</code>, and min/max bounds on
+<code>working_headroom_tokens</code>, <code>max_files_per_task</code>, <code>task_source_budget_tokens</code>.</p>
+<p><strong>task</strong> — <code>changed</code>, <code>unchanged</code>, <code>contains</code> (path → regex), <code>absent</code>,
+<code>commands</code> (must exit zero), <code>answer_matches</code>, <code>max_steps</code>.</p>
+<h2 id="isolation">Isolation</h2>
+<p>A task case gets its own temporary directory, its own Git repository, its own
+database, and its own <code>.daino</code> state, and it runs under the <code>sandbox</code> runtime
+with review and memory extraction off. It cannot see your global configuration
+and leaves nothing behind — or the second run of a suite would be measuring
+something different from the first.</p>
+
+          <nav class="doc-pager" aria-label="Nearby pages">
+            <a class="doc-pager-prev" href="playbooks.html"><span>Previous</span><strong>Playbooks</strong></a>
+            <a class="doc-pager-next" href="configuration.html"><span>Next</span><strong>Configuration</strong></a>
+          </nav>
+        </article>
+      </main>
+
+      <nav class="doc-toc" aria-label="On this page">
+        <div class="doc-toc-inner">
+          <div class="doc-toc-label">On this page</div>
+          <div class="doc-toc-links">
+            <a href="#three-kinds-deliberately-different-in-cost">Three kinds, deliberately different in cost</a>
+            <a href="#what-a-case-looks-like">What a case looks like</a>
+            <a href="#reading-the-result">Reading the result</a>
+            <a href="#assertion-reference">Assertion reference</a>
+            <a href="#isolation">Isolation</a>
+          </div>
+        </div>
+      </nav>
+    </div>
+
+    <footer class="site-footer">
+      <div class="shell footer-inner">
+        <div><a class="brand footer-brand" href="index.html"><span class="brand-mark">D</span><span>D<span class="brand-ai">[Ai]</span>NO</span></a><p>Local-first software engineering,<br />with evidence attached.</p></div>
+        <div class="footer-links"><a href="index.html#installation">Installation</a><a href="index.html#getting-started">Getting started</a><a href="index.html#providers">Providers</a><a href="index.html#features">Features</a><a href="index.html#reference">Commands</a><a href="https://github.com/Chintan99/daino">GitHub</a></div>
+        <p class="footer-note">Project state stays local. Relevant task context is sent only to the model endpoint you configure.</p>
+      </div>
+    </footer>
+
+    <div class="doc-search-dialog" data-search-dialog hidden>
+      <div class="doc-search-backdrop" data-search-close></div>
+      <div class="doc-search-panel" role="dialog" aria-modal="true" aria-label="Search documentation">
+        <div class="doc-search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 18 18"/></svg>
+          <input type="search" data-search-input placeholder="Search the documentation" autocomplete="off" spellcheck="false" aria-label="Search the documentation" />
+          <button type="button" data-search-close aria-label="Close search"><kbd>esc</kbd></button>
+        </div>
+        <div class="doc-search-results" data-search-results tabindex="-1"></div>
+        <div class="doc-search-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div>
+      </div>
+    </div>
+  </body>
+</html>
